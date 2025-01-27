@@ -1,4 +1,5 @@
-﻿using System.CommandLine;
+﻿using System.Collections.Generic;
+using System.CommandLine;
 using System.Text;
 using System.Text.Json;
 using Microsoft.TeamFoundation.Build.WebApi;
@@ -11,121 +12,58 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public class SynchronizeOperation(IConsole Console) : TaskOperationBase(Console)
 {
-    public required int JobNumber;
+    public required Guid PhaseId;
     public required int JobCount;
-    public bool CheckOnly = false;
+
+    public string DisplayName = Environment.MachineName;
 
     public string ReservationPrefix = $"****reservations:";
+    public string SyncParticipantVarPrefix = $"SyncParticipant.";
+
 
     protected override async Task<int> RunCoreAsync()
     {
+        string allJobsRegisteredKey = $"{PhaseId}";
+
         try
         {
             var props = await GetBuildProperties();
 
-            if (IsCompleted(build) || props.ContainsKey(taskInfo.AllJobsReservedKey()))
+            if (props.ContainsKey(taskInfo.AllJobsReservedKey()))
             {
                 // Build is completed, can't reserve
                 return -100001;
             }
-            else if (CheckOnly)
+
+            var guid = Guid.NewGuid();
+
+            var entry = new ReservationEntry(DisplayName, guid);
+            var serializedEntry = JsonSerializer.Serialize(entry);
+
+            var record = new TimelineRecord()
             {
-                AppendLinesToEnvFile(FileEnvVar.GITHUB_OUTPUT,
-                    $"{OutputNames.hasMoreJobs}=true");
-
-                return JobCount;
-            }
-
-            var updatedRecord = await taskClient.UpdateTimelineRecordsAsync(
-                        scopeIdentifier: build.Project.Id,
-                        planType: taskInfo.HubName,
-                        planId: taskInfo.PlanId,
-                        timelineId: taskInfo.TimelineId,
-                        [
-                            new TimelineRecord()
-                            {
-                                Id = taskInfo.TaskId
-                            }
-                        ]);
-
-            var record = updatedRecord[0];
-
-            var entry = new ReservationEntry(AgentName ?? Environment.MachineName, Guid.NewGuid());
-
-            await taskClient.AppendLogContentAsync(
-                scopeIdentifier: build.Project.Id,
-                hubName: taskInfo.HubName,
-                planId: taskInfo.PlanId,
-                record.Log.Id,
-                new MemoryStream(Encoding.UTF8.GetBytes(ReservationPrefix + JsonSerializer.Serialize(entry))));
-
-            // Wait some time for log to propagate
-            // Without wait we see insertions from other threads may be inserted between entries
-            // which breaks consistency
-            await Task.Delay(TimeSpan.FromSeconds(PollSeconds));
-
-            var logLines = await taskClient.GetLogAsync(
-                scopeIdentifier: build.Project.Id,
-                hubName: taskInfo.HubName,
-                planId: taskInfo.PlanId,
-                logId: record.Log.Id);
-
-            using var writer = new StringWriter();
-            writer.WriteLine();
-            writer.WriteLine("[");
-            foreach (var line in logLines)
-            {
-                if (line.StartsWith(ReservationPrefix))
+                Id = PhaseId,
+                Variables =
                 {
-                    writer.Write(line.AsSpan().Slice(ReservationPrefix.Length));
-                    writer.WriteLine(",");
+                    [$"{SyncParticipantVarPrefix}{guid}"] = new VariableValue(DisplayName, false)
+                }
+            };
+
+            for (; ; await Task.Delay(TimeSpan.FromSeconds(PollSeconds)))
+            {
+                var updatedRecord = await UpdateTimelineRecordAsync(record);
+                record.Variables.Clear();
+
+                var participants = updatedRecord.Variables.Where(k => k.Key.StartsWith(SyncParticipantVarPrefix)).ToList();
+
+                Console.WriteLine($"Job: '{DisplayName}', Participants: {participants.Count}");
+
+
+                if (participants.Count >= JobCount)
+                {
+                    return participants.Count;
                 }
             }
-            writer.WriteLine("]");
-
-            writer.Flush();
-
-            var reservations = JsonSerializer.Deserialize<List<ReservationEntry>>(writer.ToString(), BuildUri.SerializerOptions)!;
-
-            int reservationIndex = reservations.IndexOf(entry);
-
-            var verboseOutput = "";
-            if (Verbose)
-            {
-                logLines.ForEach(l => writer.WriteLine(l));
-                verboseOutput = writer.ToString();
-            }
-
-            Console.WriteLine($"AgentName: '{AgentName}', Reservations: {reservations.Count}, ReservationIndex: {reservationIndex}{verboseOutput}");
-
-            bool isReserved = reservationIndex < JobCount;
-            bool isLast = reservationIndex == (JobCount - 1);
-            bool hasMoreJobs = !isLast && isReserved;
-
-            if (isLast)
-            {
-                await SetBuildProperties(
-                    new()
-                    {
-                        [taskInfo.AllJobsReservedKey()] = "1"
-                    });
-            }
-
-            AppendLinesToEnvFile(FileEnvVar.GITHUB_OUTPUT, 
-                $"isReserved={isReserved}",
-                $"{OutputNames.hasMoreJobs}={hasMoreJobs}");
-
-            if (isReserved)
-            {
-                AppendLinesToEnvFile(FileEnvVar.GITHUB_ENV,
-                    $"Capability.TaskId={taskInfo.TaskId}",
-                    $"AZP_URL={adoBuildUri.OrganizationUri}",
-                    $"AZP_TOKEN={AdoToken}",
-                    $"AZP_JOB_INDEX={reservationIndex}",
-                    $"AZP_AGENT_NAME=ghagent-{adoBuildUri.BuildId}-m{reservationIndex}-r{Environment.GetEnvironmentVariable("GITHUB_RUN_ID")}");
-            }
-
-            return isReserved ? reservationIndex : -reservationIndex;
         }
         catch
         {

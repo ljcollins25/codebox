@@ -1,9 +1,11 @@
+using System;
 using System.CommandLine;
 using System.Text;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
 using Microsoft.VisualStudio.Services.Common;
 using Microsoft.VisualStudio.Services.WebApi;
+using TimelineRecord = Microsoft.TeamFoundation.DistributedTask.WebApi.TimelineRecord;
 
 #nullable disable
 #nullable enable annotations
@@ -70,8 +72,25 @@ public abstract class TaskOperationBase(IConsole Console)
 
         if (Debug)
         {
+            Console.WriteLine($"TaskUri:\n{TaskUrl}");
             Console.WriteLine($"Token:\n{ToDebugString(AdoToken)}");
         }
+    }
+
+    protected Task<List<TimelineRecord>> UpdateTimelineRecordsAsync(IEnumerable<TimelineRecord> records)
+    {
+        return taskClient.UpdateTimelineRecordsAsync(
+            scopeIdentifier: build.Project.Id,
+            planType: taskInfo.HubName,
+            planId: taskInfo.PlanId,
+            timelineId: taskInfo.TimelineId,
+            records);
+    }
+
+    protected async Task<TimelineRecord> UpdateTimelineRecordAsync(TimelineRecord record)
+    {
+        var result = await UpdateTimelineRecordsAsync([record]);
+        return result[0];
     }
 
     protected Task<PropertiesCollection> GetBuildProperties() =>

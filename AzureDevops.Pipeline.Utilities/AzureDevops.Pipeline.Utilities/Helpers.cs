@@ -4,7 +4,7 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public static class Helpers
 {
-    public static readonly string TaskUriTemplate = "$(System.CollectionUri)$(System.TeamProject)?buildId=$(Build.BuildId)&jobId=$(System.JobId)&planId=$(System.PlanId)&taskId=$(System.TaskInstanceId)&timelineId=$(System.TimelineId)";
+    public const string TaskUriTemplate = "$(System.CollectionUri)$(System.TeamProject)?buildId=$(Build.BuildId)&jobId=$(System.JobId)&planId=$(System.PlanId)&taskId=$(System.TaskInstanceId)&timelineId=$(System.TimelineId)";
 
     public static readonly Regex VariableSeparatorPattern = new Regex(@"[\._\-]");
     public static readonly Regex VariablePattern = new Regex(@"\$\(([\w\._\-]+)\)");
@@ -13,8 +13,11 @@ public static class Helpers
     public static class Env
     {
         public static readonly Optional<string> TaskUri = ExpandVariables(TaskUriTemplate, requireAll: true).AsNonEmptyOrOptional();
-        public static readonly Optional<int> TotalJobsInPhase = ExpandVariables($"(System.TotalJobsInPhase)", requireAll: true).AsNonEmptyOrOptional().Then(v => int.TryParse(v, null, out var v) ? v : default);
-        public static readonly Optional<int> JobPositionInPhase = ExpandVariables($"(System.JobPositionInPhase)", requireAll: true).AsNonEmptyOrOptional().Then(v => int.TryParse(v, null, out var v) ? v : default);
+        public static readonly Optional<int> TotalJobsInPhase = ExpandVariables($"(System.TotalJobsInPhase)", requireAll: true).AsNonEmptyOrOptional().Then<int>(v => int.TryParse(v, null, out var i) ? i : default);
+        public static readonly Optional<int> JobPositionInPhase = ExpandVariables($"(System.JobPositionInPhase)", requireAll: true).AsNonEmptyOrOptional().Then<int>(v => int.TryParse(v, null, out var i) ? i : default);
+        public static readonly Optional<Guid> JobId = ExpandVariables($"(System.JobId)", requireAll: true).AsNonEmptyOrOptional().Then<Guid>(v => Guid.TryParse(v, null, out var i) ? i : default);
+        public static readonly Optional<string> JobDisplayName = ExpandVariables($"(System.JobDisplayName)", requireAll: true).AsNonEmptyOrOptional();
+        public static readonly Optional<Guid> PhaseId = ExpandVariables($"(System.PhaseId)", requireAll: true).AsNonEmptyOrOptional().Then<Guid>(v => Guid.TryParse(v, null, out var i) ? i : default);
     }
 
     public static string ExpandVariables(string input, Out<IEnumerable<string>> missingVariables = default, bool requireAll = false)
@@ -24,7 +27,7 @@ public static class Helpers
         if (string.IsNullOrEmpty(input))
             return input;
 
-        List<string> missingVars;
+        List<string> missingVars = null;
 
         // Replace matches with environment variable values
         string result = VariablePattern.Replace(input, match =>

@@ -2,15 +2,31 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <AssemblyName>azputils</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType>embedded</DebugType>
     <LangVersion>latest</LangVersion>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_IsPacking)' == 'true'">
+    <PackAsTool>true</PackAsTool>
     <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>false</SelfContained>
-    <PublishDir>$(MSBuildThisFileDirectory)../../tools</PublishDir>
+
+    <PackageId>$(MSBuildProjectName)</PackageId>
+    <Description>Utilities and orchestration helpers for Azure Devops pipelines</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/ljcollins25/codebox</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/ljcollins25/codebox/tree/main/AzureDevops.Pipeline.Utilities</PackageProjectUrl>
+    <ToolCommandName>$(AssemblyName)</ToolCommandName>
+    <CurrentDateTime>$([System.DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss"))</CurrentDateTime>
+    <Authors>ljcollins25</Authors>
+    <Version>1.0.0-Dev-$(CurrentDateTime)</Version>
   </PropertyGroup>
 
   <ItemGroup>

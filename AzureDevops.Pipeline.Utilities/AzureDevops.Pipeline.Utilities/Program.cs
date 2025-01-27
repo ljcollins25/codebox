@@ -37,10 +37,18 @@ public class Program
             ? new SubProcessRunner(remainingArgs[0], remainingArgs.Skip(1), cts.Token)
             : null;
 
-        var rootCommand = new RootCommand
+        RootCommand rootCommand = GetCommand(cts, agentRunner);
+
+        return await rootCommand.InvokeAsync(precedingArgs.ToArray());
+    }
+
+    public static RootCommand GetCommand(CancellationTokenSource? cts = null, SubProcessRunner? agentRunner = null)
+    {
+        cts ??= new();
+        return new RootCommand
         {
             CliModel.Bind<RunOperation>(
-                new Command("runagent", "Run command until it completes or build finishes. Also completes agent invocation task."),
+                new Command("run", "Run command until it completes or build finishes. Also completes agent invocation task."),
                 m =>
                 {
                     var result = new RunOperation(m.Console, cts, agentRunner)
@@ -51,7 +59,7 @@ public class Program
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true),
                     };
 
-                    m.Option(c => ref c.PollSeconds, name: "pollSeconds");
+                    m.Option(c => ref c.PollSeconds, name: "pollSeconds", defaultValue: 5);
                     m.Option(c => ref c.AgentTimeoutSeconds, name: "timeoutSeconds");
                     m.Option(c => ref c.Debug, name: "debug");
 
@@ -74,8 +82,16 @@ public class Program
                             name: "jobCount",
                             defaultValue: Env.TotalJobsInPhase,
                             description: "The number of job slots available for reservation", required: true),
+                        PhaseId = m.Option(c => ref c.PhaseId,
+                            name: "phaseId",
+                            defaultValue: Env.PhaseId,
+                            description: "The phase id (e.g. $(System.PhaseId))", required: true),
                     };
 
+                    m.Option(c => ref c.DisplayName,
+                        name: "name",
+                        defaultValue: Env.JobDisplayName,
+                        description: "The name of the job (e.g. $(System.JobDisplayName) )");
                     m.Option(c => ref c.PollSeconds, name: "pollSeconds", defaultValue: 5);
                     m.Option(c => ref c.Debug, name: "debug");
 
@@ -105,7 +121,5 @@ public class Program
                 },
                 r => r.RunAsync())
         };
-
-        return await rootCommand.InvokeAsync(precedingArgs.ToArray());
     }
 }

@@ -2,12 +2,23 @@ using System.Runtime.CompilerServices;
 
 public ref struct Out<T>
 {
-    public ref T Value;
+    private ref T valueRef;
+
+    public T Value
+    {
+        get => valueRef;
+        set
+        {
+            if (IsValid) valueRef = value;
+        }
+    }
+
+    public bool IsValid => !Unsafe.IsNullRef(ref valueRef);
 
     public unsafe Out(out T value)
     {
         value = default;
-        Value = ref Unsafe.AsRef<T>(Unsafe.AsPointer(ref value));
+        valueRef = ref Unsafe.AsRef<T>(Unsafe.AsPointer(ref value));
     }
 }
 
