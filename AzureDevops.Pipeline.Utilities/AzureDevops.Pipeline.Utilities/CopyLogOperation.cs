@@ -7,7 +7,7 @@ using Microsoft.TeamFoundation.DistributedTask.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
-public class RemapTaskLogOperation(IConsole Console) : TaskOperationBase(Console)
+public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
 {
     public Guid? PhaseId;
 
@@ -49,7 +49,11 @@ public class RemapTaskLogOperation(IConsole Console) : TaskOperationBase(Console
                 State = TimelineRecordState.Completed,
                 Order = 0
             });
+
+            Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_PARENT_JOB_ID", parentId.ToString(), emit: true, log: true);
         }
+
+        Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_TARGET_ID", targetId.ToString(), emit: true, log: true);
 
         var sourceRecord = await GetRecordAsync(sourceId);
 

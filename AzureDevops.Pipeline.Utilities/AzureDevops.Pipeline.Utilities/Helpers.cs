@@ -16,7 +16,10 @@ public static class Helpers
 
     public static class Env
     {
-        public static readonly Optional<string> TaskUri = Globals.TaskUrl.Or(ExpandVariables(TaskUriTemplate, requireAll: true).AsNonEmptyOrOptional());
+        public static readonly Optional<string> TaskUri = Globals.TaskUrl
+            .Or(ExpandVariables($"$({TaskUrlVariable})", requireAll: true).AsNonEmptyOrOptional())
+            .Or(ExpandVariables(TaskUriTemplate, requireAll: true).AsNonEmptyOrOptional());
+        public static readonly Optional<string> CurrentTaskUrl = ExpandVariables(TaskUriTemplate, requireAll: true).AsNonEmptyOrOptional();
         public static readonly Optional<int> TotalJobsInPhase = ExpandVariables("$(System.TotalJobsInPhase)", requireAll: true).AsNonEmptyOrOptional().Then(v => Optional.Try(int.TryParse(v, null, out var i), i));
         public static readonly Optional<int> JobPositionInPhase = ExpandVariables("$(System.JobPositionInPhase)", requireAll: true).AsNonEmptyOrOptional().Then(v => Optional.Try(int.TryParse(v, null, out var i), i));
         public static readonly Optional<Guid> JobId = ExpandVariables("$(System.JobId)", requireAll: true).AsNonEmptyOrOptional().Then(v => Optional.Try(Guid.TryParse(v, null, out var i), i));
@@ -53,7 +56,7 @@ public static class Helpers
         {
             string variableName = match.Groups[1].Value;
             string envName = AsEnvironmentVariableName(variableName);
-            string overrideEnvName = "AZPUTILS_" + envName;
+            string overrideEnvName = OverridePrefix + envName;
             string? envValue = Environment.GetEnvironmentVariable(overrideEnvName).AsNonEmptyOrOptional().Value
                 ?? Environment.GetEnvironmentVariable(envName);
 
@@ -133,7 +136,7 @@ public static class Helpers
         }
     }
 
-    public static string GetSetPipelineVariableText(string name, string value, bool isSecret, bool isOutput = false, bool emit = false)
+    public static string GetSetPipelineVariableText(string name, string value, bool isSecret = false, bool isOutput = false, bool emit = false, bool log = false)
     {
         string additionalArgs = "";
         if (isSecret)
@@ -144,6 +147,12 @@ public static class Helpers
         if (isOutput)
         {
             additionalArgs += "isOutput=true;";
+        }
+
+        if (log && emit)
+        {
+            string valueText = isSecret ? "***" : value;
+            Console.WriteLine($"Setting '{name}' to '{valueText}'");
         }
 
         return PrintAndReturn($"##vso[task.setvariable variable={name};{additionalArgs}]{value}", emit);

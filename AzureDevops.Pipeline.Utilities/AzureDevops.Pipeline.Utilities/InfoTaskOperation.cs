@@ -8,9 +8,12 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public class InfoTaskOperation(IConsole Console) : TaskOperationBase(Console)
 {
+    public bool Load;
+
     protected override async Task<int> RunCoreAsync()
     {
-        await RefreshTimelineRecordsAsync();
+        Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_TASK_URL", TaskUrl, emit: true, log: true);
+        //await RefreshTimelineRecordsAsync();
         //var record = GetAncestorsAndSelf(taskInfo.TaskId).FirstOrDefault(r => r.RecordType == "Phase");
         
         return 0;

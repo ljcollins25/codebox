@@ -4,6 +4,7 @@ using System.CommandLine.Invocation;
 using System.CommandLine.IO;
 using System.Runtime.CompilerServices;
 using Microsoft.VisualStudio.Services.Common.CommandLine;
+using Microsoft.VisualStudio.Services.TestManagement.TestPlanning.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
@@ -87,7 +88,14 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
         return default!;
     }
 
-    public TField Option<TField>(RefFunc<T, TField> getFieldRef, string name = null!, string? description = null, bool required = false, Optional<TField> defaultValue = default, bool isHidden = false)
+    public TField Option<TField>(
+        RefFunc<T, TField> getFieldRef,
+        string name = null!,
+        string? description = null,
+        bool required = false,
+        Optional<TField> defaultValue = default,
+        bool isHidden = false,
+        RefFunc<T, bool>? isExplicitRef = null)
     {
         if (OptionsMode)
         {
@@ -106,6 +114,11 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
                 if (result != null)
                 {
                     getFieldRef(model) = context.ParseResult.GetValueForOption(option)!;
+
+                    if (isExplicitRef != null)
+                    {
+                        isExplicitRef(model) = !result.IsImplicit;
+                    }
                 }
             });
 

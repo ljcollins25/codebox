@@ -17,6 +17,8 @@ public abstract class TaskOperationBase(IConsole Console)
     public required string TaskUrl;
     public required string AdoToken;
 
+    public bool TaskUrlSpecified;
+
     public double PollSeconds = 1;
 
     public bool Verbose = false;

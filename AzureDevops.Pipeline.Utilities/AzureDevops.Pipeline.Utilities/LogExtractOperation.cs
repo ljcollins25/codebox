@@ -27,7 +27,7 @@ public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
         Dictionary<string, string> map = await GetValuesAsync();
         foreach (var entry in map)
         {
-            Helpers.GetSetPipelineVariableText(entry.Key, entry.Value, isSecret: IsSecret, isOutput: IsOutput, emit: true);
+            Helpers.GetSetPipelineVariableText(entry.Key, entry.Value, isSecret: IsSecret, isOutput: IsOutput, emit: true, log: true);
         }
 
         return 0;
@@ -35,7 +35,7 @@ public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
 
     public async Task<Dictionary<string, string>> GetValuesAsync()
     {
-        var regex = new Regex($"({string.Join(")|(", Patterns)})");
+        var regex = new Regex($"(?:{string.Join(")|(?:", Patterns)})");
 
         var record = await GetRecordAsync(SourceId ?? taskInfo.TaskId);
 

@@ -100,6 +100,7 @@ public class Program
             //        return result;
             //    },
             //    r => r.RunAsync()),
+
              CliModel.Bind<InfoTaskOperation>(
                 new Command("info", "Display info."),
                 m =>
@@ -107,14 +108,18 @@ public class Program
                     var result = new InfoTaskOperation(m.Console)
                     {
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
-                            defaultValue: Globals.TaskUrl.Value ?? Env.TaskUri,
+                            defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token",
                             defaultValue: Globals.Token,
                             description: "The access token (e.g. $(System.AccessToken) )", required: true),
                     };
 
+
                     m.Option(c => ref c.Debug, name: "debug");
+                    m.Option(c => ref c.Load, name: "set-context",
+                        isExplicitRef: c => ref c.TaskUrlSpecified,
+                        description: "Causes task info to be set as variable so that calls to azputils in subsequent tasks use this tasks info");
 
                     return result;
                 },
@@ -126,7 +131,7 @@ public class Program
                     var result = new RunOperation(m.Console, cts, agentRunner)
                     {
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
-                            defaultValue: Globals.TaskUrl.Value ?? Env.TaskUri,
+                            defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token",
                             defaultValue: Globals.Token,
@@ -221,11 +226,11 @@ public class Program
                 },
                 r => r.RunAsync()),
 
-            CliModel.Bind<RemapTaskLogOperation>(
+            CliModel.Bind<CopyLogOperation>(
                 new Command("copy-log", "Copies a reference to the log under another job"),
                 m =>
                 {
-                    var result = new RemapTaskLogOperation(m.Console)
+                    var result = new CopyLogOperation(m.Console)
                     {
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
                             defaultValue: Env.TaskUri,
@@ -243,6 +248,7 @@ public class Program
                     m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
                     m.Option(c => ref c.SourceId, name: "source-id", description: "The id of the source task logs to copy");
                     m.Option(c => ref c.TargetId, name: "target-id", description: "The id of the target task logs to create or replace");
+                    m.Option(c => ref c.CopyTime, name: "complete", description: "Whether to complete the generated task", defaultValue: true);
                     m.Option(c => ref c.Order, name: "order", description: "The order of the created task", defaultValue: Env.JobPositionInPhase.ToNullable());
                     m.Option(c => ref c.Debug, name: "debug");
 
