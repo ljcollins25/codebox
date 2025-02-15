@@ -155,6 +155,16 @@ public abstract class TaskOperationBase(IConsole Console)
         return RecordsById[id];
     }
 
+    public async ValueTask<TimelineRecord?> TryGetRecordAsync(Guid id, bool forceRefresh = false)
+    {
+        if (RecordsById == null || forceRefresh)
+        {
+            await RefreshTimelineRecordsAsync();
+        }
+
+        return RecordsById.GetValueOrDefault(id);
+    }
+
     public async Task<List<TimelineRecord>> RefreshTimelineRecordsAsync()
     {
         var records = await taskClient.GetRecordsAsync(

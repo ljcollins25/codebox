@@ -234,6 +234,30 @@ public class Program
                 },
                 r => r.RunAsync()),
 
+            CliModel.Bind<UpdateRecordOperation>(
+                new Command("update-record", "Updates the given timeline record"),
+                m =>
+                {
+                    var result = new UpdateRecordOperation(m.Console)
+                    {
+                        TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+                            defaultValue: Env.TaskUri,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
+                        Id = m.Option(c => ref c.Id,
+                            description: "The id of the record"),
+                        ParentId = m.Option(c => ref c.ParentId,
+                            description: "The parent id of the created record"),
+                        RecordType = m.Option(c => ref c.RecordType, name: "type", description: "The record type"),
+                        PercentComplete = m.Option(c => ref c.PercentComplete, name: "progress", description: "The percent complete"),
+                    };
+
+                    m.Option(c => ref c.Debug, name: "debug");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
             CliModel.Bind<DownloadLogsOperation>(
                 new Command("download-log", "Downloads the log to a file"),
                 m =>
@@ -277,7 +301,7 @@ public class Program
                     m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
                     m.Option(c => ref c.SourceId, name: "source-id", description: "The id of the source task logs to copy");
                     m.Option(c => ref c.TargetId, name: "target-id", description: "The id of the target task logs to create or replace");
-                    m.Option(c => ref c.CopyTime, name: "complete", description: "Whether to complete the generated task", defaultValue: true);
+                    m.Option(c => ref c.Complete, name: "complete", description: "Whether to complete the generated task", defaultValue: true);
                     m.Option(c => ref c.Order, name: "order", description: "The order of the created task", defaultValue: Env.JobPositionInPhase.ToNullable());
                     m.Option(c => ref c.Debug, name: "debug");
 

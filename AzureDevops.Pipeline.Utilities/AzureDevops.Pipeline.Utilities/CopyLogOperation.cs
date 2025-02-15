@@ -19,7 +19,7 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
 
     public required string Name;
 
-    public bool CopyTime = true;
+    public bool Complete = true;
 
     public int? Order;
 
@@ -35,35 +35,42 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
         var targetId = GetId(TargetId) ?? GetId(Name).Value;
         var sourceId = GetId(SourceId) ?? taskInfo.TaskId;
 
-        var parentId = GetId(ParentJobName) ?? taskInfo.JobId;
+        Guid? parentId = null;
 
-        if (ParentJobName.IsNonEmpty())
+        var record = await TryGetRecordAsync(targetId);
+
+        if (record == null)
         {
-            await UpdateTimelineRecordAsync(new()
-            {
-                Id = parentId,
-                ParentId = PhaseId,
-                Name = ParentJobName,
-                RecordType = "Job",
-                Result = TaskResult.Succeeded,
-                State = TimelineRecordState.Completed,
-                Order = 0
-            });
+            parentId = GetId(ParentJobName) ?? taskInfo.JobId;
 
-            Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_PARENT_JOB_ID", parentId.ToString(), emit: true, log: true);
+            if (ParentJobName.IsNonEmpty())
+            {
+                await UpdateTimelineRecordAsync(new()
+                {
+                    Id = parentId.Value,
+                    ParentId = PhaseId,
+                    Name = ParentJobName,
+                    RecordType = "Job",
+                    Result = TaskResult.Succeeded,
+                    State = TimelineRecordState.Completed,
+                    Order = 0
+                });
+
+                Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_PARENT_JOB_ID", parentId.Value.ToString(), emit: true, log: true);
+            }
         }
 
         Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_TARGET_ID", targetId.ToString(), emit: true, log: true);
 
         var sourceRecord = await GetRecordAsync(sourceId);
 
-        TaskLogReference log = default;
+        TaskLogReference? log = default;
         if (StartLine == null && EndLine == null)
         {
             log = sourceRecord.Log;
         }
 
-        var record = await UpdateTimelineRecordAsync(new()
+        record ??= await UpdateTimelineRecordAsync(new()
         {
             Id = targetId,
             Name = Name,
@@ -89,11 +96,13 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
             await AppendLogContentAsync(record, stream);
         }
 
-        if (CopyTime)
+        if (Complete)
         {
             record = await UpdateTimelineRecordAsync(new()
             {
                 Id = targetId,
+                Log = log,
+                Order = Order,
                 State = TimelineRecordState.Completed,
                 StartTime = sourceRecord.StartTime,
                 FinishTime = sourceRecord.FinishTime ?? DateTime.UtcNow,
