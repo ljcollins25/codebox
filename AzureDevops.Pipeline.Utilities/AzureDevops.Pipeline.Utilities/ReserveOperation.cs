@@ -1,11 +1,6 @@
 ﻿using System.CommandLine;
 using System.Text;
 using System.Text.Json;
-using Microsoft.TeamFoundation.Build.WebApi;
-using Microsoft.TeamFoundation.DistributedTask.WebApi;
-using Microsoft.VisualStudio.Services.Common;
-using Microsoft.VisualStudio.Services.WebApi;
-using TimelineRecord = Microsoft.TeamFoundation.DistributedTask.WebApi.TimelineRecord;
 
 namespace AzureDevops.Pipeline.Utilities;
 
@@ -52,12 +47,7 @@ public class ReserveOperation(IConsole Console) : TaskOperationBase(Console)
 
             var entry = new ReservationEntry(AgentName ?? Environment.MachineName, Guid.NewGuid());
 
-            await taskClient.AppendLogContentAsync(
-                scopeIdentifier: build.Project.Id,
-                hubName: taskInfo.HubName,
-                planId: taskInfo.PlanId,
-                record.Log.Id,
-                new MemoryStream(Encoding.UTF8.GetBytes(ReservationPrefix + JsonSerializer.Serialize(entry))));
+            await AppendLogContentAsync(record, new MemoryStream(Encoding.UTF8.GetBytes(ReservationPrefix + JsonSerializer.Serialize(entry))));
 
             // Wait some time for log to propagate
             // Without wait we see insertions from other threads may be inserted between entries

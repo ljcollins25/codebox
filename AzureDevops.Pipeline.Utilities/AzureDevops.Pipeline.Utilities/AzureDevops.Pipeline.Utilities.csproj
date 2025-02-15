@@ -34,5 +34,6 @@
     <PackageReference Include="Microsoft.TeamFoundation.DistributedTask.WebApi" Version="19.225.1" />
     <PackageReference Include="Microsoft.VisualStudio.Services.Client" Version="19.225.1" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.23.0" />
   </ItemGroup>
 </Project>

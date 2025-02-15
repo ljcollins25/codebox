@@ -2,14 +2,22 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.CommandLine.IO;
+using System.Runtime.CompilerServices;
+using Microsoft.VisualStudio.Services.Common.CommandLine;
 
 namespace AzureDevops.Pipeline.Utilities;
 
 public class CliModel
 {
-    public static Command Bind<T>(Command command, Func<CliModel<T>, T> getOptions, Func<T, Task<int>> runAsync)
+    public static CliModel<T> Bind<T>(Command command, Func<CliModel<T>, T> getOptions, Func<T, Task<int>> runAsync, ICliModel<T>? parent = null)
     {
-        var model = new CliModel<T>(command);
+        var model = new CliModel<T>(command, (model, context) =>
+        {
+            var target = getOptions(model);
+            model.Apply(target, context);
+            return target;
+        });
+
         getOptions(model);
 
         // Disable options mode so that real target values get created in handler
@@ -23,16 +31,25 @@ public class CliModel
             context.ExitCode = await runAsync(target);
         });
 
-        return command;
+        return model;
     }
 }
 
-public class CliModel<T>(Command command)
+public delegate ref TField RefFunc<in T, TField>(T model);
+
+public interface ICliModel<T>
+{
+    Command Command { get; }
+
+    void Apply(T target, InvocationContext context);
+
+    T Create(ref T target);
+}
+
+public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, T> CreateValue)
 {
     public bool OptionsMode { get; set; } = true;
     public IConsole Console { get; set; } = new SystemConsole();
-
-    public delegate ref TField RefFunc<TField>(T model);
 
     private List<Action<T, InvocationContext>> SetFields { get; } = new();
 
@@ -44,8 +61,33 @@ public class CliModel<T>(Command command)
         }
     }
 
+    public T Create(InvocationContext context)
+    {
+        return CreateValue(this, context);
+    }
 
-    public TField Option<TField>(RefFunc<TField> getFieldRef, string name, string? description = null, bool required = false, Optional<TField> defaultValue = default, bool isHidden = false)
+    public static implicit operator Command(CliModel<T> model) => model.Command;
+
+    public TField SharedOptions<TField>(RefFunc<T, TField> getFieldRef, CliModel<TField> sharedModel)
+    {
+        if (OptionsMode)
+        {
+            SetFields.Add((model, context) =>
+            {
+                var value = sharedModel.Create(context);
+                getFieldRef(model) = value;
+            });
+
+            foreach (var option in sharedModel.Command.Options)
+            {
+                Command.Add(option);
+            }
+        }
+
+        return default!;
+    }
+
+    public TField Option<TField>(RefFunc<T, TField> getFieldRef, string name = null!, string? description = null, bool required = false, Optional<TField> defaultValue = default, bool isHidden = false)
     {
         if (OptionsMode)
         {
@@ -56,6 +98,7 @@ public class CliModel<T>(Command command)
 
             option.IsRequired = required;
             option.IsHidden = isHidden;
+            option.AllowMultipleArgumentsPerToken = true;
 
             SetFields.Add((model, context) =>
             {
@@ -66,7 +109,7 @@ public class CliModel<T>(Command command)
                 }
             });
 
-            command.AddOption(option);
+            Command.AddOption(option);
         }
 
         return default!;

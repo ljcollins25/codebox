@@ -4,6 +4,8 @@ public ref struct Out<T>
 {
     private ref T valueRef;
 
+    public ref T ValueRef => ref valueRef;
+
     public T Value
     {
         get => valueRef;
@@ -19,6 +21,15 @@ public ref struct Out<T>
     {
         value = default;
         valueRef = ref Unsafe.AsRef<T>(Unsafe.AsPointer(ref value));
+    }
+}
+
+public static class Out
+{
+    public static T Var<T>(out T result, T value)
+    {
+        result = value;
+        return value;
     }
 }
 

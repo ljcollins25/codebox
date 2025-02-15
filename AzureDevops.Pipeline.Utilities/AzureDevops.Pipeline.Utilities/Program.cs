@@ -1,6 +1,9 @@
 ﻿using System;
 using System.CommandLine;
+using System.CommandLine.Parsing;
 using System.Diagnostics;
+using System.Reflection.Metadata;
+using Azure.Storage.Sas;
 
 namespace AzureDevops.Pipeline.Utilities;
 
@@ -42,11 +45,80 @@ public class Program
         return await rootCommand.InvokeAsync(precedingArgs.ToArray());
     }
 
+    private class TestOperation
+    {
+        public int Port;
+
+        public bool BoolArg = true;
+
+        public required List<string> Args;
+
+        public async Task<int> RunAsync()
+        {
+            return 0;
+        }
+    }
+
     public static RootCommand GetCommand(CancellationTokenSource? cts = null, SubProcessRunner? agentRunner = null)
     {
         cts ??= new();
         return new RootCommand
         {
+            CliModel.Bind<TestOperation>(
+                new Command("test") { IsHidden = true },
+                m =>
+                {
+                    var result = new TestOperation()
+                    {
+                        Args = m.Option(c => ref c.Args, name: "args")
+                    };
+
+                    m.Option(c => ref c.Port, name: "port");
+                    m.Option(c => ref c.BoolArg, name: "bool");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            GetStorageCommand(),
+
+            //CliModel.Bind<WriteOperation>(
+            //    new Command("write", "Emits set variable."),
+            //    m =>
+            //    {
+            //        var result = new WriteOperation(m.Console)
+            //        {
+            //            TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+            //                defaultValue: Env.TaskUri,
+            //                description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
+            //            AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true),
+            //            Lines = m.Option(c => ref c.Lines, name: "lines", description: "The lines to write", required: true),
+            //        };
+
+            //        m.Option(c => ref c.Debug, name: "debug");
+
+            //        return result;
+            //    },
+            //    r => r.RunAsync()),
+             CliModel.Bind<InfoTaskOperation>(
+                new Command("info", "Display info."),
+                m =>
+                {
+                    var result = new InfoTaskOperation(m.Console)
+                    {
+                        TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+                            defaultValue: Globals.TaskUrl.Value ?? Env.TaskUri,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token",
+                            defaultValue: Globals.Token,
+                            description: "The access token (e.g. $(System.AccessToken) )", required: true),
+                    };
+
+                    m.Option(c => ref c.Debug, name: "debug");
+
+                    return result;
+                },
+                r => r.RunAsync()),
             CliModel.Bind<RunOperation>(
                 new Command("run", "Run command until it completes or build finishes. Also completes agent invocation task."),
                 m =>
@@ -54,9 +126,11 @@ public class Program
                     var result = new RunOperation(m.Console, cts, agentRunner)
                     {
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
-                            defaultValue: Env.TaskUri,
+                            defaultValue: Globals.TaskUrl.Value ?? Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
-                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token",
+                            defaultValue: Globals.Token,
+                            description: "The access token (e.g. $(System.AccessToken) )", required: true),
                     };
 
                     m.Option(c => ref c.PollSeconds, name: "pollSeconds", defaultValue: 5);
@@ -77,11 +151,15 @@ public class Program
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"
                             ),
-                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
                         JobCount = m.Option(c => ref c.JobCount,
                             name: "jobCount",
                             defaultValue: Env.TotalJobsInPhase,
-                            description: "The number of job slots available for reservation", required: true),
+                            description: "The number of job slots available for synchronization (e.g. $(System.TotalJobsInPhase) )", required: true),
+                        CorrelationKey = m.Option(c => ref c.CorrelationKey,
+                            name: "key",
+                            defaultValue: "",
+                            description: "The key used to correlated between multiple synchronizations in the same job phase", required: true),
                         PhaseId = m.Option(c => ref c.PhaseId,
                             name: "phaseId",
                             defaultValue: Env.PhaseId,
@@ -93,6 +171,79 @@ public class Program
                         defaultValue: Env.JobDisplayName,
                         description: "The name of the job (e.g. $(System.JobDisplayName) )");
                     m.Option(c => ref c.PollSeconds, name: "pollSeconds", defaultValue: 5);
+                    m.Option(c => ref c.Debug, name: "debug");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            CliModel.Bind<LogExtractOperation>(
+                new Command("extract-log", "Extract variables from a log file"),
+                m =>
+                {
+                    var result = new LogExtractOperation(m.Console)
+                    {
+                        TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+                            defaultValue: Env.TaskUri,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true),
+                        Patterns = m.Option(c => ref c.Patterns, name: "--patterns", description: "The patterns for extraction", required: true),
+                    };
+
+                    m.Option(c => ref c.SourceId, name: "source-id", description: "The id of the source task logs to process");
+                    m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
+                    m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
+                    m.Option(c => ref c.IsSecret, name: "secret");
+                    m.Option(c => ref c.IsOutput, name: "output");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            CliModel.Bind<DownloadLogsOperation>(
+                new Command("download-log", "Downloads the log to a file"),
+                m =>
+                {
+                    var result = new DownloadLogsOperation(m.Console)
+                    {
+                        TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+                            defaultValue: Env.TaskUri,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
+                        Output = m.Option(c => ref c.Output, name: "output", description: "The output file or null to output to standard out"),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
+                    };
+
+                    m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
+                    m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
+                    m.Option(c => ref c.Debug, name: "debug");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            CliModel.Bind<RemapTaskLogOperation>(
+                new Command("copy-log", "Copies a reference to the log under another job"),
+                m =>
+                {
+                    var result = new RemapTaskLogOperation(m.Console)
+                    {
+                        TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+                            defaultValue: Env.TaskUri,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
+                        PhaseId = m.Option(c => ref c.PhaseId,
+                            name: "phaseId",
+                            defaultValue: Env.PhaseId.ToNullable(),
+                            description: "The phase id (e.g. $(System.PhaseId))"),
+                        Name = m.Option(c => ref c.Name, name: "name", description: "The name of the task", required: true),
+                    };
+
+                    m.Option(c => ref c.ParentJobName, name: "parent-job-name", description: "The name or id of the parent job");
+                    m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
+                    m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
+                    m.Option(c => ref c.SourceId, name: "source-id", description: "The id of the source task logs to copy");
+                    m.Option(c => ref c.TargetId, name: "target-id", description: "The id of the target task logs to create or replace");
+                    m.Option(c => ref c.Order, name: "order", description: "The order of the created task", defaultValue: Env.JobPositionInPhase.ToNullable());
                     m.Option(c => ref c.Debug, name: "debug");
 
                     return result;
@@ -120,6 +271,67 @@ public class Program
                     return result;
                 },
                 r => r.RunAsync())
+        };
+    }
+
+    public static Command GetStorageCommand()
+    {
+        var common = CliModel.Bind<SasCommonArguments>(
+            new Command("common"),
+            m =>
+            {
+                var result = new SasCommonArguments()
+                {
+                    Permissions = m.Option(c => ref c.Permissions, name: "permissions", description: "The sas permission (i.e. rwdl).", required: true),
+                    AccountName = m.Option(c => ref c.AccountName, name: "account-name", description: "The account name.", required: true),
+                    AccountKey = m.Option(c => ref c.AccountKey, name: "account-key", description: "The account key.", required: true),
+                    Expiry = m.Option(c => ref c.Expiry, name: "expiry", description: "The sas expiry time.", required: true),
+                    Output = m.Option(c => ref c.Output, name: "output", defaultValue: "tsv"),
+                };
+
+                return result;
+            },
+            r => Task.FromResult(0));
+
+        return new Command("storage")
+        {
+            new Command("account")
+            {
+                CliModel.Bind<AccountSasArguments>(
+                    new Command("generate-sas"),
+                    m =>
+                    {
+                        var result = new AccountSasArguments(m.Console)
+                        {
+                            CommonArguments = m.SharedOptions(c => ref c.CommonArguments, common),
+                            Services = m.Option(c => ref c.Services, name: "services", required: true),
+                            ResourceTypes = m.Option(c => ref c.ResourceTypes, name: "resource-types", required: true),
+                        };
+
+                        return result;
+                    },
+                    r => r.RunAsync()),
+            },
+            new[] { true, false }.Select(isBlob =>
+            {
+                return new Command(isBlob ? "blob" : "container")
+                {
+                    CliModel.Bind<BlobOrContainerArguments>(
+                        new Command("generate-sas"),
+                        m =>
+                        {
+                            var result = new BlobOrContainerArguments(m.Console)
+                            {
+                                CommonArguments = m.SharedOptions(c => ref c.CommonArguments, common),
+                                ContainerName = m.Option(c => ref c.ContainerName, name: isBlob ? "container-name" : "name", description: "The container name.", required: true),
+                                BlobName = isBlob ? m.Option(c => ref c.BlobName, name: "name", description: "The blob name.", required: true) : default,
+                            };
+
+                            return result;
+                        },
+                        r => r.RunAsync())
+                };
+            })
         };
     }
 }
