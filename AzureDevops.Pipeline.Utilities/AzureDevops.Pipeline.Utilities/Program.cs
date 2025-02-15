@@ -246,6 +246,7 @@ public class Program
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
                         Id = m.Option(c => ref c.Id,
                             description: "The id of the record"),
+                        Name = m.Option(c => ref c.Name, name: "name", description: "The name of the task"),
                         ParentId = m.Option(c => ref c.ParentId,
                             description: "The parent id of the created record"),
                         RecordType = m.Option(c => ref c.RecordType, name: "type", description: "The record type"),
