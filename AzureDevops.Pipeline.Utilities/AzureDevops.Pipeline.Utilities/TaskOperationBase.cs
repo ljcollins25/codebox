@@ -126,13 +126,15 @@ public abstract class TaskOperationBase(IConsole Console)
             stream);
     }
 
-    public Task<List<string>> GetLogLinesAsync(TimelineRecord record)
+    public Task<List<string>> GetLogLinesAsync(TimelineRecord record, int? startLine = null, int? endLine = null)
     {
         return taskClient.GetLogAsync(
             scopeIdentifier: build.Project.Id,
             hubName: taskInfo.HubName,
             planId: taskInfo.PlanId,
-            logId: record.Log.Id);
+            logId: record.Log.Id,
+            startLine: startLine,
+            endLine: endLine);
     }
 
     public Task<List<TimelineRecord>> UpdateTimelineRecordsAsync(IEnumerable<TimelineRecord> records)

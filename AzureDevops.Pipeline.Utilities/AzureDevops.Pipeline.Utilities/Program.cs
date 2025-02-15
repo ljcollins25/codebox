@@ -224,6 +224,7 @@ public class Program
                         Patterns = m.Option(c => ref c.Patterns, name: "--patterns", description: "The patterns for extraction", required: true),
                     };
 
+                    m.Option(c => ref c.MissingBehavior, name: "missing-behavior", description: "The behavior for missing values", defaultValue: result.MissingBehavior);
                     m.Option(c => ref c.SourceId, name: "source-id", description: "The id of the source task logs to process");
                     m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
                     m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
@@ -245,9 +246,11 @@ public class Program
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
                         Id = m.Option(c => ref c.Id,
+                            name: "id",
                             description: "The id of the record"),
                         Name = m.Option(c => ref c.Name, name: "name", description: "The name of the task"),
                         ParentId = m.Option(c => ref c.ParentId,
+                            name: "parent-id",
                             description: "The parent id of the created record"),
                         RecordType = m.Option(c => ref c.RecordType, name: "type", description: "The record type"),
                         PercentComplete = m.Option(c => ref c.PercentComplete, name: "progress", description: "The percent complete"),

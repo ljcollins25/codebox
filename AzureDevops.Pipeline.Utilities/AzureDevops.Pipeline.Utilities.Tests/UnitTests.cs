@@ -7,11 +7,25 @@ namespace AzureDevops.Pipeline.Utilities.Tests;
 
 public class UnitTests
 {
-    public static async Task TestCommand(string args, int expectedValue = 0)
+    private Dictionary<string, string> replacements => new()
     {
+        ["`"] = "",
+        ["$(System.AccessToken)"] = Globals.Token.Value,
+        ["$(AZPUTILS_OUT_TASK_URL)"] = Globals.TaskUrl.Value,
+    };
+
+    public async Task TestCommand(string args, int expectedValue = 0)
+    {
+        foreach (var (key, value) in replacements)
+        {
+            args = args.Replace(key, value);
+        }
+
+        args = args.ReplaceLineEndings("");
+
         Console.SetError(Console.Out);
         Console.Error.WriteLine($"Running '{args}'");
-        var result = await Program.RunAsync(new (CommandLineStringSplitter.Instance.Split(args).ToArray())
+        var result = await Program.RunAsync(new(CommandLineStringSplitter.Instance.Split(args).ToArray())
         {
             UseExceptionHandler = false
         });
@@ -19,8 +33,37 @@ public class UnitTests
     }
 
     [Fact]
+    public async Task TestExtract()
+    {
+        await TestCommand($"""
+copy-log --complete false --parent-job-name "c3624090-5333-6a86-a523-4f35ed29e114" --name "$(TARGET_LOG_TASKNAME)" --token "{TestSecrets.ProdAdoToken}"
+""");
+
+        await TestCommand($"""
+extract-log --taskUrl "{TestSecrets.ProdTaskUrl}" --start-line "-100" --token "{TestSecrets.ProdAdoToken}" --patterns "Downloaded(?:.*)in(?:.*)(?<DownloadSpeed>~\d+.*/s)" "ProxyInitialIndex[^\d]+(?<ProxyInitialIndex>\d+)"
+""");
+
+    }
+
+    [Fact]
     public async Task TestHelp()
     {
+        Globals.TaskUrl = TestSecrets.ProdTaskUrl;
+        Globals.Token = TestSecrets.ProdAdoToken;
+        await TestCommand("""
+extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(System.AccessToken)" `
+--missing-behavior EnvironmentFallback `
+--patterns `
+"Downloaded(?:.*)in(?:.*)(?<TotalSpeed>~\d+.*/s)" `
+"ProxyInitialIndex[^\d]+(?<ProxyInitialIndex>\d+)" `
+"DownloadSpeedMbps[^\d]+(?<DownloadSpeedMbps>\d+)" `
+"TotalSpeedMbps[^\d]+(?<TotalSpeedMbps>\d+)"
+""");
+
+
+        //await Program.Main("extract-log");
+
+        return;
         await TestCommand("""download-log """);
         await TestCommand("info");
 

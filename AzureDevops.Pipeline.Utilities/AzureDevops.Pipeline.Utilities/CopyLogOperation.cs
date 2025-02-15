@@ -81,9 +81,9 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
             Attempt = sourceRecord.Attempt
         });
 
-        if (log == null)
+        if (StartLine != null || EndLine != null)
         {
-            var logLines = await GetLogLinesAsync(sourceRecord);
+            var logLines = await GetLogLinesAsync(sourceRecord, StartLine, EndLine);
             var stream = new MemoryStream();
             using (var writer = new StreamWriter(stream, leaveOpen: true))
             {
@@ -101,6 +101,7 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
             record = await UpdateTimelineRecordAsync(new()
             {
                 Id = targetId,
+                Name = Name,
                 Log = log,
                 Order = Order,
                 State = TimelineRecordState.Completed,

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Immutable;
 using System.CommandLine;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
@@ -9,6 +10,13 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
 {
+    public enum MissingBehaviors
+    {
+        Skip,
+        Empty,
+        EnvironmentFallback,
+    }
+
     public Guid? SourceId;
 
     public int? StartLine;
@@ -22,18 +30,25 @@ public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
 
     public bool IsOutput;
 
+    public MissingBehaviors MissingBehavior;
+
     protected override async Task<int> RunCoreAsync()
     {
-        Dictionary<string, string> map = await GetValuesAsync();
+        var map = await GetValuesAsync();
+        Console.WriteLine($"Found {map.Count} matches");
         foreach (var entry in map)
         {
-            Helpers.GetSetPipelineVariableText(entry.Key, entry.Value, isSecret: IsSecret, isOutput: IsOutput, emit: true, log: true);
+            var value = entry.Value;
+            if ((MissingBehavior == MissingBehaviors.Skip) && value == null) continue;
+
+            value ??= (MissingBehavior == MissingBehaviors.EnvironmentFallback ? Helpers.GetEnvironmentVariable(entry.Key) : string.Empty);
+            Helpers.GetSetPipelineVariableText(entry.Key, value ?? string.Empty, isSecret: IsSecret, isOutput: IsOutput, emit: true, log: true);
         }
 
         return 0;
     }
 
-    public async Task<Dictionary<string, string>> GetValuesAsync()
+    public async Task<Dictionary<string, string?>> GetValuesAsync()
     {
         var regex = new Regex($"(?:{string.Join(")|(?:", Patterns)})");
 
@@ -47,21 +62,27 @@ public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
         return map;
     }
 
-    public static Dictionary<string, string> ExtractVariables(Regex regex, string logString)
+    public static Dictionary<string, string?> ExtractVariables(Regex regex, string logString)
     {
-        var found = new Dictionary<string, string>();
+        var map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in regex.GetGroupNames().Where(n => !int.TryParse(n, out _)))
+        {
+            map[name] = null;
+        }
+
         foreach (Match match in regex.Matches(logString))
         {
             foreach (Group group in match.Groups)
             {
-                if (!int.TryParse(group.Name, out _))
+                if (group.Success && map.ContainsKey(group.Name))
                 {
-                    found[group.Name] = group.Value;
+                    map[group.Name] = group.Value;
                 }
             }
         }
 
-        return found;
+        return map;
     }
 
 

@@ -56,9 +56,7 @@ public static class Helpers
         {
             string variableName = match.Groups[1].Value;
             string envName = AsEnvironmentVariableName(variableName);
-            string overrideEnvName = OverridePrefix + envName;
-            string? envValue = Environment.GetEnvironmentVariable(overrideEnvName).AsNonEmptyOrOptional().Value
-                ?? Environment.GetEnvironmentVariable(envName);
+            string? envValue = Environment.GetEnvironmentVariable(envName);
 
             if (string.IsNullOrEmpty(envValue))
             {
@@ -80,6 +78,13 @@ public static class Helpers
         }
 
         return result;
+    }
+
+    public static string? GetEnvironmentVariable(string name)
+    {
+        string overrideEnvName = OverridePrefix + name;
+        return Environment.GetEnvironmentVariable(overrideEnvName).AsNonEmptyOrOptional().Value
+                ?? Environment.GetEnvironmentVariable(name);
     }
 
     public static Optional<string> AsNonEmptyOrOptional(this string? s)

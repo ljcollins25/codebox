@@ -4,6 +4,8 @@ public partial class TestSecrets
     public static string StorageAccountKey = "";
     public static string TaskUrl = "";
     public static string AdoToken = "";
+    public static string ProdTaskUrl = "";
+    public static string ProdAdoToken = "";
 
     static TestSecrets()
     {

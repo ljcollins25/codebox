@@ -90,7 +90,7 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
 
     public TField Option<TField>(
         RefFunc<T, TField> getFieldRef,
-        string name = null!,
+        string name,
         string? description = null,
         bool required = false,
         Optional<TField> defaultValue = default,

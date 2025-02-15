@@ -5,7 +5,7 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public class UpdateRecordOperation(IConsole Console) : TaskOperationBase(Console)
 {
-    public required Guid Id;
+    public Guid? Id;
 
     public string? Name;
 
@@ -17,14 +17,16 @@ public class UpdateRecordOperation(IConsole Console) : TaskOperationBase(Console
 
     protected override async Task<int> RunCoreAsync()
     {
-        await UpdateTimelineRecordAsync(new()
+        var record = await UpdateTimelineRecordAsync(new()
         {
-            Id = Id,
+            Id = Id ?? taskInfo.TaskId,
             Name = Name,
             ParentId = ParentId,
             RecordType = RecordType?.ToString(),
             PercentComplete = PercentComplete
         });
+
+        Console.WriteLine($"Updated {record.RecordType} record {record.Id}: Name='{record.Name}'");
 
         return 0;
     }
