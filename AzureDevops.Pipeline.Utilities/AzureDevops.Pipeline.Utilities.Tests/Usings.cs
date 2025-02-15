@@ -1,0 +1,1 @@
+global using TimelineRecord = Microsoft.TeamFoundation.DistributedTask.WebApi.TimelineRecord;

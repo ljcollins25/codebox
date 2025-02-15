@@ -19,38 +19,30 @@ public class SynchronizeOperation(IConsole Console) : TaskOperationBase(Console)
     {
         string allJobsRegisteredKey = $"{PhaseId}";
 
-        try
-        {
-            var guid = Guid.NewGuid();
+        var guid = Guid.NewGuid();
 
-            var record = new TimelineRecord()
-            {
-                Id = PhaseId,
-                Variables =
+        var record = new TimelineRecord()
+        {
+            Id = PhaseId,
+            Variables =
                 {
                     [$"{SyncParticipantVarPrefix}{CorrelationKey}{guid}"] = new VariableValue(DisplayName, false)
                 }
-            };
+        };
 
-            for (; ; await Task.Delay(TimeSpan.FromSeconds(PollSeconds)))
-            {
-                var updatedRecord = await UpdateTimelineRecordAsync(record);
-                record.Variables.Clear();
-
-                var participants = updatedRecord.Variables.Where(k => k.Key.StartsWith(SyncParticipantVarPrefix)).ToList();
-
-                Console.WriteLine($"Job: '{DisplayName}', Participants: {participants.Count}, RequiredParticipants: {JobCount}");
-
-                if (participants.Count >= JobCount)
-                {
-                    return 0;
-                }
-            }
-        }
-        catch
+        for (; ; await Task.Delay(TimeSpan.FromSeconds(PollSeconds)))
         {
-            // Return large negative number to indicate failure
-            return -10000;
+            var updatedRecord = await UpdateTimelineRecordAsync(record);
+            record.Variables.Clear();
+
+            var participants = updatedRecord.Variables.Where(k => k.Key.StartsWith(SyncParticipantVarPrefix)).ToList();
+
+            Console.WriteLine($"Job: '{DisplayName}', Participants: {participants.Count}, RequiredParticipants: {JobCount}");
+
+            if (participants.Count >= JobCount)
+            {
+                return 0;
+            }
         }
     }
 

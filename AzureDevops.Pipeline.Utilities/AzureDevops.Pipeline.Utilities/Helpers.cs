@@ -42,7 +42,7 @@ public static class Helpers
         }
     }
 
-    public static string ExpandVariables(string input, Out<IEnumerable<string>> missingVariables = default, bool requireAll = false)
+    public static string? ExpandVariables(string input, Out<IEnumerable<string>> missingVariables = default, bool requireAll = false)
     {
         missingVariables.Value = Enumerable.Empty<string>();
 
@@ -84,7 +84,7 @@ public static class Helpers
 
     public static Optional<string> AsNonEmptyOrOptional(this string? s)
     {
-        return string.IsNullOrEmpty(s) ? default : s;
+        return string.IsNullOrEmpty(s) ? Optional.Default : s;
     }
 
     public static Optional<T> Or<T>(this Optional<T> first, Optional<T> second)
@@ -96,7 +96,7 @@ public static class Helpers
     public static Optional<T?> ToNullable<T>(this Optional<T> value)
         where T : struct
     {
-        if (!value.HasValue) return default;
+        if (!value.HasValue) return Optional.Default;
 
         return value.Value;
     }

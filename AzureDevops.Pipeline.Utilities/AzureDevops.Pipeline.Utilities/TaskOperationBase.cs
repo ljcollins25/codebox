@@ -37,16 +37,9 @@ public abstract class TaskOperationBase(IConsole Console)
 
     public async Task<int> RunAsync()
     {
-        try
-        {
-            await InitilializeAsync();
+        await InitilializeAsync();
 
-            return await RunCoreAsync();
-        }
-        catch
-        {
-            return -1000000;
-        }
+        return await RunCoreAsync();
     }
 
     protected abstract Task<int> RunCoreAsync();

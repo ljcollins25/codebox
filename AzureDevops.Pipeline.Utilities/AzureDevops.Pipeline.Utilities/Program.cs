@@ -1,5 +1,6 @@
 ﻿using System;
 using System.CommandLine;
+using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Reflection.Metadata;
@@ -11,13 +12,27 @@ using static Helpers;
 
 public class Program
 {
-    public static async Task<int> Main(params string[] args)
+    public static Task<int> Main(params string[] args)
+    {
+        return RunAsync(args);
+    }
+
+    public record struct Args(params string[] Arguments)
+    {
+        public bool UseExceptionHandler { get; set; } = true;
+
+        public static implicit operator Args(string[] args) => new(args);
+
+        public static implicit operator string[](Args args) => args.Arguments;
+    }
+
+    public static async Task<int> RunAsync(Args args)
     {
         var precedingArgs = new List<string>();
         var remainingArgs = new List<string>();
 
         var list = precedingArgs;
-        foreach (var arg in args)
+        foreach (var arg in args.Arguments)
         {
             if (arg == "--" && list != remainingArgs)
             {
@@ -42,7 +57,21 @@ public class Program
 
         RootCommand rootCommand = GetCommand(cts, agentRunner);
 
-        return await rootCommand.InvokeAsync(precedingArgs.ToArray());
+        var builder = new CommandLineBuilder(rootCommand)
+            .UseVersionOption()
+            .UseHelp()
+            .UseEnvironmentVariableDirective()
+            .UseParseDirective()
+            .UseParseErrorReporting();
+
+        if (args.UseExceptionHandler)
+        {
+            builder = builder.UseExceptionHandler();
+        }
+
+        builder = builder.CancelOnProcessTermination();
+
+        return await builder.Build().Parse(precedingArgs.ToArray()).InvokeAsync();
     }
 
     private class TestOperation
