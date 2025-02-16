@@ -2,6 +2,7 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.CommandLine.IO;
+using System.CommandLine.Parsing;
 using System.Runtime.CompilerServices;
 using Microsoft.VisualStudio.Services.Common.CommandLine;
 using Microsoft.VisualStudio.Services.TestManagement.TestPlanning.WebApi;
@@ -27,14 +28,31 @@ public class CliModel
         command.SetHandler(async context =>
         {
             model.Console = context.Console ?? model.Console;
-            var target = getOptions(model);
-            model.Apply(target, context);
+            var target = model.Create(context);
             context.ExitCode = await runAsync(target);
         });
 
         return model;
     }
 }
+
+//public class ArgumentConverter<T>
+//{
+//    public static implicit operator ArgumentConverter<T>(Func<string, T> singleArgConverter)
+//    {
+
+//    }
+
+//    public static implicit operator ArgumentConverter<T>(Func<List<string>, T> singleArgConverter)
+//    {
+
+//    }
+
+//    public static implicit operator ArgumentConverter<T>(Func<List<string>, T> singleArgConverter)
+//    {
+
+//    }
+//}
 
 public delegate ref TField RefFunc<in T, TField>(T model);
 
@@ -51,6 +69,7 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
 {
     public bool OptionsMode { get; set; } = true;
     public IConsole Console { get; set; } = new SystemConsole();
+    public CancellationToken Token { get; set; } = default;
 
     private List<Action<T, InvocationContext>> SetFields { get; } = new();
 
@@ -64,6 +83,7 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
 
     public T Create(InvocationContext context)
     {
+        Token = context.GetCancellationToken();
         return CreateValue(this, context);
     }
 
@@ -95,12 +115,26 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
         bool required = false,
         Optional<TField> defaultValue = default,
         bool isHidden = false,
-        RefFunc<T, bool>? isExplicitRef = null)
+        RefFunc<T, bool>? isExplicitRef = null,
+        ParseArgument<TField>? parse = null)
     {
         if (OptionsMode)
         {
             name = name.StartsWith("--") ? name : $"--{name}";
-            var option = defaultValue.HasValue
+
+            var option =  parse != null
+                ? new Option<TField>(name, parseArgument: argResult =>
+                    {
+                        if (defaultValue.HasValue)
+                        {
+
+                        }
+
+                        return parse!(argResult);
+                    },
+                    isDefault: defaultValue.HasValue,
+                    description: description)
+                : defaultValue.HasValue
                 ? new Option<TField>(name, getDefaultValue: () => defaultValue.Value!, description: description)
                 : new Option<TField>(name, description: description);
 

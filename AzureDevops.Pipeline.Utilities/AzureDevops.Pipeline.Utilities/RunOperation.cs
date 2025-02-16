@@ -54,14 +54,7 @@ public class RunOperation(IConsole Console, CancellationTokenSource agentCancell
             if (record.Result == null)
             {
                 Console.WriteLine($"Setting result to {result}");
-                await taskClient.RaisePlanEventAsync(
-                    scopeIdentifier: build.Project.Id,
-                    planType: taskInfo.HubName,
-                    planId: taskInfo.PlanId,
-                    eventData: new TaskCompletedEvent(
-                        taskInfo.JobId,
-                        taskInfo.TaskId,
-                        result));
+                await RaisePlanEventAsync(GetTaskCompletedEvent(result));
             }
             else
             {

@@ -80,6 +80,8 @@ public class Program
 
         public bool BoolArg = true;
 
+        public Uri? UriArg;
+
         public required List<string> Args;
 
         public async Task<int> RunAsync()
@@ -102,6 +104,7 @@ public class Program
                         Args = m.Option(c => ref c.Args, name: "args")
                     };
 
+                    m.Option(c => ref c.UriArg, name: "uri");
                     m.Option(c => ref c.Port, name: "port");
                     m.Option(c => ref c.BoolArg, name: "bool");
 
@@ -279,7 +282,6 @@ public class Program
                     m.Option(c => ref c.Prefix, name: "prefix", description: "The prefix to add to each line.");
 
                     m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
-                    m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
                     m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
                     m.Option(c => ref c.StartLinePattern, name: "start-line-pattern", description: "The start line regex pattern of the logs");
                     m.Option(c => ref c.EndLinePattern, name: "end-line-pattern", description: "The end line pattern of the logs");
@@ -359,8 +361,9 @@ public class Program
                     Permissions = m.Option(c => ref c.Permissions, name: "permissions", description: "The sas permission (i.e. rwdl).", required: true),
                     AccountName = m.Option(c => ref c.AccountName, name: "account-name", description: "The account name.", required: true),
                     AccountKey = m.Option(c => ref c.AccountKey, name: "account-key", description: "The account key.", required: true),
-                    Expiry = m.Option(c => ref c.Expiry, name: "expiry", description: "The sas expiry time.", required: true),
+                    ExpiryValue = m.Option(c => ref c.ExpiryValue, name: "expiry", description: "The sas expiry time.", required: true),
                     Output = m.Option(c => ref c.Output, name: "output", defaultValue: "tsv"),
+                    Uri = m.Option(c => ref c.Uri, name: "full", defaultValue: false),
                 };
 
                 return result;
@@ -369,6 +372,22 @@ public class Program
 
         return new Command("storage")
         {
+            CliModel.Bind<UploadOperation>(
+                new Command("upload"),
+                m =>
+                {
+                    var result = new UploadOperation(m.Console, m.Token)
+                    {
+                        Source = m.Option(c => ref c.Source, name: "source", description: "The source file path", required: true),
+                        TargetUri = m.Option(c => ref c.TargetUri, name: "target", description: "The target blob uri", required: true),
+                    };
+
+                    m.Option(c => ref c.Overwrite, name: "overwrite", defaultValue: false);
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
             new Command("account")
             {
                 CliModel.Bind<AccountSasArguments>(

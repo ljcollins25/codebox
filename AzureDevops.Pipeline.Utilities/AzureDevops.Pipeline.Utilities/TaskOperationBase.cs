@@ -140,6 +140,16 @@ public abstract class TaskOperationBase(IConsole Console)
             planId: taskInfo.PlanId);
     }
 
+    public Task<TaskLog> CreateLogAsync(TimelineRecord record)
+    {
+        string path = $"logs/{record.Id}";
+        return taskClient.CreateLogAsync(
+            scopeIdentifier: build.Project.Id,
+            hubName: taskInfo.HubName,
+            planId: taskInfo.PlanId,
+            log: new TaskLog(path));
+    }
+
     public async Task<IReadOnlyList<string>> GetLogLinesAsync(TimelineRecord record, int? startLine = null, int? endLine = null)
     {
         return await taskClient.GetLogAsync(
@@ -149,6 +159,25 @@ public abstract class TaskOperationBase(IConsole Console)
             logId: record.Log.Id,
             startLine: startLine,
             endLine: endLine);
+    }
+
+    public TaskCompletedEvent GetTaskCompletedEvent(TaskResult result, TimelineRecord? taskRecord = null)
+    {
+        return new TaskCompletedEvent(
+                taskRecord?.ParentId ?? taskInfo.JobId,
+                taskRecord?.Id ?? taskInfo.TaskId,
+                result
+            );
+    }
+
+    public Task RaisePlanEventAsync<T>(T eventData)
+        where T : JobEvent
+    {
+        return taskClient.RaisePlanEventAsync(
+            scopeIdentifier: build.Project.Id,
+            planType: taskInfo.HubName,
+            planId: taskInfo.PlanId,
+            eventData: eventData);
     }
 
     public Task<List<TimelineRecord>> UpdateTimelineRecordsAsync(IEnumerable<TimelineRecord> records)

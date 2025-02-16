@@ -80,6 +80,21 @@ public static class Helpers
         return result;
     }
 
+    public static UriBuilder Scrub(this Uri uri)
+    {
+        var scrubbedUri = new UriBuilder(uri)
+        {
+            Query = null
+        };
+
+        return scrubbedUri;
+    }
+
+    public static double Truncate(this double value, int digits)
+    {
+        return Math.Round(value, digits, MidpointRounding.ToZero);
+    }
+
     public static string? GetEnvironmentVariable(string name)
     {
         string overrideEnvName = OverridePrefix + name;

@@ -11,6 +11,8 @@ public class UnitTests
     {
         ["`"] = "",
         ["$(System.AccessToken)"] = Globals.Token.Value,
+        ["$(StorageAccountName)"] = TestSecrets.StorageAccountName,
+        ["$(StorageAccountKey)"] = TestSecrets.StorageAccountKey,
         ["$(AZPUTILS_OUT_TASK_URL)"] = Globals.TaskUrl.Value,
     };
 
@@ -50,9 +52,11 @@ extract-log --taskUrl "{TestSecrets.ProdTaskUrl}" --start-line "-100" --token "{
     {
         Globals.TaskUrl = TestSecrets.ProdTaskUrl;
         Globals.Token = TestSecrets.ProdAdoToken;
+        await TestCommand("""download-log --start-line -200 --start-line-pattern "INFO\|Statistics\|Statistics" """);
 
-        await TestCommand("""copy-log --copy-state --target-id "1db9390f-866a-4d8e-2575-d0d7c014c013" --name "[2] Job 2 E2E=2411 DL=920 IP=172.19.16.1" --token "$(System.AccessToken)" """);
-        //await TestCommand("""download-log --start-line -200 --start-line-pattern "INFO\|Statistics\|Statistics" """);
+        //await TestCommand("""copy-log --name "Summary"  --start-line -200 --start-line-pattern "INFO\|Statistics\|Statistics" --parent-job-name c3624090-5333-6a86-a523-4f35ed29e114 --copy-state """);
+
+        //await TestCommand("""copy-log --copy-state --target-id "1db9390f-866a-4d8e-2575-d0d7c014c013" --name "[2] Job 2 E2E=2411 DL=920 IP=172.19.16.1" --token "$(System.AccessToken)" """);
 
 
         return;
@@ -134,6 +138,38 @@ extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(
             Environment.SetEnvironmentVariable(envLine.Substring(0, index), envLine.Substring(index + 1));
         }
         await TestCommand(""" synchronize --pollSeconds 2 --token "$(System.AccessToken)" --debug """);
+    }
+
+    [Fact]
+    public async Task TestTypeConvert()
+    {
+        await TestCommand("test --uri https://test.com");
+
+        await TestCommand("storage container generate-sas ");
+    }
+
+    [Fact]
+    public async Task TestUpload()
+    {
+        string file = @"C:\bin\tasklog.txt";
+
+        await TestCommand("""
+        storage blob generate-sas
+            --account-name $(StorageAccountName)
+            --account-key $(StorageAccountKey)
+            --container-name enlistments
+            --name testlogs/log2.txt
+            --permissions rwdl
+            --expiry 2d
+            --full
+        """);
+
+        //return;
+
+        var uri = Globals.GeneratedSas;
+
+        await TestCommand($"""download-log --taskUrl "{TestSecrets.ProdTaskUrl}" --token "{TestSecrets.ProdAdoToken}" --output "{file}" """);
+        await TestCommand($"""storage upload --source "{file}" --target "{uri}" --overwrite """);
     }
 
     [Fact]

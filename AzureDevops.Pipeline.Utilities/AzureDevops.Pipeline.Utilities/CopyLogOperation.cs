@@ -105,8 +105,18 @@ public class CopyLogOperation(IConsole Console) : LogOperationBase(Console)
             });
         }
 
-        if (NeedsPreprocessing && record.Log != null)
+        if (NeedsPreprocessing)
         {
+            if (record.Log == null)
+            {
+                record.Log = await CreateLogAsync(record);
+                record = await UpdateTimelineRecordAsync(new()
+                {
+                    Id = record.Id,
+                    Log = record.Log
+                });
+            }
+
             var logLines = await GetProcessedLogLinesAsync(sourceRecord);
 
             var stream = new MemoryStream();

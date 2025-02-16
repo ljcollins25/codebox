@@ -15,6 +15,8 @@ public class UpdateRecordOperation(IConsole Console) : TaskOperationBase(Console
 
     public RecordTypes? RecordType;
 
+    public TaskResult? Result;
+
     protected override async Task<int> RunCoreAsync()
     {
         var record = await UpdateTimelineRecordAsync(new()
