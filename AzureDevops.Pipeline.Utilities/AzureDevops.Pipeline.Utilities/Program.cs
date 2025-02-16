@@ -275,8 +275,14 @@ public class Program
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
                     };
 
+                    m.Option(c => ref c.HeaderLines, name: "prepend", description: "The header line(s) to add to the log");
+                    m.Option(c => ref c.Prefix, name: "prefix", description: "The prefix to add to each line.");
+
+                    m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
                     m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
                     m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
+                    m.Option(c => ref c.StartLinePattern, name: "start-line-pattern", description: "The start line regex pattern of the logs");
+                    m.Option(c => ref c.EndLinePattern, name: "end-line-pattern", description: "The end line pattern of the logs");
                     m.Option(c => ref c.Debug, name: "debug");
 
                     return result;
@@ -300,12 +306,17 @@ public class Program
                         Name = m.Option(c => ref c.Name, name: "name", description: "The name of the task", required: true),
                     };
 
+                    m.Option(c => ref c.HeaderLines, name: "prepend", description: "The header line(s) to add to the log");
+                    m.Option(c => ref c.Prefix, name: "prefix", description: "The prefix to add to each line.");
+
                     m.Option(c => ref c.ParentJobName, name: "parent-job-name", description: "The name or id of the parent job");
                     m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
                     m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
+                    m.Option(c => ref c.StartLinePattern, name: "start-line-pattern", description: "The start line regex pattern of the logs");
+                    m.Option(c => ref c.EndLinePattern, name: "end-line-pattern", description: "The end line pattern of the logs");
                     m.Option(c => ref c.SourceId, name: "source-id", description: "The id of the source task logs to copy");
                     m.Option(c => ref c.TargetId, name: "target-id", description: "The id of the target task logs to create or replace");
-                    m.Option(c => ref c.Complete, name: "complete", description: "Whether to complete the generated task", defaultValue: true);
+                    m.Option(c => ref c.CopyState, name: "copy-state", description: "Whether to copy the full state of the source record", defaultValue: result.CopyState);
                     m.Option(c => ref c.Order, name: "order", description: "The order of the created task", defaultValue: Env.JobPositionInPhase.ToNullable());
                     m.Option(c => ref c.Debug, name: "debug");
 

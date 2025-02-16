@@ -7,15 +7,11 @@ using Microsoft.TeamFoundation.DistributedTask.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
-public class DownloadLogsOperation(IConsole Console) : TaskOperationBase(Console)
+public class DownloadLogsOperation(IConsole Console) : LogOperationBase(Console)
 {
     public string? Output;
 
     public string? SourceId;
-
-    public int? StartLine;
-
-    public int? EndLine;
 
     protected override async Task<int> RunCoreAsync()
     {
@@ -32,19 +28,42 @@ public class DownloadLogsOperation(IConsole Console) : TaskOperationBase(Console
 
         if (Output == null)
         {
-            using var s = await logResponse.Content.ReadAsStreamAsync();
-            using var reader = new StreamReader(s);
-
-            while (Out.Var(out var line, await reader.ReadLineAsync()) != null)
+            if (NeedsPreprocessing)
             {
-                Console.WriteLine(line!);
+                var lines = await GetProcessedLogLinesAsync(sourceRecord);
+                foreach (var line in lines)
+                {
+                    Console.WriteLine(line!);
+                }
+            }
+            else
+            {
+                using var s = await logResponse.Content.ReadAsStreamAsync();
+                using var reader = new StreamReader(s);
+
+                while (Out.Var(out var line, await reader.ReadLineAsync()) != null)
+                {
+                    Console.WriteLine(line!);
+                }
             }
         }
         else
         {
             using (var fs = File.Open(Output, FileMode.Create, FileAccess.ReadWrite))
             {
-                await logResponse.Content.CopyToAsync(fs);
+                if (NeedsPreprocessing)
+                {
+                    var lines = await GetProcessedLogLinesAsync(sourceRecord);
+                    using var writer = new StreamWriter(fs);
+                    foreach (var line in lines)
+                    {
+                        writer.WriteLine(line!);
+                    }
+                }
+                else
+                {
+                    await logResponse.Content.CopyToAsync(fs);
+                }
             }
         }
 

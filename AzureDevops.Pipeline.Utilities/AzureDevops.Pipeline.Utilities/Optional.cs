@@ -11,6 +11,13 @@ public record struct Optional<T>(T? Value, bool HasValue = true)
         return select(Value);
     }
 
+    public Optional<TResult> Select<TResult>(Func<T?, TResult> select)
+    {
+        if (!HasValue) return default;
+
+        return select(Value);
+    }
+
     public Optional<TResult> ThenTry<TResult>(Func<T?, (bool, TResult)> select)
     {
         if (!HasValue) return default;

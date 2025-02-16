@@ -8,7 +8,7 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public static class Helpers
 {
-    public const string TaskUriTemplate = "$(System.CollectionUri)$(System.TeamProject)?buildId=$(Build.BuildId)&jobId=$(System.JobId)&planId=$(System.PlanId)&taskId=$(System.TaskInstanceId)&timelineId=$(System.TimelineId)";
+    public const string TaskUriTemplate = "$(System.CollectionUri)$(System.TeamProject)?buildId=$(Build.BuildId)&jobId=$(System.JobId)&planId=$(System.PlanId)&timelineId=$(System.TimelineId)&taskId=$(System.TaskInstanceId)";
 
     public static readonly Regex VariableSeparatorPattern = new Regex(@"[\._\-]");
     public static readonly Regex VariablePattern = new Regex(@"\$\(([\w\._\-]+)\)");
@@ -56,7 +56,7 @@ public static class Helpers
         {
             string variableName = match.Groups[1].Value;
             string envName = AsEnvironmentVariableName(variableName);
-            string? envValue = Environment.GetEnvironmentVariable(envName);
+            string? envValue = GetEnvironmentVariable(envName);
 
             if (string.IsNullOrEmpty(envValue))
             {

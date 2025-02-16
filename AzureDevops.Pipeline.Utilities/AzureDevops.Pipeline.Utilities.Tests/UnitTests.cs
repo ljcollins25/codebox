@@ -50,6 +50,12 @@ extract-log --taskUrl "{TestSecrets.ProdTaskUrl}" --start-line "-100" --token "{
     {
         Globals.TaskUrl = TestSecrets.ProdTaskUrl;
         Globals.Token = TestSecrets.ProdAdoToken;
+
+        await TestCommand("""copy-log --copy-state --target-id "1db9390f-866a-4d8e-2575-d0d7c014c013" --name "[2] Job 2 E2E=2411 DL=920 IP=172.19.16.1" --token "$(System.AccessToken)" """);
+        //await TestCommand("""download-log --start-line -200 --start-line-pattern "INFO\|Statistics\|Statistics" """);
+
+
+        return;
         await TestCommand("""
 extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(System.AccessToken)" `
 --missing-behavior EnvironmentFallback `

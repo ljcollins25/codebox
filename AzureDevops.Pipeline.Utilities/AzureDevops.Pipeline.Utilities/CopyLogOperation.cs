@@ -2,12 +2,13 @@
 using System.CommandLine;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
-public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
+public class CopyLogOperation(IConsole Console) : LogOperationBase(Console)
 {
     public Guid? PhaseId;
 
@@ -19,13 +20,9 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
 
     public required string Name;
 
-    public bool Complete = true;
+    public bool CopyState = false;
 
     public int? Order;
-
-    public int? StartLine;
-
-    public int? EndLine;
 
     protected override async Task<int> RunCoreAsync()
     {
@@ -62,28 +59,56 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
 
         Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_TARGET_ID", targetId.ToString(), emit: true, log: true);
 
-        var sourceRecord = await GetRecordAsync(sourceId);
+        TimelineRecord sourceRecord = await GetRecordAsync(sourceId)!;
 
         TaskLogReference? log = default;
-        if (StartLine == null && EndLine == null)
+
+
+        Console.WriteLine($"Source Log {sourceRecord.Log?.Id} for {sourceRecord.Id}:{sourceRecord.Name}");
+
+        if (!NeedsPreprocessing && sourceRecord.Log != null)
         {
             log = sourceRecord.Log;
         }
 
-        record ??= await UpdateTimelineRecordAsync(new()
+        if (CopyState)
         {
-            Id = targetId,
-            Name = Name,
-            ParentId = parentId,
-            RecordType = "Task",
-            Log = log,
-            Order = Order,
-            Attempt = sourceRecord.Attempt
-        });
+            record = await UpdateTimelineRecordAsync(new()
+            {
+                Id = targetId,
+                Name = Name,
+                ParentId = parentId,
+                RecordType = "Task",
+                Log = log,
+                Order = Order,
+                Attempt = sourceRecord.Attempt,
+                State = sourceRecord.State,
+                StartTime = sourceRecord.StartTime,
+                FinishTime = sourceRecord.FinishTime,
+                Result = sourceRecord.Result
+            });
 
-        if (StartLine != null || EndLine != null)
+            if (log != null)
+            {
+                Console.WriteLine($"Copied log {record.Log?.Id} to {record.Id}:{record.Name}. ");
+            }
+        }
+        else
         {
-            var logLines = await GetLogLinesAsync(sourceRecord, StartLine, EndLine);
+            record ??= await UpdateTimelineRecordAsync(new()
+            {
+                Id = targetId,
+                Name = Name,
+                ParentId = parentId,
+                RecordType = "Task",
+                Log = log
+            });
+        }
+
+        if (NeedsPreprocessing && record.Log != null)
+        {
+            var logLines = await GetProcessedLogLinesAsync(sourceRecord);
+
             var stream = new MemoryStream();
             using (var writer = new StreamWriter(stream, leaveOpen: true))
             {
@@ -94,21 +119,6 @@ public class CopyLogOperation(IConsole Console) : TaskOperationBase(Console)
             }
 
             await AppendLogContentAsync(record, stream);
-        }
-
-        if (Complete)
-        {
-            record = await UpdateTimelineRecordAsync(new()
-            {
-                Id = targetId,
-                Name = Name,
-                Log = log,
-                Order = Order,
-                State = TimelineRecordState.Completed,
-                StartTime = sourceRecord.StartTime,
-                FinishTime = sourceRecord.FinishTime ?? DateTime.UtcNow,
-                Result = sourceRecord.Result ?? TaskResult.Succeeded
-            });
         }
 
         return 0;

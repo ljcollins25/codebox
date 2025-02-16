@@ -34,7 +34,7 @@ public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
 
     protected override async Task<int> RunCoreAsync()
     {
-        var map = await GetValuesAsync();
+        var map = await GetValuesAsync(pollLog: true);
         Console.WriteLine($"Found {map.Count} matches");
         foreach (var entry in map)
         {
@@ -48,13 +48,25 @@ public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
         return 0;
     }
 
-    public async Task<Dictionary<string, string?>> GetValuesAsync()
+    public async Task<Dictionary<string, string?>> GetValuesAsync(bool pollLog = false)
     {
         var regex = new Regex($"(?:{string.Join(")|(?:", Patterns)})");
 
-        var record = await GetRecordAsync(SourceId ?? taskInfo.TaskId);
+        int iterations = 5;
+        TimelineRecord record;
+        do
+        {
+            record = await GetRecordAsync(SourceId ?? taskInfo.TaskId);
+            if (record.Log != null) break;
 
-        var logLines = await GetLogLinesAsync(record);
+            Console.WriteLine($"Log not found for {record.Id}: '{record.Name}'. Waiting 5 seconds...");
+            await Task.Delay(TimeSpan.FromSeconds(5));
+        }
+        while (iterations-- > 0);
+
+        var logLines = record.Log == null
+            ? Array.Empty<string>()
+            : await GetLogLinesAsync(record);
 
         var logString = string.Join("\n", logLines);
 

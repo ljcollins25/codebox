@@ -126,9 +126,23 @@ public abstract class TaskOperationBase(IConsole Console)
             stream);
     }
 
-    public Task<List<string>> GetLogLinesAsync(TimelineRecord record, int? startLine = null, int? endLine = null)
+    public async Task<TaskLog> GetLog(TimelineRecord record)
     {
-        return taskClient.GetLogAsync(
+        var logs = await GetLogs();
+        return logs.First(l => l.Id == record.Log.Id);
+    }
+
+    public Task<List<TaskLog>> GetLogs()
+    {
+        return taskClient.GetLogsAsync(
+            scopeIdentifier: build.Project.Id,
+            hubName: taskInfo.HubName,
+            planId: taskInfo.PlanId);
+    }
+
+    public async Task<IReadOnlyList<string>> GetLogLinesAsync(TimelineRecord record, int? startLine = null, int? endLine = null)
+    {
+        return await taskClient.GetLogAsync(
             scopeIdentifier: build.Project.Id,
             hubName: taskInfo.HubName,
             planId: taskInfo.PlanId,
