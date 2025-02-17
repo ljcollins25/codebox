@@ -36,7 +36,7 @@ public record SasCommonArguments
 
     public required string AccountKey;
 
-    public bool Uri;
+    public bool EmitFullUri;
 
     public string? Output;
 
@@ -64,7 +64,7 @@ public abstract class SasArgumentsBase(IConsole console)
         var query = parameters.ToString();
 
         query = query.TrimStart('?');
-        if (CommonArguments.Uri)
+        if (CommonArguments.EmitFullUri)
         {
             UriBuilder.Query = query;
             return UriBuilder.ToString();
@@ -136,4 +136,4 @@ public class AccountSasArguments(IConsole console) : SasArgumentsBase(console)
 
         return builder.ToSasQueryParameters(new StorageSharedKeyCredential(CommonArguments.AccountName, CommonArguments.AccountKey), out _);
     }
-}
+} 

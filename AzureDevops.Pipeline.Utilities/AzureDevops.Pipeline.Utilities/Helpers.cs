@@ -1,8 +1,12 @@
+using System.Buffers;
 using System.CommandLine;
+using System.CommandLine.Parsing;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.VisualStudio.Services.Commerce;
 
 namespace AzureDevops.Pipeline.Utilities;
 
@@ -78,6 +82,36 @@ public static class Helpers
         }
 
         return result;
+    }
+
+    public static async Task<long> CopyToAsync(this Stream sourceStream, Stream targetStream, IConsole console, CancellationToken token = default, int bufferSize = 1 << 20)
+    {
+        var totalLength = sourceStream.Length;
+        long copied = 0;
+        var remaining = totalLength;
+
+        byte[] buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min(totalLength, bufferSize));
+        try
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            int bytesRead;
+            while ((bytesRead = await sourceStream.ReadAsync(new Memory<byte>(buffer), token)) != 0)
+            {
+                await targetStream.WriteAsync(new ReadOnlyMemory<byte>(buffer, 0, bytesRead), token);
+
+                copied += bytesRead;
+                var percentage = (copied * 100.0) / totalLength;
+                Console.WriteLine($"Copied ({percentage.Truncate(1)}%) {copied} of {totalLength} in {watch.Elapsed}");
+
+                watch.Restart();
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return copied;
     }
 
     public static UriBuilder Scrub(this Uri uri)

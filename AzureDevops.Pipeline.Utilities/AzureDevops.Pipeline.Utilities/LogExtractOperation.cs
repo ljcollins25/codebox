@@ -52,17 +52,22 @@ public class LogExtractOperation(IConsole Console) : TaskOperationBase(Console)
     {
         var regex = new Regex($"(?:{string.Join(")|(?:", Patterns)})");
 
-        int iterations = 5;
+        int iterations = 0;
         TimelineRecord record;
         do
         {
-            record = await GetRecordAsync(SourceId ?? taskInfo.TaskId);
+            record = await GetRecordAsync(SourceId ?? taskInfo.TaskId, forceRefresh: iterations != 0);
             if (record.Log != null) break;
+
+            var log = record.Log = await TryGetLogAsync(record);
+
+            Console.WriteLine($"Log not found for {record.Id}: Trying alternative way to find associated log (success={log != null}).");
+
 
             Console.WriteLine($"Log not found for {record.Id}: '{record.Name}'. Waiting 5 seconds...");
             await Task.Delay(TimeSpan.FromSeconds(5));
         }
-        while (iterations-- > 0);
+        while (iterations++ < 5);
 
         var logLines = record.Log == null
             ? Array.Empty<string>()

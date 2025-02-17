@@ -4,13 +4,20 @@ using System.CommandLine.Invocation;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
 using System.Runtime.CompilerServices;
-using Microsoft.VisualStudio.Services.Common.CommandLine;
 using Microsoft.VisualStudio.Services.TestManagement.TestPlanning.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
-public class CliModel
+public static class CliModel
 {
+    public static void Add(this Command command, IEnumerable<Option> options)
+    {
+        foreach (var option in options)
+        {
+            command.Add(option);
+        }
+    }
+
     public static CliModel<T> Bind<T>(Command command, Func<CliModel<T>, T> getOptions, Func<T, Task<int>> runAsync, ICliModel<T>? parent = null)
     {
         var model = new CliModel<T>(command, (model, context) =>

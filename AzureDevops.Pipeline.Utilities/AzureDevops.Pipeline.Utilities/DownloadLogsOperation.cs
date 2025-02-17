@@ -2,6 +2,7 @@
 using System.CommandLine;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
 
@@ -9,7 +10,7 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public class DownloadLogsOperation(IConsole Console) : LogOperationBase(Console)
 {
-    public string? Output;
+    public string? Target;
 
     public string? SourceId;
 
@@ -26,7 +27,7 @@ public class DownloadLogsOperation(IConsole Console) : LogOperationBase(Console)
 
         logResponse.EnsureSuccessStatusCode();
 
-        if (Output == null)
+        if (Target == null)
         {
             if (NeedsPreprocessing)
             {
@@ -49,7 +50,7 @@ public class DownloadLogsOperation(IConsole Console) : LogOperationBase(Console)
         }
         else
         {
-            using (var fs = File.Open(Output, FileMode.Create, FileAccess.ReadWrite))
+            using (var fs = File.Open(Target, FileMode.Create, FileAccess.ReadWrite))
             {
                 if (NeedsPreprocessing)
                 {
@@ -57,7 +58,7 @@ public class DownloadLogsOperation(IConsole Console) : LogOperationBase(Console)
                     using var writer = new StreamWriter(fs);
                     foreach (var line in lines)
                     {
-                        writer.WriteLine(line!);
+                        line!.WriteLine(writer);
                     }
                 }
                 else

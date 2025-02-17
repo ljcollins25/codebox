@@ -213,7 +213,22 @@ public class Program
                     return result;
                 },
                 r => r.RunAsync()),
+            CliModel.Bind<ZipOperation>(
+                new Command("gz", "Compresses the given file using gzip to the given path"),
+                m =>
+                {
+                    var result = new ZipOperation(m.Console, m.Token)
+                    {
+                        Source = m.Option(c => ref c.Source, name: "source", description: "The source file path", required: true),
+                        Target = m.Option(c => ref c.Target, name: "target", description: "The target file path", required: true),
+                    };
 
+                    m.Option(c => ref c.Overwrite, name: "overwrite", defaultValue: result.Overwrite);
+                    m.Option(c => ref c.CompressionLevel, name: "compression-level", defaultValue: result.CompressionLevel);
+
+                    return result;
+                },
+                r => r.RunAsync()),
             CliModel.Bind<LogExtractOperation>(
                 new Command("extract-log", "Extract variables from a log file"),
                 m =>
@@ -274,12 +289,17 @@ public class Program
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
-                        Output = m.Option(c => ref c.Output, name: "output", description: "The output file or null to output to standard out"),
+                        Target = m.Option(c => ref c.Target, name: "target", description: "The target file or null to output to standard out"),
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
                     };
 
                     m.Option(c => ref c.HeaderLines, name: "prepend", description: "The header line(s) to add to the log");
+                    m.Option(c => ref c.FormatHeaders, name: "format-headers", description: "Causes header lines to be formatted along with log lines", defaultValue: result.FormatHeaders);
                     m.Option(c => ref c.Prefix, name: "prefix", description: "The prefix to add to each line.");
+                    m.Option(c => ref c.Prefix, name: "escaping", description: "The escaping rules to apply to the line text");
+
+                    m.Option(c => ref c.Format, name: "format", description: "The format string to replace token in");
+                    m.Option(c => ref c.ReplacementToken, name: "replacement-token", description: "The replacement token in the format string", defaultValue: result.ReplacementToken);
 
                     m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
                     m.Option(c => ref c.EndLine, name: "end-line", description: "The end line of the logs");
@@ -309,7 +329,12 @@ public class Program
                     };
 
                     m.Option(c => ref c.HeaderLines, name: "prepend", description: "The header line(s) to add to the log");
+                    m.Option(c => ref c.FormatHeaders, name: "format-headers", description: "Causes header lines to be formatted along with log lines", defaultValue: result.FormatHeaders);
                     m.Option(c => ref c.Prefix, name: "prefix", description: "The prefix to add to each line.");
+                    m.Option(c => ref c.Prefix, name: "escaping", description: "The escaping rules to apply to the line text");
+
+                    m.Option(c => ref c.Format, name: "format", description: "The format string to replace token in");
+                    m.Option(c => ref c.ReplacementToken, name: "replacement-token", description: "The replacement token in the format string", defaultValue: result.ReplacementToken);
 
                     m.Option(c => ref c.ParentJobName, name: "parent-job-name", description: "The name or id of the parent job");
                     m.Option(c => ref c.StartLine, name: "start-line", description: "The start line of the logs");
@@ -363,7 +388,7 @@ public class Program
                     AccountKey = m.Option(c => ref c.AccountKey, name: "account-key", description: "The account key.", required: true),
                     ExpiryValue = m.Option(c => ref c.ExpiryValue, name: "expiry", description: "The sas expiry time.", required: true),
                     Output = m.Option(c => ref c.Output, name: "output", defaultValue: "tsv"),
-                    Uri = m.Option(c => ref c.Uri, name: "full", defaultValue: false),
+                    EmitFullUri = m.Option(c => ref c.EmitFullUri, name: "full", defaultValue: false),
                 };
 
                 return result;
@@ -417,7 +442,7 @@ public class Program
                             {
                                 CommonArguments = m.SharedOptions(c => ref c.CommonArguments, common),
                                 ContainerName = m.Option(c => ref c.ContainerName, name: isBlob ? "container-name" : "name", description: "The container name.", required: true),
-                                BlobName = isBlob ? m.Option(c => ref c.BlobName, name: "name", description: "The blob name.", required: true) : default,
+                                BlobName = m.Option(c => ref c.BlobName, name: isBlob ? "name" : "blob-name", description: "The blob name.", required: isBlob)
                             };
 
                             return result;

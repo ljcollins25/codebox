@@ -126,10 +126,15 @@ public abstract class TaskOperationBase(IConsole Console)
             stream);
     }
 
-    public async Task<TaskLog> GetLog(TimelineRecord record)
+    public async Task<TaskLog?> TryGetLogAsync(TimelineRecord record)
     {
         var logs = await GetLogs();
-        return logs.First(l => l.Id == record.Log.Id);
+
+        string path = record.Log == null ? $"logs/{record.Id}" : null;
+
+        return logs.FirstOrDefault(l => path != null
+            ? string.Equals(path, l.Path, StringComparison.OrdinalIgnoreCase)
+            : l.Id == record.Log.Id);
     }
 
     public Task<List<TaskLog>> GetLogs()

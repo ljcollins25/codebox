@@ -52,7 +52,7 @@ extract-log --taskUrl "{TestSecrets.ProdTaskUrl}" --start-line "-100" --token "{
     {
         Globals.TaskUrl = TestSecrets.ProdTaskUrl;
         Globals.Token = TestSecrets.ProdAdoToken;
-        await TestCommand("""download-log --start-line -200 --start-line-pattern "INFO\|Statistics\|Statistics" """);
+        await TestCommand("""download-log --start-line -200 --start-line-pattern "INFO\|Statistics\|Statistics" --format "$(Line) world" --escaping csv """);
 
         //await TestCommand("""copy-log --name "Summary"  --start-line -200 --start-line-pattern "INFO\|Statistics\|Statistics" --parent-job-name c3624090-5333-6a86-a523-4f35ed29e114 --copy-state """);
 
@@ -169,7 +169,7 @@ extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(
         var uri = Globals.GeneratedSas;
 
         await TestCommand($"""download-log --taskUrl "{TestSecrets.ProdTaskUrl}" --token "{TestSecrets.ProdAdoToken}" --output "{file}" """);
-        await TestCommand($"""storage upload --source "{file}" --target "{uri}" --overwrite """);
+        await TestCommand($"""gz --source "{file}" --target "{file}.gz" --overwrite """);
     }
 
     [Fact]

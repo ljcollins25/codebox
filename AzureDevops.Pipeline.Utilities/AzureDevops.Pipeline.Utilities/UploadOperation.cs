@@ -25,10 +25,6 @@ public class UploadOperation(IConsole Console, CancellationToken token)
 
         using var sourceStream = Source.OpenRead();
 
-        var totalLength = Source.Length;
-        long copied = 0;
-        var remaining = totalLength;
-
         BlockBlobOpenWriteOptions? options = null;
 
         if (!Overwrite)
@@ -44,27 +40,7 @@ public class UploadOperation(IConsole Console, CancellationToken token)
 
         using var targetStream = await blob.OpenWriteAsync(overwrite: true, options);
 
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(1 << 20);
-        try
-        {
-            Stopwatch watch = Stopwatch.StartNew();
-            int bytesRead;
-            while ((bytesRead = await sourceStream.ReadAsync(new Memory<byte>(buffer), token)) != 0)
-            {
-                await targetStream.WriteAsync(new ReadOnlyMemory<byte>(buffer, 0, bytesRead), token);
-
-                copied += bytesRead;
-                var percentage = (copied * 100.0) / totalLength;
-                Console.WriteLine($"Copied ({percentage.Truncate(1)}%) {copied} of {totalLength} in {watch.Elapsed}");
-
-                watch.Restart();
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
-
+        await sourceStream.CopyToAsync(targetStream, Console, token);
 
         return 0;
     }

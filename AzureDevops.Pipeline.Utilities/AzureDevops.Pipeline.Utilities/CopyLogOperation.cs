@@ -124,7 +124,7 @@ public class CopyLogOperation(IConsole Console) : LogOperationBase(Console)
             {
                 foreach (var line in logLines)
                 {
-                    writer.WriteLine(line);
+                    line.WriteLine(writer);
                 }
             }
 
