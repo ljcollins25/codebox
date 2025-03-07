@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
+using Azure.Storage.Blobs.Specialized;
 using FluentAssertions;
 
 namespace AzureDevops.Pipeline.Utilities.Tests;
@@ -146,6 +147,16 @@ extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(
         await TestCommand("test --uri https://test.com");
 
         await TestCommand("storage container generate-sas ");
+    }
+
+
+
+    [Fact]
+    public async Task TestBlob()
+    {
+        BlockBlobClient blob = new BlockBlobClient(new Uri(TestSecrets.StorageBlobSasUrl));
+
+        var properties = await blob.GetPropertiesAsync();
     }
 
     [Fact]

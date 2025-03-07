@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections;
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
@@ -129,11 +130,21 @@ public static class Helpers
         return Math.Round(value, digits, MidpointRounding.ToZero);
     }
 
+    public static IEnumerable<KeyValuePair<string, string?>> GetEnvironmentVariables()
+    {
+        return Environment.GetEnvironmentVariables().OfType<DictionaryEntry>().Select(e => KeyValuePair.Create((string)e.Key, (string?)e.Value));
+    }
+
     public static string? GetEnvironmentVariable(string name)
     {
         string overrideEnvName = OverridePrefix + name;
         return Environment.GetEnvironmentVariable(overrideEnvName).AsNonEmptyOrOptional().Value
                 ?? Environment.GetEnvironmentVariable(name);
+    }
+
+    public static string? AsNonEmptyOrNull(this string? s)
+    {
+        return string.IsNullOrEmpty(s) ? null : s;
     }
 
     public static Optional<string> AsNonEmptyOrOptional(this string? s)
@@ -175,6 +186,14 @@ public static class Helpers
     public static bool IsNonEmpty([NotNullWhen(true)] this string? s)
     {
         return !string.IsNullOrEmpty(s);
+    }
+
+    public static void Add<K,V>(this IDictionary<K,V> map, IEnumerable<KeyValuePair<K, V>> entries)
+    {
+        foreach (var entry in entries)
+        {
+            map[entry.Key] = entry.Value;
+        }
     }
 
     public static string AsEnvironmentVariableName(string variableName)

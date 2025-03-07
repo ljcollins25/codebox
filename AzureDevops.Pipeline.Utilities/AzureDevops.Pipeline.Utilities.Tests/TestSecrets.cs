@@ -2,6 +2,7 @@ public partial class TestSecrets
 {
     public static string StorageAccountName = "";
     public static string StorageAccountKey = "";
+    public static string StorageBlobSasUrl = "";
     public static string TaskUrl = "";
     public static string AdoToken = "";
     public static string ProdTaskUrl = "";

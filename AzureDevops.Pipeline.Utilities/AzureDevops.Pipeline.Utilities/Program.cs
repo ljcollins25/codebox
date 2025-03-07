@@ -5,6 +5,7 @@ using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Reflection.Metadata;
 using Azure.Storage.Sas;
+using Microsoft.Azure.Pipelines.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
@@ -271,8 +272,14 @@ public class Program
                             name: "parent-id",
                             description: "The parent id of the created record"),
                         RecordType = m.Option(c => ref c.RecordType, name: "type", description: "The record type"),
+                        Result = m.Option(c => ref c.Result, name: "result", description: "The result"),
                         PercentComplete = m.Option(c => ref c.PercentComplete, name: "progress", description: "The percent complete"),
                     };
+
+                    m.Option(c => ref c.SecretVariables, name: "secrets", description: "The secret variable names to upsert");
+                    m.Option(c => ref c.SecretVariables, name: "variables", description: "The non-secret variable names to upsert");
+                    m.Option(c => ref c.VariableInputPrefix, name: "variable-input-prefix", description: "The prefix of variables to upsert");
+                    m.Option(c => ref c.VariableOutputPrefix, name: "variable-output-prefix", description: "The prefix added to upserted variables");
 
                     m.Option(c => ref c.Debug, name: "debug");
 
