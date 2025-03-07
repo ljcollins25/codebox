@@ -277,7 +277,7 @@ public class Program
                     };
 
                     m.Option(c => ref c.SecretVariables, name: "secrets", description: "The secret variable names to upsert");
-                    m.Option(c => ref c.SecretVariables, name: "variables", description: "The non-secret variable names to upsert");
+                    m.Option(c => ref c.Variables, name: "variables", description: "The non-secret variable names to upsert");
                     m.Option(c => ref c.VariableInputPrefix, name: "variable-input-prefix", description: "The prefix of variables to upsert");
                     m.Option(c => ref c.VariableOutputPrefix, name: "variable-output-prefix", description: "The prefix added to upserted variables");
 
