@@ -7,6 +7,8 @@ public static class Globals
     public static Optional<string> PhaseId { get; set; }
 
     public static string? GeneratedSas;
+
+    public static bool AllowOverrideResponseFile { get; set; } = Environment.GetEnvironmentVariable("AZPUTILS_BYPASS_OVERRIDE_RESPONSEFILE") != "1";
 }
 
 public enum RecordTypes

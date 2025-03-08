@@ -1,3 +1,4 @@
+using System;
 using System.Buffers;
 using System.Collections;
 using System.CommandLine;
@@ -47,7 +48,7 @@ public static class Helpers
         }
     }
 
-    public static string? ExpandVariables(string input, Out<IEnumerable<string>> missingVariables = default, bool requireAll = false)
+    public static string ExpandVariables(string input, Out<IEnumerable<string>> missingVariables = default, bool requireAll = false)
     {
         missingVariables.Value = Enumerable.Empty<string>();
 
@@ -240,5 +241,55 @@ public static class Helpers
     {
         if (print) Console.WriteLine(value);
         return value;
+    }
+
+    private static string? GetReplaceableTokenValue(this string arg) =>
+        arg.Length > 1 && arg[0] == '@'
+            ? arg.Substring(1)
+            : null;
+
+    internal static string[] TryReadResponseFile(string filePath)
+    {
+        return ExpandResponseFile(filePath).ToArray();
+
+        static IEnumerable<string> ExpandResponseFile(string filePath)
+        {
+            var lines = File.ReadAllLines(filePath);
+
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i];
+
+                foreach (var p in SplitLine(line))
+                {
+                    if (p.GetReplaceableTokenValue() is { } path)
+                    {
+                        foreach (var q in ExpandResponseFile(path))
+                        {
+                            yield return q;
+                        }
+                    }
+                    else
+                    {
+                        yield return p;
+                    }
+                }
+            }
+        }
+
+        static IEnumerable<string> SplitLine(string line)
+        {
+            var arg = line.Trim();
+
+            if (arg.Length == 0 || arg[0] == '#')
+            {
+                yield break;
+            }
+
+            foreach (var word in CommandLineStringSplitter.Instance.Split(arg))
+            {
+                yield return word;
+            }
+        }
     }
 }

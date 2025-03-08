@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Linq;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
+using System.Reflection;
 using System.Reflection.Metadata;
 using Azure.Storage.Sas;
 using Microsoft.Azure.Pipelines.WebApi;
@@ -29,6 +31,10 @@ public class Program
 
     public static async Task<int> RunAsync(Args args)
     {
+        args = FilterArgs(args);
+        Environment.SetEnvironmentVariable("AppBaseDirectory", AppContext.BaseDirectory);
+        args = args.Arguments.Select(a => Environment.ExpandEnvironmentVariables(Helpers.ExpandVariables(a))).ToArray();
+
         var precedingArgs = new List<string>();
         var remainingArgs = new List<string>();
 
@@ -75,6 +81,24 @@ public class Program
         return await builder.Build().Parse(precedingArgs.ToArray()).InvokeAsync();
     }
 
+    private static string[] FilterArgs(string[] args)
+    {
+        if (args.Contains("----"))
+        {
+            var index = args.AsSpan().LastIndexOf("----");
+            return args.AsSpan().Slice(index + 1).ToArray();
+        }
+        else if (args.Contains("{{{{") && args.Contains("}}}}"))
+        {
+            var span = args.AsSpan();
+            var startIndex = span.IndexOf("{{{{") + 1;
+            var endIndex = span.IndexOf("}}}}");
+            return args.AsSpan()[startIndex..endIndex].ToArray();
+        }
+
+        return args;
+    }
+
     private class TestOperation
     {
         public int Port;
@@ -91,7 +115,7 @@ public class Program
         }
     }
 
-    public static RootCommand GetCommand(CancellationTokenSource? cts = null, SubProcessRunner? agentRunner = null)
+    public static RootCommand GetCommand(CancellationTokenSource? cts = null, SubProcessRunner? subProcessRunner = null)
     {
         cts ??= new();
         return new RootCommand
@@ -157,11 +181,12 @@ public class Program
                     return result;
                 },
                 r => r.RunAsync()),
-            CliModel.Bind<RunOperation>(
-                new Command("run", "Run command until it completes or build finishes. Also completes agent invocation task."),
+
+            CliModel.Bind<RunTaskCommandOperation>(
+                new Command("runtaskcmd", "Run command until it completes or build finishes. Also completes agent invocation task."),
                 m =>
                 {
-                    var result = new RunOperation(m.Console, cts, agentRunner)
+                    var result = new RunTaskCommandOperation(m.Console, cts, subProcessRunner)
                     {
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
                             defaultValue: Env.TaskUri,
@@ -172,8 +197,33 @@ public class Program
                     };
 
                     m.Option(c => ref c.PollSeconds, name: "pollSeconds", defaultValue: 5);
+                    m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
                     m.Option(c => ref c.AgentTimeoutSeconds, name: "timeoutSeconds");
                     m.Option(c => ref c.Debug, name: "debug");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            CliModel.Bind<RunOperation>(
+                new Command("run", "Run command."),
+                m =>
+                {
+                    var result = new RunOperation(subProcessRunner);
+
+                    m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            CliModel.Bind<RunOperation>(
+                new Command("runagent", "Runs azure devops agent."),
+                m =>
+                {
+                    var result = new RunOperation(subProcessRunner);
+
+                    m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
 
                     return result;
                 },
