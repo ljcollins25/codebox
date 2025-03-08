@@ -8,8 +8,15 @@ using Microsoft.VisualStudio.Services.TestManagement.TestPlanning.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
+public record struct CliAlias(string Alias);
+
 public static class CliModel
 {
+    public static void Add(this Command command, CliAlias alias)
+    {
+        command.AddAlias(alias.Alias);
+    }
+
     public static void Add(this Command command, IEnumerable<Option> options)
     {
         foreach (var option in options)
@@ -164,6 +171,57 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
             });
 
             Command.AddOption(option);
+        }
+
+        return default!;
+    }
+
+    public TField Argument<TField>(
+        RefFunc<T, TField> getFieldRef,
+        string name,
+        string? description = null,
+        ArgumentArity? arity = null,
+        Optional<TField> defaultValue = default,
+        bool isHidden = false,
+        RefFunc<T, bool>? isExplicitRef = null,
+        ParseArgument<TField>? parse = null)
+    {
+        if (OptionsMode)
+        {
+            var option = parse != null
+                ? new Argument<TField>(name, parse: argResult =>
+                    {
+                        if (defaultValue.HasValue)
+                        {
+
+                        }
+
+                        return parse!(argResult);
+                    },
+                    isDefault: defaultValue.HasValue,
+                    description: description)
+                : defaultValue.HasValue
+                ? new Argument<TField>(name, getDefaultValue: () => defaultValue.Value!, description: description)
+                : new Argument<TField>(name, description: description);
+
+            option.Arity = arity ?? ArgumentArity.ExactlyOne;
+            option.IsHidden = isHidden;
+
+            SetFields.Add((model, context) =>
+            {
+                var result = context.ParseResult.FindResultFor(option);
+                if (result != null)
+                {
+                    getFieldRef(model) = context.ParseResult.GetValueForArgument(option)!;
+
+                    if (isExplicitRef != null)
+                    {
+                        isExplicitRef(model) = result.Children.Count != 0;
+                    }
+                }
+            });
+
+            Command.Add(option);
         }
 
         return default!;

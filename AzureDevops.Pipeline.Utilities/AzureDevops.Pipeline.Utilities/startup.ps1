@@ -1,3 +1,5 @@
+$ErrorActionPreference = 'Stop'
+
 if (-not (Test-Path Env:AZP_URL)) {
   Write-Error "error: missing AZP_URL environment variable"
   exit 1
@@ -22,13 +24,22 @@ if (-not $Env:AZP_AGENT_DIR) {
   $Env:AZP_AGENT_DIR = if($IsLinux) { [System.IO.Path]::GetFullPath('/home/azp/agent') } else { "C:/home/azp/agent" }
 }
 
-New-Item $Env:AZP_AGENT_DIR -ItemType directory | Out-Null
+if (Test-Path $Env:AZP_AGENT_DIR) {
+  if ($Env:AZP_CLEAN_AGENT -eq "1") {
+    Write-Host "Agent directory already exists. Removing it." -ForegroundColor Cyan
+    Remove-Item $Env:AZP_AGENT_DIR -Recurse -Force
+  }
+}
+
+New-Item $Env:AZP_AGENT_DIR -ItemType directory -Force | Out-Null
 
 Remove-Item Env:AZP_TOKEN
 
 if ((Test-Path Env:AZP_WORK) -and -not (Test-Path $Env:AZP_WORK)) {
   New-Item $Env:AZP_WORK -ItemType directory | Out-Null
 }
+
+$AgentBinDir = Join-Path $Env:AZP_AGENT_DIR "bin"
 
 $csharpFile = Join-Path $PSScriptRoot "Functions.cs"
 
@@ -39,7 +50,7 @@ $excludedVars = [Functions]::GetEnvironmentVars("^((GITHUB_.+)|(AZP_*))");
 Write-Host "Excluded vars: $excludedVars"
 
 # Let the agent ignore the token env variables
-$Env:VSO_AGENT_IGNORE = "AZP_TOKEN,AZP_TOKEN_FILE,AZP_TASK_URL,token,taskUrl,buildNumber,pool,targetAzureRegion,image,parallelism,$excludedVars"
+$Env:VSO_AGENT_IGNORE = "AZP_TOKEN,AZP_TOKEN_FILE,AZP_TASK_URL,token,taskUrl,buildNumber,pool,targetAzureRegion,image,parallelism,$Env:VSO_AGENT_IGNORE,$excludedVars"
 
 $azureRegion = Invoke-RestMethod -Headers @{"Metadata"="true"} -Uri "http://169.254.169.254/metadata/instance/compute/location?api-version=2017-08-01&format=text"
 Write-Host "Azure Region: $azureRegion"
@@ -55,11 +66,19 @@ Write-Host "1. Determining matching Azure Pipelines agent..." -ForegroundColor C
 $archSfx = if ($IsLinux) { "tar.gz" } else { "zip" }
 $os = if ($IsLinux) { "linux" } else { "win" }
 
-$base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pat))
-$package = Invoke-RestMethod -Headers @{Authorization=("Basic $base64AuthInfo")} "$(${Env:AZP_URL})/_apis/distributedtask/packages/agent?platform=$os-x64&`$top=1"
-$packageUrl = $package[0].Value.downloadUrl
+$packageUrl = $Env:AZP_PACKAGE_URL
+if (-not $packageUrl) {
+  $packageDetailsUrl = "$(${Env:AZP_URL})/_apis/distributedtask/packages/agent?platform=$os-x64&`$top=1"
 
-Write-Host $packageUrl
+  Write-Host "Package Details Url = '$packageDetailsUrl'"
+
+  $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pat))
+  $package = Invoke-RestMethod -Headers @{Authorization=("Basic $base64AuthInfo")} $packageDetailsUrl
+  $packageUrl = $package[0].Value.downloadUrl
+}
+
+Write-Host "Package Url = $packageUrl"
+Write-Host "Package Url = $(-not $packageUrl)"
 
 Write-Host "2. Downloading and installing Azure Pipelines agent..." -ForegroundColor Cyan
 
@@ -67,16 +86,19 @@ $wc = New-Object System.Net.WebClient
 $wc.DownloadFile($packageUrl, "$(Get-Location)/agent.$archSfx")
 
 if ($IsLinux) {
-  tar -xzf agent.$archSfx -C $Env:AZP_AGENT_DIR
+  tar -xzf agent.$archSfx -C $AgentBinDir
 } else {
-  Expand-Archive -Path "agent.zip" -DestinationPath $Env:AZP_AGENT_DIR
+  Expand-Archive -Path "agent.$archSfx" -DestinationPath $AgentBinDir
 }
 
-$agentName = $env:AZP_AGENT_NAME
+Set-Location $AgentBinDir
+
+$agentName = $(if (Test-Path Env:AZP_AGENT_NAME) { ${Env:AZP_AGENT_NAME} } else { hostname })
+$poolName = $(if (Test-Path Env:AZP_POOL) { ${Env:AZP_POOL} } else { 'Default' })
+$agentWorkingDir = $(if (Test-Path Env:AZP_WORK) { ${Env:AZP_WORK} } else { '_work' })
 
 try
 {
-
   Write-Host "3. Configuring Azure Pipelines agent..." -ForegroundColor Cyan
 
   $sfx = if($IsLinux) { "sh" } else { "cmd" }
@@ -87,21 +109,21 @@ try
   } 
 
   . "./config.$sfx" --unattended `
-    --agent "$(if (Test-Path Env:AZP_AGENT_NAME) { ${Env:AZP_AGENT_NAME} } else { hostname })" `
+    --agent $agentName `
     --url "$(${Env:AZP_URL})" `
     --auth PAT `
     --token "$pat" `
-    --pool "$(if (Test-Path Env:AZP_POOL) { ${Env:AZP_POOL} } else { 'Default' })" `
-    --work "$(if (Test-Path Env:AZP_WORK) { ${Env:AZP_WORK} } else { '_work' })" `
+    --pool $poolName `
+    --work $agentWorkingDir `
     --replace
 
   . "./config.$sfx" --unattended `
-    --agent "$(if (Test-Path Env:AZP_AGENT_NAME) { ${Env:AZP_AGENT_NAME} } else { hostname })" `
+    --agent $agentName `
     --url "$(${Env:AZP_URL})" `
     --auth PAT `
     --token "$pat" `
-    --pool "$(if (Test-Path Env:AZP_POOL) { ${Env:AZP_POOL} } else { 'Default' })" `
-    --work "$(if (Test-Path Env:AZP_WORK) { ${Env:AZP_WORK} } else { '_work' })" `
+    --pool $poolName `
+    --work $agentWorkingDir `
     --replace
 
   Write-Host "4. Running Azure Pipelines agent..." -ForegroundColor Cyan
@@ -121,7 +143,7 @@ try
   } else {
     Write-Host "Running agent outside taskUrl"
     
-    . "run.$sfx" --once
+    . "./run.$sfx" --once
   }
 
   # $exitCode = [Program]::Run($PWD, $sfx)

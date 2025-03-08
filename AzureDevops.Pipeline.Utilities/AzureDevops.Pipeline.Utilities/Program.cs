@@ -31,8 +31,14 @@ public class Program
 
     public static async Task<int> RunAsync(Args args)
     {
-        args = FilterArgs(args);
+        var parseResult = ParseArguments(args);
         Environment.SetEnvironmentVariable("AppBaseDirectory", AppContext.BaseDirectory);
+        return await parseResult.InvokeAsync();
+    }
+
+    public static ParseResult ParseArguments(Args args)
+    {
+        args = FilterArgs(args);
         args = args.Arguments.Select(a => Environment.ExpandEnvironmentVariables(Helpers.ExpandVariables(a))).ToArray();
 
         var precedingArgs = new List<string>();
@@ -78,7 +84,7 @@ public class Program
 
         builder = builder.CancelOnProcessTermination();
 
-        return await builder.Build().Parse(precedingArgs.ToArray()).InvokeAsync();
+        return builder.Build().Parse(precedingArgs.ToArray());
     }
 
     private static string[] FilterArgs(string[] args)
@@ -120,6 +126,62 @@ public class Program
         cts ??= new();
         return new RootCommand
         {
+            CliModel.Bind<RunAgentOperation>(
+                new Command("runagent"),
+                m =>
+                {
+                    var result = new RunAgentOperation()
+                    {
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token",
+                            defaultValue: Globals.Token,
+                            description: "The access token (e.g. $(System.AccessToken) )", required: true),
+
+                        WorkDirectory = m.Option(c => ref c.WorkDirectory, name: "work-directory",
+                            description: "The agent working directory", required: true),
+
+                        AgentDirectory = m.Option(c => ref c.AgentDirectory, name: "agent-directory",
+                            description: "The agent download directory", required: true),
+
+                        AgentPoolName = m.Option(c => ref c.AgentPoolName, name: "pool",
+                            description: "The agent pool name", required: true),
+
+                        OrganizationUrl = m.Option(c => ref c.OrganizationUrl, name: "organization-url",
+                            description: "The agent pool organization url", required: true),
+                    };
+
+                    m.Option(c => ref c.AgentName, name: "name",
+                            description: "The agent name");
+
+                    m.Option(c => ref c.AgentPackageUrl, name: "package-url",
+                            description: "The agent package download url");
+
+                    m.Option(c => ref c.Clean, name: "clean",
+                            description: "Whether to clean the agent directory");
+
+                    m.Option(c => ref c.TaskUrl, name: "taskUrl",
+                            defaultValue: Env.TaskUri!,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            CliModel.Bind<PowershellOperation>(
+                new Command("pwsh")
+                {
+                    new CliAlias("powershell")
+                },
+                m =>
+                {
+                    var result = new PowershellOperation()
+                    {
+                        Args = m.Argument(c => ref c.Args, name: "args", arity: ArgumentArity.ZeroOrMore, defaultValue: Array.Empty<string>())
+                    };
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
             CliModel.Bind<TestOperation>(
                 new Command("test") { IsHidden = true },
                 m =>
@@ -207,18 +269,6 @@ public class Program
 
             CliModel.Bind<RunOperation>(
                 new Command("run", "Run command."),
-                m =>
-                {
-                    var result = new RunOperation(subProcessRunner);
-
-                    m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
-
-                    return result;
-                },
-                r => r.RunAsync()),
-
-            CliModel.Bind<RunOperation>(
-                new Command("runagent", "Runs azure devops agent."),
                 m =>
                 {
                     var result = new RunOperation(subProcessRunner);
