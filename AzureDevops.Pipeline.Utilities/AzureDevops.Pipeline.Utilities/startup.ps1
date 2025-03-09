@@ -72,13 +72,12 @@ if (-not $packageUrl) {
 
   Write-Host "Package Details Url = '$packageDetailsUrl'"
 
-  $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pat))
-  $package = Invoke-RestMethod -Headers @{Authorization=("Basic $base64AuthInfo")} $packageDetailsUrl
+  $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$pat"))
+  $package = Invoke-RestMethod -Headers @{Authorization=("Basic $base64AuthInfo"); Accept="application/json"} $packageDetailsUrl
   $packageUrl = $package[0].Value.downloadUrl
 }
 
 Write-Host "Package Url = $packageUrl"
-Write-Host "Package Url = $(-not $packageUrl)"
 
 Write-Host "2. Downloading and installing Azure Pipelines agent..." -ForegroundColor Cyan
 

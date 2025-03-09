@@ -41,7 +41,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="startup.ps1" CopyToOutputDirectory="PreserveNewest"/>
+    <Content Include="*.ps1" CopyToOutputDirectory="PreserveNewest"/>
     <Compile Remove="Functions.cs"/>
     <Content Include="Functions.cs" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="*.rsp" CopyToOutputDirectory="PreserveNewest" />

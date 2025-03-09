@@ -166,6 +166,30 @@ public class Program
                 },
                 r => r.RunAsync()),
 
+            CliModel.Bind<DevCodeServerOperation>(
+                new Command("dev-code-server")
+                {
+                    new CliAlias("vscode"),
+                    new CliAlias("code"),
+                },
+                m =>
+                {
+                    var result = new DevCodeServerOperation()
+                    {
+                        Workspace = m.Option(c => ref c.Workspace, name: "workspace",
+                            description: "The workspace directory", required: true),
+
+                        Name = m.Option(c => ref c.Name, name: "name",
+                            description: "The server name", required: true),
+                    };
+
+                    m.Option(c => ref c.Provider, name: "provider",
+                            description: "The login provider", defaultValue: result.Provider);
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
             CliModel.Bind<PowershellOperation>(
                 new Command("pwsh")
                 {

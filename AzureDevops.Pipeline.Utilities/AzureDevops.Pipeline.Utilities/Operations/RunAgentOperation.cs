@@ -20,14 +20,25 @@ public class RunAgentOperation
 
     public string? AgentName;
 
-    public bool Clean;
+    public CleanMode Clean = CleanMode.None;
 
     public string? AgentPackageUrl;
 
     public string? TaskUrl;
 
+    public enum CleanMode
+    {
+        None = 0,
+        Work = 1 << 0,
+        Agent = 1 << 1,
+        All = Work | Agent
+    }
+
     public async Task<int> RunAsync()
     {
+        if (Clean.HasFlag(CleanMode.Agent) && Directory.Exists(AgentDirectory)) Directory.Delete(AgentDirectory, true);
+        if (Clean.HasFlag(CleanMode.Work) && Directory.Exists(WorkDirectory)) Directory.Delete(WorkDirectory, true);
+
         var envMap = new Dictionary<string, string?>()
         {
             ["AZP_URL"] = OrganizationUrl.ToString(),
@@ -37,7 +48,6 @@ public class RunAgentOperation
             ["AZP_POOL"] = AgentPoolName,
             ["AZP_TASK_URL"] = TaskUrl,
             ["AZP_AGENT_NAME"] = AgentName,
-            ["AZP_AGENT_CLEAN"] = Clean ? "1" : "0",
             ["AZP_PACKAGE_URL"] = AgentPackageUrl,
         };
 
