@@ -37,7 +37,7 @@ public abstract class TaskOperationBase(IConsole Console)
 
     public async Task<int> RunAsync()
     {
-        await InitilializeAsync();
+        await InitializeAsync();
 
         return await RunCoreAsync();
     }
@@ -83,14 +83,16 @@ public abstract class TaskOperationBase(IConsole Console)
         }
     }
 
-    public async Task InitilializeAsync()
+    public async Task InitializeAsync()
     {
         AdoToken = FromDebugString(AdoToken);
 
         adoBuildUri = BuildUri.ParseBuildUri(TaskUrl);
         taskInfo = adoBuildUri.DeserializeFromParameters<TaskInfo>();
 
-        connection = new VssConnection(adoBuildUri.OrganizationUri, new VssBasicCredential(AdoToken, string.Empty));
+        connection = new VssConnection(adoBuildUri.OrganizationUri,
+            new VssHttpMessageHandler(new VssBasicCredential(AdoToken, string.Empty), VssClientHttpRequestSettings.Default),
+            delegatingHandlers: new [] { new InterceptingHandler() });
         HttpClient = new GenericClient(connection).HttpClient;
         client = connection.GetClient<BuildHttpClient>();
         taskClient = connection.GetClient<TaskHttpClient>();
@@ -103,6 +105,15 @@ public abstract class TaskOperationBase(IConsole Console)
             Console.WriteLine($"TaskUri:\n{TaskUrl}");
             Console.WriteLine($"Token:\n{ChunkSplit(ToDebugString(AdoToken), 100)}");
             Console.WriteLine($"EndToken");
+        }
+    }
+
+    public class InterceptingHandler : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = await (request.Content?.ReadAsStringAsync() ?? Task.FromResult(string.Empty));
+            return await base.SendAsync(request, cancellationToken);
         }
     }
 

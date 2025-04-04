@@ -12,7 +12,7 @@ public record struct CliAlias(string Alias);
 
 public static class CliModel
 {
-    public static void Add(this Command command, CliAlias alias)
+    public static void Add(this IdentifierSymbol command, CliAlias alias)
     {
         command.AddAlias(alias.Alias);
     }
@@ -130,7 +130,8 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
         Optional<TField> defaultValue = default,
         bool isHidden = false,
         RefFunc<T, bool>? isExplicitRef = null,
-        ParseArgument<TField>? parse = null)
+        ParseArgument<TField>? parse = null,
+        string[]? aliases = null)
     {
         if (OptionsMode)
         {
@@ -155,6 +156,14 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
             option.IsRequired = required;
             option.IsHidden = isHidden;
             option.AllowMultipleArgumentsPerToken = true;
+
+            if (aliases != null)
+            {
+                foreach (var alias in aliases)
+                {
+                    option.AddAlias(alias);
+                }
+            }
 
             SetFields.Add((model, context) =>
             {

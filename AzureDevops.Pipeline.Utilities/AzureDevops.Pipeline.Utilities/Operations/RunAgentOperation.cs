@@ -10,6 +10,8 @@ public class RunAgentOperation
 {
     public required string AdoToken;
 
+    public string[]? AdditionalArgs;
+
     public required string WorkDirectory;
 
     public required string AgentDirectory;
@@ -23,6 +25,8 @@ public class RunAgentOperation
     public CleanMode Clean = CleanMode.None;
 
     public string? AgentPackageUrl;
+
+    public string? AgentPackagePath;
 
     public string? TaskUrl;
 
@@ -49,6 +53,7 @@ public class RunAgentOperation
             ["AZP_TASK_URL"] = TaskUrl,
             ["AZP_AGENT_NAME"] = AgentName,
             ["AZP_PACKAGE_URL"] = AgentPackageUrl,
+            ["AZP_CUSTOM_PACKAGE_PATH"] = AgentPackagePath,
         };
 
         foreach (var (name, value) in envMap)
@@ -59,9 +64,13 @@ public class RunAgentOperation
             }
         }
 
-        Environment.SetEnvironmentVariable("PSModulePath", $"{AppContext.BaseDirectory};{Environment.GetEnvironmentVariable("PSModulePath")}");
 
         var args = CommandLineStringSplitter.Instance.Split($"-NoLogo -NoProfile -ExecutionPolicy Bypass -Command \"{Path.Combine(AppContext.BaseDirectory, "startup.ps1")}\"").ToArray();
+
+        args = args.Concat(AdditionalArgs ?? Array.Empty<string>()).ToArray();
+
+        Environment.SetEnvironmentVariable("PSModulePath", $"{AppContext.BaseDirectory};{Environment.GetEnvironmentVariable("PSModulePath")}");
+
         return Microsoft.PowerShell.ConsoleShell.Start("Running azputils powershell agent startup script.", helpText: null, args: args);
     }
 }

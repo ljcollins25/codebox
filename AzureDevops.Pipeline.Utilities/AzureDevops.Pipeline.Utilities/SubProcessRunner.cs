@@ -4,6 +4,8 @@ namespace AzureDevops.Pipeline.Utilities;
 
 public class SubProcessRunner(string executable, IEnumerable<string> args, CancellationToken token)
 {
+    public static SubProcessRunner FromRemainingArgs(IReadOnlyList<string> args, CancellationToken token) => new SubProcessRunner(args[0], args.Skip(1), token);
+
     public async Task<int> RunAsync(int retryCount = 1)
     {
         Console.WriteLine($"Executable: {executable}");

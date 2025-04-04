@@ -27,17 +27,21 @@ public class Program
         public static implicit operator Args(string[] args) => new(args);
 
         public static implicit operator string[](Args args) => args.Arguments;
+
+        public SubProcessRunner? ToRunner(CancellationToken token) => Arguments.Length == 0 ? null : SubProcessRunner.FromRemainingArgs(Arguments, token);
     }
 
     public static async Task<int> RunAsync(Args args)
     {
-        var parseResult = ParseArguments(args);
+        using var cts = new CancellationTokenSource();
         Environment.SetEnvironmentVariable("AppBaseDirectory", AppContext.BaseDirectory);
+        var parseResult = ParseArguments(args, cts);
         return await parseResult.InvokeAsync();
     }
 
-    public static ParseResult ParseArguments(Args args)
+    public static ParseResult ParseArguments(Args args, CancellationTokenSource? cts = null)
     {
+        cts ??= new();
         args = FilterArgs(args);
         args = args.Arguments.Select(a => Environment.ExpandEnvironmentVariables(Helpers.ExpandVariables(a))).ToArray();
 
@@ -57,18 +61,13 @@ public class Program
             }
         }
 
-        using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (s, e) =>
         {
             e.Cancel = true;
             cts.Cancel();
         };
 
-        var agentRunner = remainingArgs.Count > 0
-            ? new SubProcessRunner(remainingArgs[0], remainingArgs.Skip(1), cts.Token)
-            : null;
-
-        RootCommand rootCommand = GetCommand(cts, agentRunner);
+        RootCommand rootCommand = GetCommand(cts, new Args(remainingArgs.ToArray()));
 
         var builder = new CommandLineBuilder(rootCommand)
             .UseVersionOption()
@@ -121,7 +120,7 @@ public class Program
         }
     }
 
-    public static RootCommand GetCommand(CancellationTokenSource? cts = null, SubProcessRunner? subProcessRunner = null)
+    public static RootCommand GetCommand(CancellationTokenSource? cts = null, Args? additionalArgs = null)
     {
         cts ??= new();
         return new RootCommand
@@ -133,7 +132,7 @@ public class Program
                     var result = new RunAgentOperation()
                     {
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token",
-                            defaultValue: Globals.Token,
+                            defaultValue: Env.Token,
                             description: "The access token (e.g. $(System.AccessToken) )", required: true),
 
                         WorkDirectory = m.Option(c => ref c.WorkDirectory, name: "work-directory",
@@ -147,6 +146,8 @@ public class Program
 
                         OrganizationUrl = m.Option(c => ref c.OrganizationUrl, name: "organization-url",
                             description: "The agent pool organization url", required: true),
+
+                        AdditionalArgs = additionalArgs?.Arguments
                     };
 
                     m.Option(c => ref c.AgentName, name: "name",
@@ -154,6 +155,9 @@ public class Program
 
                     m.Option(c => ref c.AgentPackageUrl, name: "package-url",
                             description: "The agent package download url");
+
+                    m.Option(c => ref c.AgentPackagePath, name: "package-path",
+                            description: "The agent package source path");
 
                     m.Option(c => ref c.Clean, name: "clean",
                             description: "Whether to clean the agent directory");
@@ -199,7 +203,8 @@ public class Program
                 {
                     var result = new PowershellOperation()
                     {
-                        Args = m.Argument(c => ref c.Args, name: "args", arity: ArgumentArity.ZeroOrMore, defaultValue: Array.Empty<string>())
+                        AdditionalArgs = additionalArgs?.Arguments,
+                        CommandArgs = m.Argument(c => ref c.CommandArgs, name: "command", arity: ArgumentArity.ZeroOrMore, defaultValue: Array.Empty<string>())
                     };
 
                     return result;
@@ -254,7 +259,7 @@ public class Program
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token",
-                            defaultValue: Globals.Token,
+                            defaultValue: Env.Token,
                             description: "The access token (e.g. $(System.AccessToken) )", required: true),
                     };
 
@@ -272,13 +277,13 @@ public class Program
                 new Command("runtaskcmd", "Run command until it completes or build finishes. Also completes agent invocation task."),
                 m =>
                 {
-                    var result = new RunTaskCommandOperation(m.Console, cts, subProcessRunner)
+                    var result = new RunTaskCommandOperation(m.Console, cts, additionalArgs?.ToRunner(cts.Token))
                     {
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token",
-                            defaultValue: Globals.Token,
+                            defaultValue: Env.Token,
                             description: "The access token (e.g. $(System.AccessToken) )", required: true),
                     };
 
@@ -295,7 +300,7 @@ public class Program
                 new Command("run", "Run command."),
                 m =>
                 {
-                    var result = new RunOperation(subProcessRunner);
+                    var result = new RunOperation(additionalArgs?.ToRunner(cts.Token));
 
                     m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
 
@@ -307,26 +312,50 @@ public class Program
                 new Command("synchronize", "Synchronize following steps in parallel jobs"),
                 m =>
                 {
-                    var result = new SynchronizeOperation(m.Console)
+                    var result = new SynchronizeOperation(m.Console, cts.Token)
                     {
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"
                             ),
-                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Env.Token),
                         JobCount = m.Option(c => ref c.JobCount,
                             name: "jobCount",
                             defaultValue: Env.TotalJobsInPhase,
                             description: "The number of job slots available for synchronization (e.g. $(System.TotalJobsInPhase) )", required: true),
-                        CorrelationKey = m.Option(c => ref c.CorrelationKey,
-                            name: "key",
+                        Qualifier = m.Option(c => ref c.Qualifier,
+                            name: "qualifier",
                             defaultValue: "",
-                            description: "The key used to correlated between multiple synchronizations in the same job phase", required: true),
-                        PhaseId = m.Option(c => ref c.PhaseId,
-                            name: "phaseId",
-                            defaultValue: Env.PhaseId,
-                            description: "The phase id (e.g. $(System.PhaseId))", required: true),
+                            description: "The key used to correlated between multiple synchronizations in the same job phase", required: true)
                     };
+
+                    m.Option(c => ref c.RecordId,
+                            name: "recordId",
+                            defaultValue: Env.PhaseId,
+                            description: "The phase id (e.g. $(System.PhaseId))",
+                            aliases: new[] { "phaseId" });
+
+                    m.Option(c => ref c.Timeout,
+                            name: "timeout",
+                            description: "The timeout");
+
+                    m.Option(c => ref c.SynchronizationIdPropertyKey,
+                            name: "recordId-key",
+                            description: "The build property key containing the record id to use for synchronization");
+
+                    m.Option(c => ref c.SetComplete,
+                            name: "complete",
+                            description: "Whether to complete the task referred to by the record id",
+                            defaultValue: false);
+
+                    m.Option(c => ref c.WaitOnly,
+                            name: "waitOnly",
+                            description: "Whether to only wait for the synchronization and not participate",
+                            defaultValue: false);
+
+                    m.Option(c => ref c.Scope,
+                            name: "scope",
+                            description: "The synchronization scope");
 
                     m.Option(c => ref c.DisplayName,
                         name: "name",
@@ -387,7 +416,7 @@ public class Program
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
-                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Env.Token),
                         Id = m.Option(c => ref c.Id,
                             name: "id",
                             description: "The id of the record"),
@@ -421,7 +450,7 @@ public class Program
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
                         Target = m.Option(c => ref c.Target, name: "target", description: "The target file or null to output to standard out"),
-                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Env.Token),
                     };
 
                     m.Option(c => ref c.HeaderLines, name: "prepend", description: "The header line(s) to add to the log");
@@ -451,7 +480,7 @@ public class Program
                         TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
                             defaultValue: Env.TaskUri,
                             description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
-                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Globals.Token),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token", description: "The access token (e.g. $(System.AccessToken) )", required: true, defaultValue: Env.Token),
                         PhaseId = m.Option(c => ref c.PhaseId,
                             name: "phaseId",
                             defaultValue: Env.PhaseId.ToNullable(),

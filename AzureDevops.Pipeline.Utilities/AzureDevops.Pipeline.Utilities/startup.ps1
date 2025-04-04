@@ -66,28 +66,33 @@ Write-Host "1. Determining matching Azure Pipelines agent..." -ForegroundColor C
 $archSfx = if ($IsLinux) { "tar.gz" } else { "zip" }
 $os = if ($IsLinux) { "linux" } else { "win" }
 
-$packageUrl = $Env:AZP_PACKAGE_URL
-if (-not $packageUrl) {
-  $packageDetailsUrl = "$(${Env:AZP_URL})/_apis/distributedtask/packages/agent?platform=$os-x64&`$top=1"
+$packagePath = $Env:AZP_CUSTOM_PACKAGE_PATH
+if (-not $packagePath) {
+  $packageUrl = $Env:AZP_PACKAGE_URL
+  if (-not $packageUrl) {
+    $packageDetailsUrl = "$(${Env:AZP_URL})/_apis/distributedtask/packages/agent?platform=$os-x64&`$top=1"
 
-  Write-Host "Package Details Url = '$packageDetailsUrl'"
+    Write-Host "Package Details Url = '$packageDetailsUrl'"
 
-  $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$pat"))
-  $package = Invoke-RestMethod -Headers @{Authorization=("Basic $base64AuthInfo"); Accept="application/json"} $packageDetailsUrl
-  $packageUrl = $package[0].Value.downloadUrl
+    $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$pat"))
+    $package = Invoke-RestMethod -Headers @{Authorization=("Basic $base64AuthInfo"); Accept="application/json"} $packageDetailsUrl
+    $packageUrl = $package[0].Value.downloadUrl
+  }
+
+  Write-Host "Package Url = $packageUrl"
+
+  Write-Host "2. Downloading and installing Azure Pipelines agent..." -ForegroundColor Cyan
+
+  $packagePath = "$(Get-Location)/agent.$archSfx"
+
+  $wc = New-Object System.Net.WebClient
+  $wc.DownloadFile($packageUrl, $packagePath)
 }
-
-Write-Host "Package Url = $packageUrl"
-
-Write-Host "2. Downloading and installing Azure Pipelines agent..." -ForegroundColor Cyan
-
-$wc = New-Object System.Net.WebClient
-$wc.DownloadFile($packageUrl, "$(Get-Location)/agent.$archSfx")
 
 if ($IsLinux) {
   tar -xzf agent.$archSfx -C $AgentBinDir
 } else {
-  Expand-Archive -Path "agent.$archSfx" -DestinationPath $AgentBinDir
+  Expand-Archive -Path $packagePath -DestinationPath $AgentBinDir
 }
 
 Set-Location $AgentBinDir
@@ -116,26 +121,40 @@ try
     --work $agentWorkingDir `
     --replace
 
-  . "./config.$sfx" --unattended `
-    --agent $agentName `
-    --url "$(${Env:AZP_URL})" `
-    --auth PAT `
-    --token "$pat" `
-    --pool $poolName `
-    --work $agentWorkingDir `
-    --replace
+  $exitCode = $LASTEXITCODE
+
+  if ($exitCode -ne 0) {
+    . "./config.$sfx" --unattended `
+      --agent $agentName `
+      --url "$(${Env:AZP_URL})" `
+      --auth PAT `
+      --token "$pat" `
+      --pool $poolName `
+      --work $agentWorkingDir `
+      --replace
+  }
 
   Write-Host "4. Running Azure Pipelines agent..." -ForegroundColor Cyan
 
   $taskUrl = $Env:AZP_TASK_URL
+  $synchronizeArgs = $Env:AZP_SYNC_ARGS
+  $azputils = Join-Path $PSScriptRoot azputils
 
   # Clear environment variables before running
   [Functions]::ClearEnvironmentVars($Env:VSO_AGENT_IGNORE);
 
   if ($taskUrl) {
+    if ($args.Count -gt 0) {
+        Write-Host "Running pre-run step"
+
+      . $azputils @args `
+      --taskUrl "$taskUrl" `
+      --token "$pat"
+    }
+
     Write-Host "Running agent in task context. TaskUrl=$taskUrl"
 
-    . azputils runtaskcmd `
+    . $azputils runtaskcmd `
       --taskUrl "$taskUrl" `
       --token "$pat" `
       -- "run.$sfx" --once

@@ -23,7 +23,7 @@ public record SasCommonArguments
     {
         get
         {
-            if (DateTime.TryParse(ExpiryValue, out var d)) return d;
+            if (DateTime.TryParse(ExpiryValue, out var d)) return d.ToUniversalTime();
             if (DateTimeOffset.TryParse(ExpiryValue, out var dto)) return dto;
             if (TimeSpan.TryParse(ExpiryValue, out var ts)) return DateTimeOffset.UtcNow + ts;
             if (TimeSpanSetting.TryParseReadableTimeSpan(ExpiryValue, out ts)) return DateTimeOffset.UtcNow + ts;

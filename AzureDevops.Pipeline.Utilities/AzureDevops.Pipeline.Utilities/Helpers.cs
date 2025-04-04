@@ -25,6 +25,11 @@ public static class Helpers
         public static readonly Optional<string> TaskUri = Globals.TaskUrl
             .Or(ExpandVariables($"$({TaskUrlVariable})", requireAll: true).AsNonEmptyOrOptional())
             .Or(ExpandVariables(TaskUriTemplate, requireAll: true).AsNonEmptyOrOptional());
+
+        public static readonly Optional<string> Token = Globals.Token
+            .Or(ExpandVariables($"$({AccessTokenVariable})", requireAll: true).AsNonEmptyOrOptional());
+
+
         public static readonly Optional<string> CurrentTaskUrl = ExpandVariables(TaskUriTemplate, requireAll: true).AsNonEmptyOrOptional();
         public static readonly Optional<int> TotalJobsInPhase = ExpandVariables("$(System.TotalJobsInPhase)", requireAll: true).AsNonEmptyOrOptional().Then(v => Optional.Try(int.TryParse(v, null, out var i), i));
         public static readonly Optional<int> JobPositionInPhase = ExpandVariables("$(System.JobPositionInPhase)", requireAll: true).AsNonEmptyOrOptional().Then(v => Optional.Try(int.TryParse(v, null, out var i), i));
