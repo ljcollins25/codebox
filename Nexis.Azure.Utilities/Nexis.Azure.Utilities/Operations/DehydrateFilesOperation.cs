@@ -1,4 +1,5 @@
-﻿using System.CommandLine;
+﻿using System.Collections.Immutable;
+using System.CommandLine;
 using System.CommandLine.IO;
 using System.ComponentModel;
 using System.IO.Compression;
@@ -17,10 +18,25 @@ namespace Nexis.Azure.Utilities;
 
 public class DehydrateOperation(IConsole Console, CancellationToken token)
 {
+    private static class Strings
+    {
+        public const string source_etag = "source_etag";
+        public const string source_timestamp = "source_timestamp";
+        public const string last_refresh_time = "last_refresh_time";
+        public const string dehydrated = "dehydrated";
+        public const string snapshot = "snapshot";
+    }
+
+    private const NtfsFileAttributes DehydratedMarkerAttribute = NtfsFileAttributes.None;
+
     public required Uri SourceFilesUri;
     public required Uri TargetBlobUri;
 
-    public required string ExpiryValue;
+    public static ImmutableDictionary<string, string> BaseMetadata = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase)
+        .Add("archive_version", "1")
+        ;
+
+    public required string ExpiryValue = "1h";
 
     // Set to zero to refresh everything
     // Set to large value to refresh nothing
@@ -78,9 +94,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
         var maxRefreshes = (targetBlobs.Count + (RefreshBatches - 1)) / RefreshBatches;
 
-        var refreshExpiry = DateTimeOffset.UtcNow - RefreshInterval;
+        var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
 
-        Parallel.ForEachAsync(sourceFiles.Keys.Union(targetBlobs.Keys, StringComparer.OrdinalIgnoreCase), token, async (path, token) =>
+        await Parallel.ForEachAsync(sourceFiles.Keys.Union(targetBlobs.Keys, StringComparer.OrdinalIgnoreCase), token, async (path, token) =>
         {
             var sourceFile = sourceFiles.GetValueOrDefault(path);
             var targetBlob = targetBlobs.GetValueOrDefault(path);
@@ -103,62 +119,141 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                                 IfUnmodifiedSince = targetBlob.Properties.LastModified
                             };
 
-
                             await blobClient.DeleteIfExistsAsync(conditions: requestConditions);
                         }
                     }
                 }
-                else if (targetBlob == null)
+                // target missing or out of date
+                else if (targetBlob == null
+                    || targetBlob.Metadata.ValueOrDefault(Strings.source_timestamp) != sourceFile.GetLastWriteTimestamp())
                 {
+                    var fileSize = sourceFile.FileSize!.Value;
                     operation = "dehydrating file";
                     var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(sourceFile.Name);
                     var props = await fileClient.GetPropertiesAsync();
-                    if (props.Value.LastModified > Expiry)
-                        continue;
 
                     var blobClient = targetBlobContainer.GetBlockBlobClient(path);
 
-                    await blobClient.CommitBlockListAsync([], cancellationToken: token);
-
-                    var metadata = new Dictionary<string, string>
+                    // Clear block list and metadata
+                    await blobClient.CommitBlockListAsync([], new CommitBlockListOptions()
                     {
-                        ["State"] = "Dehydrated",
-                        ["SourceEtag"] = props.Value.ETag.ToString()
-                    };
+                        Metadata = BaseMetadata
+                    },
+                    cancellationToken: token);
 
-                    // Copy content of file to blob store (block names should be sortable by order in blob) 
-                    await CopyAsync(fileClient, blobClient, metadata);
+                    // Copy content of file to blob store (block names should be sortable by order in blob)
+                    const long MAX_BLOCK_SIZE = 1 << 30; // 1gb
+                    var blocks = new List<string>();
+                    for (long offset = 0; offset < sourceFile.FileSize!.Value; offset += MAX_BLOCK_SIZE)
+                    {
+                        var blockLength = Math.Min(MAX_BLOCK_SIZE, fileSize - offset);
+                        await blobClient.StageBlockFromUriAsync(
+                            base64BlockId: Out.Var(out var blockName, (offset / MAX_BLOCK_SIZE).ToString().PadLeft(4, '0')),
+                            sourceUri: fileClient.Uri,
+                            options: new StageBlockFromUriOptions()
+                            {
+                                SourceRange = new HttpRange(offset, blockLength),
+                                SourceConditions = new RequestConditions()
+                                {
+                                    IfUnmodifiedSince = sourceFile.Properties.LastModified
+                                }
+                            },
+                            cancellationToken: token
+                        );
 
-                    // Clear out content of file
-                    await fileClient.CreateAsync(sourceFile.FileSize!.Value);
+                        blocks.Add(blockName);
+                    }
+
+                    var metadata = BaseMetadata
+                        .SetItem(Strings.source_timestamp, sourceFile.GetLastWriteTimestamp())
+                        .SetItem(Strings.last_refresh_time, Timestamp.Now);
+
+                    // Blocks are left uncommitted intentionally so that blob is materialized on demand
+                    await blobClient.SetMetadataAsync(metadata, cancellationToken: token);
+
+                    //await blobClient.CommitBlockListAsync(blocks, new CommitBlockListOptions()
+                    //{
+                    //    Metadata = metadata
+                    //},
+                    //cancellationToken: token);
+
+                    // Copy times from original file
+                    var smbProps = props.Value.SmbProperties;
+                    smbProps.FileChangedOn = Timestamp.Now.Value;
+
+                    // Clear out content of file. And set archive time metadata in order to mark the file as archived
+                    await fileClient.CreateAsync(
+                        sourceFile.FileSize!.Value,
+                        new ShareFileCreateOptions()
+                        {
+                            Metadata = metadata,
+                            SmbProperties = smbProps,
+                            HttpHeaders = props.Value.ToHttpHeaders()
+                        });
                 }
-                else if (Out.Var(out var needsRefresh, targetBlob.Properties.CreatedOn < refreshExpiry)
-                    || targetBlob.Properties.LastModified < Expiry && targetBlob.Properties.ContentLength > 0)
+                // target dehydrated and needs refresh or hydrated needs to be dehydrated
+                else
                 {
+                    bool hydrated = targetBlob.Properties.ContentLength > 0;
+                    bool needsRefresh = false;
+                    if (!hydrated)
+                    {
+                        // Not hydrated. Check if refresh is needed.
+                        if ((targetBlob.Metadata.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Now) < refreshExpiry
+                            && (maxRefreshes-- >= 0))
+                        {
+                            needsRefresh = true;
+                        }
+                        else
+                        {
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        // Hydrated, check if blob can be evicted
+                        // If source file was modified fairly recently, then it cannot be evicted.
+                        // Hydrators should touch source file AND target blob to indicate keep alive for the blob
+                        // Need to touch blob so that we can use a blob condition to keep from overwriting the blob
+                        // Need to touch source file so that other hydrators can avoid touching based on info from query of source file
+                        if (sourceFile.Properties.LastModified > Expiry || targetBlob.Properties.LastModified > Expiry) return;
+                    }
+
                     operation = needsRefresh ? "refreshing blob" : "redehydrating blob";
 
                     var blobClient = targetBlobContainer.GetBlockBlobClient(path);
+                    var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(sourceFile.Name);
 
                     if (needsRefresh)
                     {
                         var blocks = await blobClient.GetBlockListAsync();
-                        if (blocks.Value.UncommittedBlocks.Count() > 0)
-                        {
-                            await blobClient.CommitBlockListAsync(
-                                blocks.Value.UncommittedBlocks.Select(b => b.Name).Order(),
-                                cancellationToken: token);
-                        }
+                        await blobClient.CommitBlockListAsync(
+                            blocks.Value.UncommittedBlocks.Select(b => b.Name).Order(),
+                            cancellationToken: token);
                     }
 
-                    var snapshot = await blobClient.CreateSnapshotAsync();
-
-                    var metadata = new Dictionary<string, string>(targetBlob.Metadata)
+                    var conditions = new BlobRequestConditions()
                     {
-                        ["State"] = "Dehydrate",
-                        ["SnapshotId"] = snapshot.Value.Snapshot
+                        IfUnmodifiedSince = targetBlob.Properties.LastModified
                     };
 
-                    await blobClient.CommitBlockListAsync([], cancellationToken: token);
+                    var snapshot = await blobClient.CreateSnapshotAsync(conditions: conditions, cancellationToken: token);
+
+                    var metadata = BaseMetadata.SetItems(targetBlob.Metadata)
+                        .SetItems(BaseMetadata)
+                        //.SetItem(Strings.last_refresh_time, Timestamp.Now)
+                        .SetItem(Strings.snapshot, snapshot.Value.Snapshot)
+                        .ToBuilder();
+
+                    // Clear out blocks. Metadata is preserved
+                    await blobClient.CommitBlockListAsync([], new CommitBlockListOptions()
+                    {
+                        Metadata = metadata,
+                        Conditions = conditions
+                    },
+                    cancellationToken: token);
+
+                    await fileClient.SetMetadataAsync(metadata, cancellationToken: token);
 
                     var snapshotClient = blobClient.WithSnapshot(snapshot.Value.Snapshot);
                     var snaphotBlocks = await snapshotClient.GetBlockListAsync(BlockListTypes.Committed, cancellationToken: token);
@@ -166,6 +261,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     long offset = 0;
                     foreach (var block in snaphotBlocks.Value.CommittedBlocks)
                     {
+                        // Stage blocks, these are uncommitted intentionally
+                        // so that blob is materialized on demand
                         await blobClient.StageBlockFromUriAsync(
                             base64BlockId: block.Name,
                             sourceUri: snapshotClient.Uri,
@@ -179,6 +276,13 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                         offset += block.SizeLong;
                     }
 
+                    // Now that update is complete, remove pointer to snapshot and update refresh time
+                    metadata[Strings.last_refresh_time] = Timestamp.Now;
+                    metadata.Remove(Strings.snapshot);
+
+                    // Side effect: Set the file changed time to indicate file is dehydrated.
+                    // Hydrators will set this to a well-known value to indicate file is hydrated
+                    await fileClient.SetMetadataAsync(metadata);
                     await blobClient.SetMetadataAsync(metadata);
                 }
 
@@ -191,7 +295,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             }
         });
 
-        await DeleteOldSnapshotsAsync(targetBlobContainer);
+        await DeleteOldSnapshotsAsync(targetBlobContainer, targetBlobs);
 
         // Additional steps can be added here as needed
 
@@ -219,13 +323,15 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         return blobs;
     }
 
-    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container)
+    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, Dictionary<string, BlobItem> targetBlobs)
     {
-        await foreach (var blobPage in container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots))
+        await foreach (var blobItem in container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots))
         {
-            if (blobPage.Snapshot != null && blobPage.Properties.LastModified < Expiry)
+            if (blobItem.Snapshot != null && blobItem.Properties.LastModified < Expiry
+                // If target blob metadata, still references snapshot, we can't delete it yet
+                && (!targetBlobs.TryGetValue(blobItem.Name, out var targetItem) || targetItem.Metadata.ValueOrDefault(Strings.snapshot) != blobItem.Snapshot))
             {
-                var blobClient = container.GetBlobClient(blobPage.Name).WithSnapshot(blobPage.Snapshot);
+                var blobClient = container.GetBlobClient(blobItem.Name).WithSnapshot(blobItem.Snapshot);
 
                 try
                 {
@@ -238,10 +344,5 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 }
             }
         }
-    }
-
-    private async Task CopyAsync(ShareFileClient sourceFile, BlockBlobClient targetBlob, Dictionary<string, string> metadata)
-    {
-        throw new NotImplementedException();
     }
 }

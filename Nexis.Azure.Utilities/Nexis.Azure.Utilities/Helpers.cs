@@ -8,6 +8,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Azure;
+using Azure.Storage.Files.Shares.Models;
 
 namespace Nexis.Azure.Utilities;
 
@@ -30,6 +32,19 @@ public static class Helpers
 
             return new Guid(guidBytes);
         }
+    }
+
+    public static ShareFileHttpHeaders ToHttpHeaders(this ShareFileProperties properties)
+    {
+        return new ShareFileHttpHeaders
+        {
+            ContentType = properties.ContentType,
+            ContentEncoding = properties.ContentEncoding?.ToArray(),
+            ContentLanguage = properties.ContentLanguage?.ToArray(),
+            ContentDisposition = properties.ContentDisposition,
+            CacheControl = properties.CacheControl,
+            ContentHash = properties.ContentHash
+        };
     }
 
     public static string ExpandVariables(string input, Out<IEnumerable<string>> missingVariables = default, bool requireAll = false)
@@ -135,6 +150,32 @@ public static class Helpers
     public static Optional<string> AsNonEmptyOrOptional(this string? s)
     {
         return string.IsNullOrEmpty(s) ? Optional.Default : s;
+    }
+
+    public static TValue? ValueOrDefault<TKey, TValue>(this IDictionary<TKey, TValue> map, TKey key, TValue defaultValue = default!)
+    {
+        return map.TryGetValue(key, out var value) ? value : defaultValue;
+    }
+
+
+    public static Timestamp GetLastWriteTimestamp(this ShareFileItem file)
+    {
+        return file.Properties.LastWrittenOn!.Value.ToTimeStamp();
+    }
+
+    public static Timestamp GetLastWriteTimestamp(this ShareFileProperties file)
+    {
+        return file.SmbProperties.FileLastWrittenOn!.Value.ToTimeStamp();
+    }
+
+    public static Timestamp ToTimeStamp(this DateTimeOffset time)
+    {
+        return time.UtcDateTime.ToTimeStamp();
+    }
+
+    public static Timestamp ToTimeStamp(this DateTime time)
+    {
+        return time.ToUniversalTime().ToString("o"); ;
     }
 
     public static Optional<T> Or<T>(this Optional<T> first, Optional<T> second)
