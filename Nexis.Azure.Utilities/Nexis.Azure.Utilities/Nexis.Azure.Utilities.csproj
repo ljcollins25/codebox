@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>nexutils</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DebugType>embedded</DebugType>
+    <LangVersion>latest</LangVersion>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_IsPacking)' == 'true'">
+    <PackAsTool>true</PackAsTool>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+
+    <PackageId>Nexutils</PackageId>
+    <Description>Utilities and operations for Nexis</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/ljcollins25/codebox</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/ljcollins25/codebox/tree/main/Nexis.Azure.Utilities</PackageProjectUrl>
+    <ToolCommandName>$(AssemblyName)</ToolCommandName>
+    <CurrentDateTime>$([System.DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss"))</CurrentDateTime>
+    <Authors>ljcollins25</Authors>
+    <Version>1.0.0-Dev-$(CurrentDateTime)</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.23.0" />
+    <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
+    <PackageReference Include="RuntimeContracts" Version="0.5.0"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="*.ps1" CopyToOutputDirectory="PreserveNewest"/>
+    <Compile Remove="Functions.cs"/>
+    <Content Include="Functions.cs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="*.rsp" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

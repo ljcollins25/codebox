@@ -1,0 +1,222 @@
+﻿using System;
+using System.Linq;
+using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Parsing;
+using System.Diagnostics;
+using System.Reflection;
+using System.Reflection.Metadata;
+using Azure.Storage.Sas;
+using Microsoft.Azure.Pipelines.WebApi;
+
+namespace Nexis.Azure.Utilities;
+
+using static Helpers;
+
+public class Program
+{
+    public static Task<int> Main(params string[] args)
+    {
+        return RunAsync(args);
+    }
+
+    public record struct Args(params string[] Arguments)
+    {
+        public bool UseExceptionHandler { get; set; } = true;
+
+        public static implicit operator Args(string[] args) => new(args);
+
+        public static implicit operator string[](Args args) => args.Arguments;
+
+        public SubProcessRunner? ToRunner(CancellationToken token) => Arguments.Length == 0 ? null : SubProcessRunner.FromRemainingArgs(Arguments, token);
+    }
+
+    public static async Task<int> RunAsync(Args args)
+    {
+        using var cts = new CancellationTokenSource();
+        Environment.SetEnvironmentVariable("AppBaseDirectory", AppContext.BaseDirectory);
+        var parseResult = ParseArguments(args, cts);
+        return await parseResult.InvokeAsync();
+    }
+
+    public static ParseResult ParseArguments(Args args, CancellationTokenSource? cts = null)
+    {
+        cts ??= new();
+        args = FilterArgs(args);
+        args = args.Arguments.Select(a => Environment.ExpandEnvironmentVariables(Helpers.ExpandVariables(a))).ToArray();
+
+        var precedingArgs = new List<string>();
+        var remainingArgs = new List<string>();
+
+        var list = precedingArgs;
+        foreach (var arg in args.Arguments)
+        {
+            if (arg == "--" && list != remainingArgs)
+            {
+                list = remainingArgs;
+            }
+            else
+            {
+                list.Add(arg);
+            }
+        }
+
+        Console.CancelKeyPress += (s, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+        };
+
+        RootCommand rootCommand = GetCommand(cts, new Args(remainingArgs.ToArray()));
+
+        var builder = new CommandLineBuilder(rootCommand)
+            .UseVersionOption()
+            .UseHelp()
+            .UseEnvironmentVariableDirective()
+            .UseParseDirective()
+            .UseParseErrorReporting();
+
+        if (args.UseExceptionHandler)
+        {
+            builder = builder.UseExceptionHandler();
+        }
+
+        builder = builder.CancelOnProcessTermination();
+
+        return builder.Build().Parse(precedingArgs.ToArray());
+    }
+
+    private static string[] FilterArgs(string[] args)
+    {
+        if (args.Contains("----"))
+        {
+            var index = args.AsSpan().LastIndexOf("----");
+            return args.AsSpan().Slice(index + 1).ToArray();
+        }
+        else if (args.Contains("{{{{") && args.Contains("}}}}"))
+        {
+            var span = args.AsSpan();
+            var startIndex = span.IndexOf("{{{{") + 1;
+            var endIndex = span.IndexOf("}}}}");
+            return args.AsSpan()[startIndex..endIndex].ToArray();
+        }
+
+        return args;
+    }
+
+    private class TestOperation
+    {
+        public int Port;
+
+        public bool BoolArg = true;
+
+        public Uri? UriArg;
+
+        public required List<string> Args;
+
+        public async Task<int> RunAsync()
+        {
+            return 0;
+        }
+    }
+
+    public static RootCommand GetCommand(CancellationTokenSource? cts = null, Args? additionalArgs = null)
+    {
+        cts ??= new();
+        return new RootCommand
+        {
+
+            GetStorageCommand(),
+
+            CliModel.Bind<RunOperation>(
+                new Command("run", "Run command."),
+                m =>
+                {
+                    var result = new RunOperation(additionalArgs?.ToRunner(cts.Token));
+
+                    m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
+
+                    return result;
+                },
+                r => r.RunAsync()),
+        };
+    }
+
+    public static Command GetStorageCommand()
+    {
+        var common = CliModel.Bind<SasCommonArguments>(
+            new Command("common"),
+            m =>
+            {
+                var result = new SasCommonArguments()
+                {
+                    Permissions = m.Option(c => ref c.Permissions, name: "permissions", description: "The sas permission (i.e. rwdl).", required: true),
+                    AccountName = m.Option(c => ref c.AccountName, name: "account-name", description: "The account name.", required: true),
+                    AccountKey = m.Option(c => ref c.AccountKey, name: "account-key", description: "The account key.", required: true),
+                    ExpiryValue = m.Option(c => ref c.ExpiryValue, name: "expiry", description: "The sas expiry time.", required: true),
+                    Output = m.Option(c => ref c.Output, name: "output", defaultValue: "tsv"),
+                    EmitFullUri = m.Option(c => ref c.EmitFullUri, name: "full", defaultValue: false),
+                };
+
+                return result;
+            },
+            r => Task.FromResult(0));
+
+        return new Command("storage")
+        {
+            CliModel.Bind<UploadOperation>(
+                new Command("upload"),
+                m =>
+                {
+                    var result = new UploadOperation(m.Console, m.Token)
+                    {
+                        Source = m.Option(c => ref c.Source, name: "source", description: "The source file path", required: true),
+                        TargetUri = m.Option(c => ref c.TargetUri, name: "target", description: "The target blob uri", required: true),
+                    };
+
+                    m.Option(c => ref c.Overwrite, name: "overwrite", defaultValue: false);
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            new Command("account")
+            {
+                CliModel.Bind<AccountSasArguments>(
+                    new Command("generate-sas"),
+                    m =>
+                    {
+                        var result = new AccountSasArguments(m.Console)
+                        {
+                            CommonArguments = m.SharedOptions(c => ref c.CommonArguments, common),
+                            Services = m.Option(c => ref c.Services, name: "services", required: true),
+                            ResourceTypes = m.Option(c => ref c.ResourceTypes, name: "resource-types", required: true),
+                        };
+
+                        return result;
+                    },
+                    r => r.RunAsync()),
+            },
+            new[] { true, false }.Select(isBlob =>
+            {
+                return new Command(isBlob ? "blob" : "container")
+                {
+                    CliModel.Bind<BlobOrContainerArguments>(
+                        new Command("generate-sas"),
+                        m =>
+                        {
+                            var result = new BlobOrContainerArguments(m.Console)
+                            {
+                                CommonArguments = m.SharedOptions(c => ref c.CommonArguments, common),
+                                ContainerName = m.Option(c => ref c.ContainerName, name: isBlob ? "container-name" : "name", description: "The container name.", required: true),
+                                BlobName = m.Option(c => ref c.BlobName, name: isBlob ? "name" : "blob-name", description: "The blob name.", required: isBlob)
+                            };
+
+                            return result;
+                        },
+                        r => r.RunAsync())
+                };
+            })
+        };
+    }
+}

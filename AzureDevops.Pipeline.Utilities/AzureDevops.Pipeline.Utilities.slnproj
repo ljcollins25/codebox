@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.Build.Traversal/3.3.0">
+  <ItemGroup Label="files" >
+    <!-- <SolutionFile Include="[FilePath]" Folder="[SolutionExplorerFolder]" /> -->
+  </ItemGroup>
+  <ItemGroup Label="projects" >
+    <ProjectReference Include="AzureDevops.Pipeline.Utilities.Tests\AzureDevops.Pipeline.Utilities.Tests.csproj" Folder="" />
+    <ProjectReference Include="AzureDevops.Pipeline.Utilities\AzureDevops.Pipeline.Utilities.csproj" Folder="" />
+  </ItemGroup>
+</Project>

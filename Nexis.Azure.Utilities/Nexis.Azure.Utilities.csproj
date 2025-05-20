@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.Build.Traversal/3.3.0">
+  <ItemGroup Label="files" >
+    <!-- <SolutionFile Include="[FilePath]" Folder="[SolutionExplorerFolder]" /> -->
+  </ItemGroup>
+  <ItemGroup Label="projects" >
+    <ProjectReference Include="Nexis.Azure.Utilities.Tests\Nexis.Azure.Utilities.Tests.csproj" Folder="" />
+    <ProjectReference Include="Nexis.Azure.Utilities\Nexis.Azure.Utilities.csproj" Folder="" />
+  </ItemGroup>
+</Project>
