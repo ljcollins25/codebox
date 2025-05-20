@@ -1,42 +1,247 @@
 ﻿using System.CommandLine;
+using System.CommandLine.IO;
+using System.ComponentModel;
 using System.IO.Compression;
+using System.Linq;
+using System.Reflection.Metadata;
+using System.Xml.Linq;
+using Azure;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
+using Azure.Storage.Files.Shares;
+using Azure.Storage.Files.Shares.Models;
+using static System.Reflection.Metadata.BlobBuilder;
 
 namespace Nexis.Azure.Utilities;
 
 public class DehydrateOperation(IConsole Console, CancellationToken token)
 {
-    public required string Source;
+    public required Uri SourceFilesUri;
+    public required Uri TargetBlobUri;
 
-    public required Uri Target;
+    public required string ExpiryValue;
+
+    // Set to zero to refresh everything
+    // Set to large value to refresh nothing
+    public TimeSpan RefreshInterval = TimeSpan.FromDays(5);
+
+    public int RefreshBatches = 5;
+
+    public bool ShouldDeleteExtraneousTargetFiles;
+
+    public DateTimeOffset Expiry
+    {
+        get
+        {
+            if (DateTime.TryParse(ExpiryValue, out var d)) return d.ToUniversalTime();
+            if (DateTimeOffset.TryParse(ExpiryValue, out var dto)) return dto;
+            if (TimeSpan.TryParse(ExpiryValue, out var ts)) return DateTimeOffset.UtcNow - ts;
+            if (TimeSpanSetting.TryParseReadableTimeSpan(ExpiryValue, out ts)) return DateTimeOffset.UtcNow - ts;
+
+            throw new FormatException($"Unable to parse Expiry '{ExpiryValue}' as date or TimeSpan");
+        }
+    }
+
+    // public async Task<int> RunAsync()
+    // {
+    //     // Get all files in Source
+    //     // Get all files in Target
+
+    //     /*
+    //     * Delete any snapshots from target which are older than ttl
+    //     * 1. Set metadata State=Dehydrated, SourceEtag (copied from existing metadata)
+    //     * For files missing from source, delete from target optionally
+    //     * For files missing from target where source last write time is after ttl,
+    //     * 1. Put blob with empty block list
+    //     * 2. Put blocks from source
+    //     * 3. Update target metadata, State=Dehydrated
+    //     * 4. Delete source content by calling CreateFile with length of file
+    //     * For hydrated files in target with last modified time older than ttl, which have not been accessed recently
+    //     * 1. Create snapshot
+    //     * 2. Put empty block list, with snapshot id metadata and State=DehydratePending, SourceEtag (copied from existing metadata)
+    //     * - This should fail if blob has new last modified time
+    //     * - Hydrators should update last write time by setting blob properties
+    //     * For files changed in source where last modified time is after ttl, 
+    //     *
+    //     */
+    //     return 0;
+    // }
 
     public async Task<int> RunAsync()
     {
-        // Get all files in Source
-        // Get all files in Target
+        var sourceShareClient = new ShareClient(SourceFilesUri);
+        var targetBlobContainer = new BlobContainerClient(TargetBlobUri);
 
-        /*
-        * Delete any snapshots from target which are older than ttl
-        * 1. Set metadata State=Dehydrated, SourceEtag (copied from existing metadata)
-        * For files missing from source, delete from target optionally
-        * For files missing from target where source last write time is after ttl,
-        * 1. Put blob with empty block list
-        * 2. Put blocks from source
-        * 3. Update target metadata, State=Dehydrated
-        * 4. Delete source content by calling CreateFile with length of file
-        * For hydrated files in target with last modified time older than ttl, which have not been accessed recently
-        * 1. Create snapshot
-        * 2. Put empty block list, with snapshot id metadata and State=DehydratePending, SourceEtag (copied from existing metadata)
-        * - This should fail if blob has new last modified time
-        * - Hydrators should update last write time by setting blob properties
-        * For files changed in source where last modified time is after ttl, 
-        *
-        */
+        var sourceFiles = await GetSourceFilesAsync(sourceShareClient);
+        var targetBlobs = await GetTargetBlobsAsync(targetBlobContainer);
+
+        var maxRefreshes = (targetBlobs.Count + (RefreshBatches - 1)) / RefreshBatches;
+
+        var refreshExpiry = DateTimeOffset.UtcNow - RefreshInterval;
+
+        Parallel.ForEachAsync(sourceFiles.Keys.Union(targetBlobs.Keys, StringComparer.OrdinalIgnoreCase), token, async (path, token) =>
+        {
+            var sourceFile = sourceFiles.GetValueOrDefault(path);
+            var targetBlob = targetBlobs.GetValueOrDefault(path);
+
+            string operation = "";
+            try
+            {
+                Console.WriteLine($"{path}: START SourceExists:{sourceFile != null}, TargetExists: {targetBlob != null}");
+
+                if (sourceFile == null)
+                {
+                    operation = "deleting extraneous blob";
+                    if (ShouldDeleteExtraneousTargetFiles)
+                    {
+                        if (targetBlob!.Properties.LastModified < Expiry)
+                        {
+                            var blobClient = targetBlobContainer.GetBlobClient(targetBlob.Name);
+                            var requestConditions = new BlobRequestConditions
+                            {
+                                IfUnmodifiedSince = targetBlob.Properties.LastModified
+                            };
+
+
+                            await blobClient.DeleteIfExistsAsync(conditions: requestConditions);
+                        }
+                    }
+                }
+                else if (targetBlob == null)
+                {
+                    operation = "dehydrating file";
+                    var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(sourceFile.Name);
+                    var props = await fileClient.GetPropertiesAsync();
+                    if (props.Value.LastModified > Expiry)
+                        continue;
+
+                    var blobClient = targetBlobContainer.GetBlockBlobClient(path);
+
+                    await blobClient.CommitBlockListAsync([], cancellationToken: token);
+
+                    var metadata = new Dictionary<string, string>
+                    {
+                        ["State"] = "Dehydrated",
+                        ["SourceEtag"] = props.Value.ETag.ToString()
+                    };
+
+                    // Copy content of file to blob store (block names should be sortable by order in blob) 
+                    await CopyAsync(fileClient, blobClient, metadata);
+
+                    // Clear out content of file
+                    await fileClient.CreateAsync(sourceFile.FileSize!.Value);
+                }
+                else if (Out.Var(out var needsRefresh, targetBlob.Properties.CreatedOn < refreshExpiry)
+                    || targetBlob.Properties.LastModified < Expiry && targetBlob.Properties.ContentLength > 0)
+                {
+                    operation = needsRefresh ? "refreshing blob" : "redehydrating blob";
+
+                    var blobClient = targetBlobContainer.GetBlockBlobClient(path);
+
+                    if (needsRefresh)
+                    {
+                        var blocks = await blobClient.GetBlockListAsync();
+                        if (blocks.Value.UncommittedBlocks.Count() > 0)
+                        {
+                            await blobClient.CommitBlockListAsync(
+                                blocks.Value.UncommittedBlocks.Select(b => b.Name).Order(),
+                                cancellationToken: token);
+                        }
+                    }
+
+                    var snapshot = await blobClient.CreateSnapshotAsync();
+
+                    var metadata = new Dictionary<string, string>(targetBlob.Metadata)
+                    {
+                        ["State"] = "Dehydrate",
+                        ["SnapshotId"] = snapshot.Value.Snapshot
+                    };
+
+                    await blobClient.CommitBlockListAsync([], cancellationToken: token);
+
+                    var snapshotClient = blobClient.WithSnapshot(snapshot.Value.Snapshot);
+                    var snaphotBlocks = await snapshotClient.GetBlockListAsync(BlockListTypes.Committed, cancellationToken: token);
+
+                    long offset = 0;
+                    foreach (var block in snaphotBlocks.Value.CommittedBlocks)
+                    {
+                        await blobClient.StageBlockFromUriAsync(
+                            base64BlockId: block.Name,
+                            sourceUri: snapshotClient.Uri,
+                            options: new StageBlockFromUriOptions()
+                            {
+                                SourceRange = new HttpRange(offset, block.SizeLong)
+                            },
+                            cancellationToken: token
+                        );
+
+                        offset += block.SizeLong;
+                    }
+
+                    await blobClient.SetMetadataAsync(metadata);
+                }
+
+                Console.WriteLine($"{path}: Completed {operation}");
+            }
+            catch (RequestFailedException ex)
+            {
+                // Blob was modified since last check; safe to ignore or log as needed
+                Console.Error.WriteLine($"{path}: Exception {operation}:\n{ex.Message}");
+            }
+        });
+
+        await DeleteOldSnapshotsAsync(targetBlobContainer);
+
+        // Additional steps can be added here as needed
+
         return 0;
     }
 
-    public interface ISourceStore
+    private async Task<Dictionary<string, ShareFileItem>> GetSourceFilesAsync(ShareClient shareClient)
     {
-        public Task CopyToBlobStorage(BlockBlobClient client);
+        var files = new Dictionary<string, ShareFileItem>();
+        await foreach (var item in shareClient.GetRootDirectoryClient().GetFilesAndDirectoriesAsync())
+        {
+            if (!item.IsDirectory)
+                files[item.Name] = item;
+        }
+        return files;
+    }
+
+    private async Task<Dictionary<string, BlobItem>> GetTargetBlobsAsync(BlobContainerClient container)
+    {
+        var blobs = new Dictionary<string, BlobItem>();
+        await foreach (var blob in container.GetBlobsAsync(BlobTraits.Metadata))
+        {
+            blobs[blob.Name] = blob;
+        }
+        return blobs;
+    }
+
+    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container)
+    {
+        await foreach (var blobPage in container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots))
+        {
+            if (blobPage.Snapshot != null && blobPage.Properties.LastModified < Expiry)
+            {
+                var blobClient = container.GetBlobClient(blobPage.Name).WithSnapshot(blobPage.Snapshot);
+
+                try
+                {
+                    await blobClient.DeleteIfExistsAsync();
+                }
+                catch (RequestFailedException ex)
+                {
+                    // Blob was modified since last check; safe to ignore or log as needed
+                    Console.Error.WriteLine($"{blobClient.Name}: Exception deleting stale snapshot: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private async Task CopyAsync(ShareFileClient sourceFile, BlockBlobClient targetBlob, Dictionary<string, string> metadata)
+    {
+        throw new NotImplementedException();
     }
 }
