@@ -20,14 +20,10 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 {
     private static class Strings
     {
-        public const string source_etag = "source_etag";
         public const string source_timestamp = "source_timestamp";
         public const string last_refresh_time = "last_refresh_time";
-        public const string dehydrated = "dehydrated";
         public const string snapshot = "snapshot";
     }
-
-    private const NtfsFileAttributes DehydratedMarkerAttribute = NtfsFileAttributes.None;
 
     public required Uri SourceFilesUri;
     public required Uri TargetBlobUri;
@@ -36,15 +32,26 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         .Add("archive_version", "1")
         ;
 
-    public required string ExpiryValue = "1h";
-
-    // Set to zero to refresh everything
-    // Set to large value to refresh nothing
-    public TimeSpan RefreshInterval = TimeSpan.FromDays(5);
-
     public int RefreshBatches = 5;
 
     public bool ShouldDeleteExtraneousTargetFiles;
+
+    // Set to zero to refresh everything
+    // Set to large value to refresh nothing
+    public string RefreshIntervalValue = "5d";
+
+    public TimeSpan RefreshInterval
+    {
+        get
+        {
+            if (TimeSpan.TryParse(RefreshIntervalValue, out var ts)) return ts;
+            if (TimeSpanSetting.TryParseReadableTimeSpan(RefreshIntervalValue, out ts)) return ts;
+
+            throw new FormatException($"Unable to parse Expiry '{RefreshIntervalValue}' as timeSpan");
+        }
+    }
+
+    public required string ExpiryValue = "1h";
 
     public DateTimeOffset Expiry
     {
@@ -58,6 +65,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             throw new FormatException($"Unable to parse Expiry '{ExpiryValue}' as date or TimeSpan");
         }
     }
+
+    public bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
 
     // public async Task<int> RunAsync()
     // {
@@ -96,7 +105,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
         var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
 
-        await Parallel.ForEachAsync(sourceFiles.Keys.Union(targetBlobs.Keys, StringComparer.OrdinalIgnoreCase), token, async (path, token) =>
+        await Helpers.ForEachAsync(!SingleThreaded, sourceFiles.Keys.Union(targetBlobs.Keys, StringComparer.OrdinalIgnoreCase), token, async (path, token) =>
         {
             var sourceFile = sourceFiles.GetValueOrDefault(path);
             var targetBlob = targetBlobs.GetValueOrDefault(path);
@@ -113,7 +122,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     {
                         if (targetBlob!.Properties.LastModified < Expiry)
                         {
-                            var blobClient = targetBlobContainer.GetBlobClient(targetBlob.Name);
+                            var blobClient = targetBlobContainer.GetBlobClient(path);
                             var requestConditions = new BlobRequestConditions
                             {
                                 IfUnmodifiedSince = targetBlob.Properties.LastModified
@@ -129,8 +138,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 {
                     var fileSize = sourceFile.FileSize!.Value;
                     operation = "dehydrating file";
-                    var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(sourceFile.Name);
-                    var props = await fileClient.GetPropertiesAsync();
+                    var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(path);
 
                     var blobClient = targetBlobContainer.GetBlockBlobClient(path);
 
@@ -153,10 +161,11 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                             options: new StageBlockFromUriOptions()
                             {
                                 SourceRange = new HttpRange(offset, blockLength),
-                                SourceConditions = new RequestConditions()
-                                {
-                                    IfUnmodifiedSince = sourceFile.Properties.LastModified
-                                }
+                                // This does not seem to be supported
+                                //SourceConditions = new RequestConditions()
+                                //{
+                                //    IfUnmodifiedSince = sourceFile.Properties.LastModified
+                                //}
                             },
                             cancellationToken: token
                         );
@@ -167,6 +176,13 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     var metadata = BaseMetadata
                         .SetItem(Strings.source_timestamp, sourceFile.GetLastWriteTimestamp())
                         .SetItem(Strings.last_refresh_time, Timestamp.Now);
+
+                    var props = await fileClient.GetPropertiesAsync();
+                    if (props.Value.GetLastWriteTimestamp() > sourceFile.GetLastWriteTimestamp())
+                    {
+                        // Error out if file was modified while writing the blob
+                        throw new Exception($"File modified: {props.Value.GetLastWriteTimestamp()} > {sourceFile.GetLastWriteTimestamp()}");
+                    }
 
                     // Blocks are left uncommitted intentionally so that blob is materialized on demand
                     await blobClient.SetMetadataAsync(metadata, cancellationToken: token);
@@ -222,7 +238,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     operation = needsRefresh ? "refreshing blob" : "redehydrating blob";
 
                     var blobClient = targetBlobContainer.GetBlockBlobClient(path);
-                    var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(sourceFile.Name);
+                    var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(path);
 
                     if (needsRefresh)
                     {
@@ -288,7 +304,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
                 Console.WriteLine($"{path}: Completed {operation}");
             }
-            catch (RequestFailedException ex)
+            catch (Exception ex)
             {
                 // Blob was modified since last check; safe to ignore or log as needed
                 Console.Error.WriteLine($"{path}: Exception {operation}:\n{ex.Message}");
@@ -305,10 +321,29 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     private async Task<Dictionary<string, ShareFileItem>> GetSourceFilesAsync(ShareClient shareClient)
     {
         var files = new Dictionary<string, ShareFileItem>();
-        await foreach (var item in shareClient.GetRootDirectoryClient().GetFilesAndDirectoriesAsync())
+        var dirs = new Stack<ShareDirectoryClient>();
         {
-            if (!item.IsDirectory)
-                files[item.Name] = item;
+            ShareDirectoryGetFilesAndDirectoriesOptions options = new()
+            {
+                Traits = ShareFileTraits.All
+            };
+
+            dirs.Push(shareClient.GetRootDirectoryClient());
+            while (dirs.TryPop(out var dir))
+            {
+                await foreach (var item in dir.GetFilesAndDirectoriesAsync(options: options))
+                {
+                    var path = string.IsNullOrEmpty(dir.Path?.Trim('/')) ? item.Name : $"{dir.Path}/{item.Name}";
+                    if (!item.IsDirectory)
+                    {
+                        files[path] = item;
+                    }
+                    else
+                    {
+                        dirs.Push(shareClient.GetDirectoryClient(path));
+                    }
+                }
+            }
         }
         return files;
     }

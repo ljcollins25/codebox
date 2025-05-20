@@ -7,7 +7,6 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Reflection.Metadata;
 using Azure.Storage.Sas;
-using Microsoft.Azure.Pipelines.WebApi;
 
 namespace Nexis.Azure.Utilities;
 
@@ -125,20 +124,38 @@ public class Program
         cts ??= new();
         return new RootCommand
         {
-
             GetStorageCommand(),
 
-            CliModel.Bind<RunOperation>(
-                new Command("run", "Run command."),
+            // Add DehydrateOperation command
+            CliModel.Bind<DehydrateOperation>(
+                new Command("dehydrate", "Dehydrate Azure Files to Azure Blob Storage."),
                 m =>
                 {
-                    var result = new RunOperation(additionalArgs?.ToRunner(cts.Token));
+                    var result = new DehydrateOperation(m.Console, cts.Token)
+                    {
+                        SourceFilesUri = m.Option(c => ref c.SourceFilesUri, name: "share-uri", description: "File share uri", required: true, aliases: ["source", "share"]),
+                        TargetBlobUri = m.Option(c => ref c.TargetBlobUri, name: "container-uri", description: "Data content blob store", required: true, aliases: ["target", "container"]),
+                        ExpiryValue = m.Option(c => ref c.ExpiryValue, name: "expiry", description: "Expiry value (e.g. 1h, 2d)", defaultValue: "1h", required: true),
+                    };
 
-                    m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
-
+                    m.Option(c => ref c.RefreshIntervalValue, name: "refresh-interval", description: "Refresh interval", defaultValue: "5d");
+                    m.Option(c => ref c.ShouldDeleteExtraneousTargetFiles, name: "delete-extraneous", description: "Delete blobs missing from source", defaultValue: false);
+                    m.Option(c => ref c.RefreshBatches, name: "refresh-batches", description: "Number of refresh batches", defaultValue: 5);
                     return result;
                 },
                 r => r.RunAsync()),
+
+            //CliModel.Bind<RunOperation>(
+            //    new Command("run", "Run command."),
+            //    m =>
+            //    {
+            //        var result = new RunOperation(additionalArgs?.ToRunner(cts.Token));
+
+            //        m.Option(c => ref c.RetryCount, name: "retries", defaultValue: result.RetryCount);
+
+            //        return result;
+            //    },
+            //    r => r.RunAsync()),
         };
     }
 

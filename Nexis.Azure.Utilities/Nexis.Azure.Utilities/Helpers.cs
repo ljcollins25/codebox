@@ -160,22 +160,22 @@ public static class Helpers
 
     public static Timestamp GetLastWriteTimestamp(this ShareFileItem file)
     {
-        return file.Properties.LastWrittenOn!.Value.ToTimeStamp();
+        return file.Properties.LastWrittenOn!.Value;
     }
 
     public static Timestamp GetLastWriteTimestamp(this ShareFileProperties file)
     {
-        return file.SmbProperties.FileLastWrittenOn!.Value.ToTimeStamp();
+        return file.SmbProperties.FileLastWrittenOn!.Value;
     }
 
     public static Timestamp ToTimeStamp(this DateTimeOffset time)
     {
-        return time.UtcDateTime.ToTimeStamp();
+        return time;
     }
 
     public static Timestamp ToTimeStamp(this DateTime time)
     {
-        return time.ToUniversalTime().ToString("o"); ;
+        return time;
     }
 
     public static Optional<T> Or<T>(this Optional<T> first, Optional<T> second)
@@ -260,6 +260,38 @@ public static class Helpers
     public static string AddBuildTag(string tag, bool print = true)
     {
         return PrintAndReturn($"##vso[build.addbuildtag]{tag}", print: print);
+    }
+
+    public record struct Parallelism(ParallelOptions? Options)
+    {
+        public static implicit operator Parallelism(bool value)
+        {
+            return new(value ? new ParallelOptions() : null);
+        }
+
+        public static implicit operator Parallelism(int parallelism)
+        {
+            return new Parallelism(parallelism > 1 ? new ParallelOptions()
+            {
+                MaxDegreeOfParallelism = parallelism
+            } : null);
+        }
+    }
+
+    public static async Task ForEachAsync<TSource>(Parallelism parallel, IEnumerable<TSource> source, CancellationToken token, Func<TSource, CancellationToken, ValueTask> body)
+    {
+        if (parallel.Options is { } options)
+        {
+            options.CancellationToken = token;
+            await Parallel.ForEachAsync(source, options, body);
+        }
+        else
+        {
+            foreach (var item in source)
+            {
+                await body(item, token);
+            }
+        }
     }
 
     private static string PrintAndReturn(string value, bool print)

@@ -4,7 +4,6 @@ using System.CommandLine.Invocation;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
 using System.Runtime.CompilerServices;
-using Microsoft.VisualStudio.Services.TestManagement.TestPlanning.WebApi;
 
 namespace Nexis.Azure.Utilities;
 
