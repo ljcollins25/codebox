@@ -2,6 +2,7 @@
 using System.CommandLine;
 using System.CommandLine.IO;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection.Metadata;
@@ -107,6 +108,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
         await Helpers.ForEachAsync(!SingleThreaded, sourceFiles.Keys.Union(targetBlobs.Keys, StringComparer.OrdinalIgnoreCase), token, async (path, token) =>
         {
+            Stopwatch watch = Stopwatch.StartNew();
+            Exception ex = null;
             var sourceFile = sourceFiles.GetValueOrDefault(path);
             var targetBlob = targetBlobs.GetValueOrDefault(path);
 
@@ -302,12 +305,17 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     await blobClient.SetMetadataAsync(metadata);
                 }
 
-                Console.WriteLine($"{path}: Completed {operation}");
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
+                ex = exception;
                 // Blob was modified since last check; safe to ignore or log as needed
                 Console.Error.WriteLine($"{path}: Exception {operation}:\n{ex.Message}");
+            }
+            finally
+            {
+                var result = ex == null ? "Success" : $"Failure\n{ex}";
+                Console.WriteLine($"{path}: Completed {operation}. Result = {result}");
             }
         });
 
