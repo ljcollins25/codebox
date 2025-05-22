@@ -22,9 +22,12 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     private static class Strings
     {
         public const string source_timestamp = "source_timestamp";
-        public const string last_refresh_time = "ghostd_refresh_time";
-        public const string snapshot = "ghostd_snapshot";
-        public const string size = "ghostd_size";
+        public const string metadataPrefix = "ghostd_";
+        public const string last_refresh_time = $"{metadataPrefix}refresh_time";
+        public const string snapshot = $"{metadataPrefix}snapshot";
+        public const string state = $"{metadataPrefix}state";
+        public const string block_prefix = $"{metadataPrefix}_block_prefix";
+        public const string size = $"{metadataPrefix}size";
     }
 
     public required Uri SourceFilesUri;
@@ -97,19 +100,30 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
     private enum BlobState
     {
-        Ghosted,
-        Transitioning,
-        Active
+        ghosted,
+        transitioning,
+        active
+    }
+
+    private static ImmutableDictionary<string, string> GetStrippedMetadata(IEnumerable<KeyValuePair<string, string>> source, BlobState state)
+    {
+        return BaseMetadata
+            .SetItems(source)
+            .RemoveRange(source.Select(s => s.Key).Where(k => k.StartsWith(Strings.metadataPrefix)))
+            .SetItem(Strings.state, state.ToString());
     }
 
     public async Task<int> RunAsync()
     {
         var targetBlobContainer = new BlobContainerClient(TargetBlobUri);
-        var targetBlobs = await GetTargetBlobsAsync(targetBlobContainer);
+        var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata)
+            .ToDictionaryAsync(b => b.Name);
+        var retainedSnapshots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var maxRefreshes = (targetBlobs.Count + (RefreshBatches - 1)) / RefreshBatches;
 
         var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
+
 
         await Helpers.ForEachAsync(!SingleThreaded, targetBlobs.Values, token, async (blob, token) =>
         {
@@ -125,198 +139,140 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             {
                 Console.WriteLine($"{prefix}: START (State={state})");
 
-                if (state == BlobState.Ghosted)
+                if (blob.Metadata.TryGetValue(Strings.snapshot, out var snapshotId))
                 {
-                    // Do nothing
+                    retainedSnapshots.Add(snapshotId);
+                }
+
+                if (state == BlobState.ghosted && (blob.Metadata.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero) > refreshExpiry)
+                {
+                    // File is ghosted and sufficiently recently refreshed
+                    operation = "up to date";
                     return;
                 }
-                else if (state == BlobState.Active && (blob.Properties.ContentLength == 0 || blob.Properties.LastModified > Expiry))
+                else if (state == BlobState.active && (blob.Properties.ContentLength == 0 || blob.Properties.LastModified > Expiry))
                 {
                     // Blob is committed and has zero length or was modified recently
                     // Leave active for now
+                    operation = "recently active";
                     return;
                 }
 
                 var blobClient = targetBlobContainer.GetBlockBlobClient(path);
+                var fileSize = blob.Properties.ContentLength!.Value;
 
-                if (state == BlobState.Active)
+                operation = state == BlobState.active
+                    ? "dehydrating file"
+                    : "refreshing file";
+
+                // Create snapshot
+                var conditions = new BlobRequestConditions()
                 {
-                    var fileSize = blob.Properties.ContentLength!.Value;
-                    operation = "dehydrating file";
+                    IfMatch = blob.Properties.ETag
+                };
 
-                    // Create snapshot
-                    var conditions = new BlobRequestConditions()
-                    {
-                        IfUnmodifiedSince = blob.Properties.LastModified
-                    };
+                snapshotId = null;
+                Timestamp operationTimestamp = Timestamp.Now;
 
-                    var snapshot = await blobClient.CreateSnapshotAsync(conditions: conditions, cancellationToken: token);
+                // active, snapshot and stage blocks
+                // transitioning, stage blocks from snapshot
+                // ghosted (but expired), commit blocks with operation prefix
 
-                    var metadata = BaseMetadata
-                        .Add(Strings.size, fileSize.ToString())
-                        .Add(Strings.snapshot, snapshot.Value.Snapshot);
-
-                    // Clear block list and set Transitioning metadata
-                    await blobClient.CommitBlockListAsync([], new CommitBlockListOptions()
-                    {
-                        Metadata = metadata
-                    },
-                    cancellationToken: token);
-
-                    // Copy content of file to blob store (block names should be sortable by order in blob)
-                    const long MAX_BLOCK_SIZE = 1 << 30; // 1gb
-                    var blocks = new List<string>();
-                    for (long offset = 0; offset < sourceFile.FileSize!.Value; offset += MAX_BLOCK_SIZE)
-                    {
-                        var blockLength = Math.Min(MAX_BLOCK_SIZE, fileSize - offset);
-                        await blobClient.StageBlockFromUriAsync(
-                            base64BlockId: Out.Var(out var blockName, (offset / MAX_BLOCK_SIZE).ToString().PadLeft(4, '0')),
-                            sourceUri: fileClient.Uri,
-                            options: new StageBlockFromUriOptions()
-                            {
-                                SourceRange = new HttpRange(offset, blockLength)
-                            },
-                            cancellationToken: token
-                        );
-
-                        blocks.Add(blockName);
-                    }
-
-                    var metadata = BaseMetadata
-                        .SetItem(Strings.source_timestamp, sourceFile.GetLastWriteTimestamp())
-                        .SetItem(Strings.last_refresh_time, Timestamp.Now);
-
-                    var props = await fileClient.GetPropertiesAsync();
-                    if (props.Value.GetLastWriteTimestamp() > sourceFile.GetLastWriteTimestamp())
-                    {
-                        // Error out if file was modified while writing the blob
-                        throw new Exception($"File modified: {props.Value.GetLastWriteTimestamp()} > {sourceFile.GetLastWriteTimestamp()}");
-                    }
-
-                    // Blocks are left uncommitted intentionally so that blob is materialized on demand
-                    await blobClient.SetMetadataAsync(metadata, cancellationToken: token);
-
-                    //await blobClient.CommitBlockListAsync(blocks, new CommitBlockListOptions()
-                    //{
-                    //    Metadata = metadata
-                    //},
-                    //cancellationToken: token);
-
-                    // Copy times from original file
-                    var smbProps = props.Value.SmbProperties;
-                    smbProps.FileChangedOn = Timestamp.Now.Value;
-
-                    // Clear out content of file. And set archive time metadata in order to mark the file as archived
-                    await fileClient.CreateAsync(
-                        sourceFile.FileSize!.Value,
-                        new ShareFileCreateOptions()
-                        {
-                            Metadata = metadata,
-                            SmbProperties = smbProps,
-                            HttpHeaders = props.Value.ToHttpHeaders()
-                        });
+                if (state == BlobState.active)
+                {
+                    // no precommit needed
                 }
-                // target dehydrated and needs refresh or hydrated needs to be dehydrated
-                else
+                else if (state == BlobState.transitioning)
                 {
-                    bool hydrated = blob.Properties.ContentLength > 0;
-                    bool needsRefresh = false;
-                    if (!hydrated)
-                    {
-                        // Not hydrated. Check if refresh is needed.
-                        if ((blob.Metadata.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Now) < refreshExpiry
-                            && (maxRefreshes-- >= 0))
-                        {
-                            needsRefresh = true;
-                        }
-                        else
-                        {
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        // Hydrated, check if blob can be evicted
-                        // If source file was modified fairly recently, then it cannot be evicted.
-                        // Hydrators should touch source file AND target blob to indicate keep alive for the blob
-                        // Need to touch blob so that we can use a blob condition to keep from overwriting the blob
-                        // Need to touch source file so that other hydrators can avoid touching based on info from query of source file
-                        if (sourceFile.Properties.LastModified > Expiry || blob.Properties.LastModified > Expiry) return;
-                    }
+                    snapshotId = blob.Metadata[Strings.snapshot];
+                }
+                else if (state == BlobState.ghosted)
+                {
+                    // Needs precommit
+                    var blockPrefix = blob.Metadata[Strings.block_prefix];
+                    var currentBlockList = await blobClient.GetBlockListAsync();
+                    var blocksToCommit = currentBlockList.Value.UncommittedBlocks
+                        .Select(b => b.Name)
+                        .Where(b => b.StartsWith(blockPrefix))
+                        .Order()
+                        .ToList();
 
-                    operation = needsRefresh ? "refreshing blob" : "redehydrating blob";
+                    // Change to active state
+                    var crsp = await blobClient.CommitBlockListAsync(
+                        base64BlockIds: blocksToCommit,
+                        metadata: GetStrippedMetadata(blob.Metadata, BlobState.active),
+                        conditions: conditions,
+                        cancellationToken: token);
 
-                    var blobClient = targetBlobContainer.GetBlockBlobClient(path);
-                    var fileClient = sourceShareClient.GetRootDirectoryClient().GetFileClient(path);
-
-                    if (needsRefresh)
-                    {
-                        var blocks = await blobClient.GetBlockListAsync();
-                        await blobClient.CommitBlockListAsync(
-                            blocks.Value.UncommittedBlocks.Select(b => b.Name).Order(),
-                            cancellationToken: token);
-                    }
-
-                    var conditions = new BlobRequestConditions()
-                    {
-                        IfUnmodifiedSince = blob.Properties.LastModified
-                    };
-
-                    var snapshot = await blobClient.CreateSnapshotAsync(conditions: conditions, cancellationToken: token);
-
-                    var metadata = BaseMetadata.SetItems(blob.Metadata)
-                        .SetItems(BaseMetadata)
-                        //.SetItem(Strings.last_refresh_time, Timestamp.Now)
-                        .SetItem(Strings.snapshot, snapshot.Value.Snapshot)
-                        .ToBuilder();
-
-                    // Clear out blocks. Metadata is preserved
-                    await blobClient.CommitBlockListAsync([], new CommitBlockListOptions()
-                    {
-                        Metadata = metadata,
-                        Conditions = conditions
-                    },
-                    cancellationToken: token);
-
-                    await fileClient.SetMetadataAsync(metadata, cancellationToken: token);
-
-                    var snapshotClient = blobClient.WithSnapshot(snapshot.Value.Snapshot);
-                    var snaphotBlocks = await snapshotClient.GetBlockListAsync(BlockListTypes.Committed, cancellationToken: token);
-
-                    const long MAX_BLOCK_SIZE = 1 << 30; // 1gb
-                    var blocks = new List<string>();
-                    for (long offset = 0; offset < sourceFile.FileSize!.Value; offset += MAX_BLOCK_SIZE)
-                    {
-                        var blockLength = Math.Min(MAX_BLOCK_SIZE, fileSize - offset);
-                        await blobClient.StageBlockFromUriAsync(
-                            base64BlockId: Out.Var(out var blockName, (offset / MAX_BLOCK_SIZE).ToString().PadLeft(4, '0')),
-                            sourceUri: fileClient.Uri,
-                            options: new StageBlockFromUriOptions()
-                            {
-                                SourceRange = new HttpRange(offset, blockLength)
-                            },
-                            cancellationToken: token
-                        );
-
-                        blocks.Add(blockName);
-                    }
-
-                    // Now that update is complete, remove pointer to snapshot and update refresh time
-                    metadata[Strings.last_refresh_time] = Timestamp.Now;
-                    metadata.Remove(Strings.snapshot);
-
-                    // Side effect: Set the file changed time to indicate file is dehydrated.
-                    // Hydrators will set this to a well-known value to indicate file is hydrated
-                    await fileClient.SetMetadataAsync(metadata);
-                    await blobClient.SetMetadataAsync(metadata);
+                    conditions.IfMatch = crsp.Value.ETag;
                 }
 
+                if (snapshotId == null)
+                {
+                    var snapshot = await blobClient.CreateSnapshotAsync(conditions: conditions, cancellationToken: token);
+                    snapshotId = snapshot.Value.Snapshot;
+                }
+
+                var snapshotClient = blobClient.WithSnapshot(snapshotId);
+                var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
+                fileSize = snapshotLength;
+
+                var metadata = GetStrippedMetadata(blob.Metadata, BlobState.transitioning)
+                    .SetItem(Strings.size, snapshotLength.ToString())
+                    .SetItem(Strings.snapshot, snapshotId);
+
+                // Clear block list and set Transitioning metadata
+                var commitResponse = await blobClient.CommitBlockListAsync([], new CommitBlockListOptions()
+                {
+                    Metadata = metadata,
+                    Conditions = conditions
+                },
+                cancellationToken: token);
+
+                // Copy content of file to blob store (block names should be sortable by order in blob)
+                const long MAX_BLOCK_SIZE = 1 << 30; // 1gb
+                var blocks = new List<string>();
+                int blockId = 0;
+                for (long offset = 0; offset < snapshotLength; offset += MAX_BLOCK_SIZE)
+                {
+                    var blockName = operationTimestamp.ToBlockId(blockId++);
+                    var blockLength = Math.Min(MAX_BLOCK_SIZE, snapshotLength - offset);
+                    await blobClient.StageBlockFromUriAsync(
+                        base64BlockId: blockName,
+                        sourceUri: snapshotClient.Uri,
+                        options: new StageBlockFromUriOptions()
+                        {
+                            SourceRange = new HttpRange(offset, blockLength)
+                        },
+                        cancellationToken: token
+                    );
+
+                    blocks.Add(blockName);
+                }
+
+                metadata = GetStrippedMetadata(blob.Metadata, BlobState.ghosted)
+                    .SetItem(Strings.block_prefix, operationTimestamp.ToBlockIdPrefix())
+                    .SetItem(Strings.size, snapshotLength.ToString())
+                    .SetItem(Strings.last_refresh_time, Timestamp.Now);
+
+                // Blocks are left uncommitted intentionally so that blob is materialized on demand
+                await blobClient.SetMetadataAsync(metadata, new BlobRequestConditions()
+                {
+                    IfMatch = commitResponse.Value.ETag
+                }, cancellationToken: token);
+
+                try
+                {
+                    //await snapshotClient.DeleteAsync(cancellationToken: token);
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
+                }
             }
             catch (Exception exception)
             {
                 ex = exception;
-                // Blob was modified since last check; safe to ignore or log as needed
-                Console.Error.WriteLine($"{prefix}: Exception {operation}:\n{ex.Message}");
             }
             finally
             {
@@ -325,92 +281,68 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             }
         });
 
-        await DeleteOldSnapshotsAsync(targetBlobContainer, targetBlobs);
-
-        // Additional steps can be added here as needed
+        await DeleteOldSnapshotsAsync(targetBlobContainer, retainedSnapshots);
 
         return 0;
     }
 
     private BlobState GetBlobState(BlobItem blob)
     {
+        if (blob.Properties.ContentLength != 0)
+        {
+            return BlobState.active;
+        }
+        else if (blob.Metadata.TryGetValue(Strings.state, ))
+
         if (blob.Properties.ContentLength == 0 && blob.Metadata.TryGetValue(Strings.size, out var size))
         {
             if (blob.Metadata.TryGetValue(Strings.snapshot, out _))
             {
-                return BlobState.Transitioning;
+                return BlobState.transitioning;
             }
             else
             {
-                return BlobState.Ghosted;
+                return BlobState.ghosted;
             }
         }
         else
         {
-            return BlobState.Active;
-        }    
+            return BlobState.active;
+        }
     }
 
-    private async Task<Dictionary<string, ShareFileItem>> GetSourceFilesAsync(ShareClient shareClient)
+    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, HashSet<string> retainedSnaphsots)
     {
-        var files = new Dictionary<string, ShareFileItem>();
-        var dirs = new Stack<ShareDirectoryClient>();
+        var snapshots = await container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots)
+            .ToListAsync();
+        await Helpers.ForEachAsync(!SingleThreaded, snapshots, token, async (blobItem, token) =>
         {
-            ShareDirectoryGetFilesAndDirectoriesOptions options = new()
-            {
-                Traits = ShareFileTraits.All
-            };
+            if (blobItem.Snapshot is not string snapshotId || string.IsNullOrEmpty(snapshotId)) return;
 
-            dirs.Push(shareClient.GetRootDirectoryClient());
-            while (dirs.TryPop(out var dir))
+            var blobClient = container.GetBlobClient(blobItem.Name).WithSnapshot(blobItem.Snapshot);
+            var prefix = $"{blobClient.Name}?sp={snapshotId}";
+            string operation = "skipped";
+            string result = "Success";
+            try
             {
-                await foreach (var item in dir.GetFilesAndDirectoriesAsync(options: options))
+                if (blobItem.Properties.LastModified > Expiry || retainedSnaphsots.Contains(snapshotId))
                 {
-                    var path = string.IsNullOrEmpty(dir.Path?.Trim('/')) ? item.Name : $"{dir.Path}/{item.Name}";
-                    if (!item.IsDirectory)
-                    {
-                        files[path] = item;
-                    }
-                    else
-                    {
-                        dirs.Push(shareClient.GetDirectoryClient(path));
-                    }
+                    operation = "skipped due to last modified time";
+                    return;
                 }
+
+
+                operation = "deleting";
+                await blobClient.DeleteIfExistsAsync();
             }
-        }
-        return files;
-    }
-
-    private async Task<Dictionary<string, BlobItem>> GetTargetBlobsAsync(BlobContainerClient container)
-    {
-        var blobs = new Dictionary<string, BlobItem>();
-        await foreach (var blob in container.GetBlobsAsync(BlobTraits.Metadata))
-        {
-            blobs[blob.Name] = blob;
-        }
-        return blobs;
-    }
-
-    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, Dictionary<string, BlobItem> targetBlobs)
-    {
-        await foreach (var blobItem in container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots))
-        {
-            if (blobItem.Snapshot != null && blobItem.Properties.LastModified < Expiry
-                // If target blob metadata, still references snapshot, we can't delete it yet
-                && (!targetBlobs.TryGetValue(blobItem.Name, out var targetItem) || targetItem.Metadata.ValueOrDefault(Strings.snapshot) != blobItem.Snapshot))
+            catch (Exception ex)
             {
-                var blobClient = container.GetBlobClient(blobItem.Name).WithSnapshot(blobItem.Snapshot);
-
-                try
-                {
-                    await blobClient.DeleteIfExistsAsync();
-                }
-                catch (RequestFailedException ex)
-                {
-                    // Blob was modified since last check; safe to ignore or log as needed
-                    Console.Error.WriteLine($"{blobClient.Name}: Exception deleting stale snapshot: {ex.Message}");
-                }
+                result = $"Failure:\n{ex}";
             }
-        }
+            finally
+            {
+                Console.WriteLine($"{prefix}: Completed {operation}. Result = {result}");
+            }
+        });
     }
 }

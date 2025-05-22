@@ -6,7 +6,11 @@ public record struct Timestamp(DateTime Value) : IComparable<Timestamp>
     public static implicit operator Timestamp(DateTime d) => new(d.ToUniversalTime());
     public static implicit operator Timestamp(DateTimeOffset d) => new(d.UtcDateTime);
     public static implicit operator Timestamp?(string? d) => d == null ? null : new(DateTime.ParseExact(d, "o", null));
+    public static implicit operator Timestamp(string d) => new(DateTime.ParseExact(d, "o", null));
     public static implicit operator string(Timestamp d) => d.ToString();
+
+    public string ToBlockIdPrefix() => $"gd+{Value:yyyyMMdd+HHmmss}+";
+    public string ToBlockId(int blockNumber) => $"{ToBlockIdPrefix()}{blockNumber.ToString().PadLeft(5, '0')}";
 
     public static Timestamp Now => DateTime.UtcNow;
 
@@ -40,3 +44,4 @@ public record struct Timestamp(DateTime Value) : IComparable<Timestamp>
         return Value.ToString("o");
     }
 }
+
