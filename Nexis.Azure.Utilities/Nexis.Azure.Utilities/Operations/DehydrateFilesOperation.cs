@@ -21,13 +21,13 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 {
     private static class Strings
     {
-        public const string source_timestamp = "source_timestamp";
         public const string metadataPrefix = "ghostd_";
         public const string last_refresh_time = $"{metadataPrefix}refresh_time";
         public const string snapshot = $"{metadataPrefix}snapshot";
         public const string state = $"{metadataPrefix}state";
         public const string block_prefix = $"{metadataPrefix}_block_prefix";
         public const string size = $"{metadataPrefix}size";
+        public const string dir_metadata = "hdi_isfolder";
     }
 
     public required Uri Uri;
@@ -126,6 +126,18 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             .SetItem(Strings.state, state.ToString());
     }
 
+    public IEnumerable<BlobItem> FilterDirectories(IEnumerable<BlobItem> blobs)
+    {
+        foreach (var blob in blobs)
+        {
+            if (!blob.Metadata.ContainsKey(Strings.dir_metadata))
+            {
+                yield return blob;
+            }
+        }
+    }
+
+
     public async Task<int> RunAsync()
     {
         var targetBlobContainer = new BlobContainerClient(Uri);
@@ -137,7 +149,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
         var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
 
-        await Helpers.ForEachAsync(!SingleThreaded, targetBlobs, token, async (blob, token) =>
+        await Helpers.ForEachAsync(!SingleThreaded, FilterDirectories(targetBlobs), token, async (blob, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
             Exception ex = null;
