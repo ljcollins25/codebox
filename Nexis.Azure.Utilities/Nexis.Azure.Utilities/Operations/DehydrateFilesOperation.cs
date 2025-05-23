@@ -30,8 +30,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         public const string size = $"{metadataPrefix}size";
     }
 
-    public required Uri SourceFilesUri;
-    public required Uri TargetBlobUri;
+    public required Uri Uri;
 
     public static ImmutableDictionary<string, string> BaseMetadata = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase)
         .Add("archive_version", "1")
@@ -40,6 +39,20 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     public int RefreshBatches = 5;
 
     public bool ShouldDeleteExtraneousTargetFiles;
+
+    // Set to zero to delete ephemeral snapshots immediately
+    public string EphemeralSnapshotDeleteDelayValue = "5m";
+
+    public TimeSpan EphemeralSnapshotDeleteDelay
+    {
+        get
+        {
+            if (TimeSpan.TryParse(EphemeralSnapshotDeleteDelayValue, out var ts)) return ts;
+            if (TimeSpanSetting.TryParseReadableTimeSpan(EphemeralSnapshotDeleteDelayValue, out ts)) return ts;
+
+            throw new FormatException($"Unable to parse Expiry '{EphemeralSnapshotDeleteDelayValue}' as timeSpan");
+        }
+    }
 
     // Set to zero to refresh everything
     // Set to large value to refresh nothing
@@ -115,17 +128,16 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
     public async Task<int> RunAsync()
     {
-        var targetBlobContainer = new BlobContainerClient(TargetBlobUri);
+        var targetBlobContainer = new BlobContainerClient(Uri);
         var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata)
-            .ToDictionaryAsync(b => b.Name);
-        var retainedSnapshots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            .OrderBy(b => b.Name).ToListAsync();
+        var snapshotPolicy = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
         var maxRefreshes = (targetBlobs.Count + (RefreshBatches - 1)) / RefreshBatches;
 
         var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
 
-
-        await Helpers.ForEachAsync(!SingleThreaded, targetBlobs.Values, token, async (blob, token) =>
+        await Helpers.ForEachAsync(!SingleThreaded, targetBlobs, token, async (blob, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
             Exception ex = null;
@@ -141,7 +153,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
                 if (blob.Metadata.TryGetValue(Strings.snapshot, out var snapshotId))
                 {
-                    retainedSnapshots.Add(snapshotId);
+                    // Retain referenced snapshots
+                    snapshotPolicy[snapshotId] = DateTime.MaxValue;
                 }
 
                 if (state == BlobState.ghosted && (blob.Metadata.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero) > refreshExpiry)
@@ -207,11 +220,16 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     conditions.IfMatch = crsp.Value.ETag;
                 }
 
+                bool isEmphemeralSnapshot = false;
                 if (snapshotId == null)
                 {
                     var snapshot = await blobClient.CreateSnapshotAsync(conditions: conditions, cancellationToken: token);
                     snapshotId = snapshot.Value.Snapshot;
+                    isEmphemeralSnapshot = true;
                 }
+
+                // Retain referenced snapshots
+                snapshotPolicy[snapshotId] = DateTime.MaxValue;
 
                 var snapshotClient = blobClient.WithSnapshot(snapshotId);
                 var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
@@ -261,14 +279,20 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     IfMatch = commitResponse.Value.ETag
                 }, cancellationToken: token);
 
-                try
+                if (isEmphemeralSnapshot)
                 {
-                    //await snapshotClient.DeleteAsync(cancellationToken: token);
+                    // Post-processing will wait some interval before deleting the ephemeral snapshot
+                    snapshotPolicy[snapshotId] = DateTime.UtcNow + EphemeralSnapshotDeleteDelay;
                 }
-                catch (Exception exception)
-                {
-                    Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
-                }
+
+                //try
+                //{
+                //    //await snapshotClient.DeleteAsync(cancellationToken: token);
+                //}
+                //catch (Exception exception)
+                //{
+                //    Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
+                //}
             }
             catch (Exception exception)
             {
@@ -281,7 +305,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             }
         });
 
-        await DeleteOldSnapshotsAsync(targetBlobContainer, retainedSnapshots);
+        await DeleteOldSnapshotsAsync(targetBlobContainer, snapshotPolicy);
 
         return 0;
     }
@@ -292,46 +316,67 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         {
             return BlobState.active;
         }
-        else if (blob.Metadata.TryGetValue(Strings.state, ))
+        else if (blob.Metadata.TryGetValue(Strings.state, out var stateValue)
+            && Enum.TryParse<BlobState>(stateValue, out var state))
+        {
+            return state;
+        }
 
-        if (blob.Properties.ContentLength == 0 && blob.Metadata.TryGetValue(Strings.size, out var size))
-        {
-            if (blob.Metadata.TryGetValue(Strings.snapshot, out _))
-            {
-                return BlobState.transitioning;
-            }
-            else
-            {
-                return BlobState.ghosted;
-            }
-        }
-        else
-        {
-            return BlobState.active;
-        }
+        return BlobState.active;
     }
 
-    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, HashSet<string> retainedSnaphsots)
+    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, Dictionary<string, DateTime> snapshotPolicy)
     {
-        var snapshots = await container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots)
+        var snapshots = await container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots | BlobStates.Version)
             .ToListAsync();
         await Helpers.ForEachAsync(!SingleThreaded, snapshots, token, async (blobItem, token) =>
         {
-            if (blobItem.Snapshot is not string snapshotId || string.IsNullOrEmpty(snapshotId)) return;
-
-            var blobClient = container.GetBlobClient(blobItem.Name).WithSnapshot(blobItem.Snapshot);
-            var prefix = $"{blobClient.Name}?sp={snapshotId}";
+            var blobClient = container.GetBlobClient(blobItem.Name);
+            var prefix = blobClient.Name;
             string operation = "skipped";
-            string result = "Success";
-            try
+
+            if (blobItem.VersionId is { } versionId && !string.IsNullOrEmpty(versionId))
             {
-                if (blobItem.Properties.LastModified > Expiry || retainedSnaphsots.Contains(snapshotId))
+                blobClient = blobClient.WithVersion(versionId);
+                prefix += $"?version={versionId}";
+            }
+            else if (blobItem.Snapshot is { } snapshotId && string.IsNullOrEmpty(snapshotId))
+            {
+                blobClient = blobClient.WithSnapshot(snapshotId);
+                prefix += $"?snapshot={snapshotId}";
+
+                if (snapshotPolicy.TryGetValue(snapshotId, out var retainedUntil))
+                {
+                    if (retainedUntil == DateTime.MaxValue)
+                    {
+                        operation = "skipped due to reference or failed transition";
+                        return;
+                    }
+
+                    var delay = retainedUntil - DateTime.UtcNow;
+                    if (delay > TimeSpan.Zero)
+                    {
+                        Console.WriteLine($"{prefix}: Waiting {operation} for {delay} before cleaning up snapshot");
+                        await Task.Delay(delay);
+                        Console.WriteLine($"{prefix}: Waited {operation} for {delay} before cleaning up snapshot");
+                    }
+                }
+
+                // Snapshot policy supercedes this check (namely for ephemeral staging snapshots and snapshots still referenced by base blob)
+                if (blobItem.Properties.LastModified > Expiry)
                 {
                     operation = "skipped due to last modified time";
                     return;
                 }
+            }
+            else
+            {
+                return;
+            }
 
-
+            string result = "Success";
+            try
+            {
                 operation = "deleting";
                 await blobClient.DeleteIfExistsAsync();
             }

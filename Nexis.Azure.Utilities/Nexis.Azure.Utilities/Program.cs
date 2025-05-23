@@ -133,11 +133,11 @@ public class Program
                 {
                     var result = new DehydrateOperation(m.Console, cts.Token)
                     {
-                        SourceFilesUri = m.Option(c => ref c.SourceFilesUri, name: "share-uri", description: "File share uri", required: true, aliases: ["source", "share"]),
-                        TargetBlobUri = m.Option(c => ref c.TargetBlobUri, name: "container-uri", description: "Data content blob store", required: true, aliases: ["target", "container"]),
+                        Uri = m.Option(c => ref c.Uri, name: "uri", description: "Container sas uri", required: true, aliases: ["container-uri"]),
                         ExpiryValue = m.Option(c => ref c.ExpiryValue, name: "expiry", description: "Expiry value (e.g. 1h, 2d)", defaultValue: "1h", required: true),
                     };
 
+                    m.Option(c => ref c.EphemeralSnapshotDeleteDelayValue, name: "stage-delete-delay", description: "Time to wait before deleting staging snapshots", defaultValue: "5m");
                     m.Option(c => ref c.RefreshIntervalValue, name: "refresh-interval", description: "Refresh interval", defaultValue: "5d");
                     m.Option(c => ref c.ShouldDeleteExtraneousTargetFiles, name: "delete-extraneous", description: "Delete blobs missing from source", defaultValue: false);
                     m.Option(c => ref c.RefreshBatches, name: "refresh-batches", description: "Number of refresh batches", defaultValue: 5);
