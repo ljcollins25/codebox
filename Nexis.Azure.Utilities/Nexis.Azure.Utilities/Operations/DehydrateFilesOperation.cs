@@ -156,7 +156,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 {
                     if ((blob.Metadata.ValueOrDefault(Strings.dirty_time) ?? Timestamp.Zero) > lastRefreshTime)
                     {
-                        // The FS marked the file dirty (i.e. has some leftover uncommitted blocks), need to refresh
+                        // The rclone FS marked the file dirty (i.e. has some leftover uncommitted blocks), need to refresh
                     }
                     else
                     {
