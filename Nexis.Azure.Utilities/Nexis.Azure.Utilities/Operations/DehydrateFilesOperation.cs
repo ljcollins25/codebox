@@ -5,15 +5,14 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Linq;
-using System.Reflection.Metadata;
 using System.Xml.Linq;
 using Azure;
+using Azure.Core;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
 using Azure.Storage.Files.Shares;
 using Azure.Storage.Files.Shares.Models;
-using static System.Reflection.Metadata.BlobBuilder;
 
 namespace Nexis.Azure.Utilities;
 
@@ -21,18 +20,19 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 {
     private static class Strings
     {
-        public const string metadataPrefix = "ghostd_";
-        public const string last_refresh_time = $"{metadataPrefix}refresh_time";
-        public const string snapshot = $"{metadataPrefix}snapshot";
-        public const string state = $"{metadataPrefix}state";
-        public const string block_prefix = $"{metadataPrefix}_block_prefix";
-        public const string size = $"{metadataPrefix}size";
+        public const string tagPrefix = "ghostd_";
+        public const string last_refresh_time = $"{tagPrefix}refresh_time";
+        public const string snapshot = $"{tagPrefix}snapshot";
+        public const string state = $"{tagPrefix}state";
+        public const string block_prefix = $"{tagPrefix}block_prefix";
+        public const string size = $"{tagPrefix}size";
+        public const string dirty_time = $"{tagPrefix}dirty_time";
         public const string dir_metadata = "hdi_isfolder";
     }
 
     public required Uri Uri;
 
-    public static ImmutableDictionary<string, string> BaseMetadata = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase)
+    public static ImmutableDictionary<string, string> BaseTags = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase)
         .Add("archive_version", "1")
         ;
 
@@ -86,43 +86,18 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
     public bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
 
-    // public async Task<int> RunAsync()
-    // {
-    //     // Get all files in Source
-    //     // Get all files in Target
-
-    //     /*
-    //     * Delete any snapshots from target which are older than ttl
-    //     * 1. Set metadata State=Dehydrated, SourceEtag (copied from existing metadata)
-    //     * For files missing from source, delete from target optionally
-    //     * For files missing from target where source last write time is after ttl,
-    //     * 1. Put blob with empty block list
-    //     * 2. Put blocks from source
-    //     * 3. Update target metadata, State=Dehydrated
-    //     * 4. Delete source content by calling CreateFile with length of file
-    //     * For hydrated files in target with last modified time older than ttl, which have not been accessed recently
-    //     * 1. Create snapshot
-    //     * 2. Put empty block list, with snapshot id metadata and State=DehydratePending, SourceEtag (copied from existing metadata)
-    //     * - This should fail if blob has new last modified time
-    //     * - Hydrators should update last write time by setting blob properties
-    //     * For files changed in source where last modified time is after ttl, 
-    //     *
-    //     */
-    //     return 0;
-    // }
-
     private enum BlobState
     {
-        ghosted,
+        ghost,
         transitioning,
         active
     }
 
-    private static ImmutableDictionary<string, string> GetStrippedMetadata(IEnumerable<KeyValuePair<string, string>> source, BlobState state)
+    private static ImmutableDictionary<string, string> GetStrippedTags(IEnumerable<KeyValuePair<string, string>> source, BlobState state)
     {
-        return BaseMetadata
+        return BaseTags
             .SetItems(source)
-            .RemoveRange(source.Select(s => s.Key).Where(k => k.StartsWith(Strings.metadataPrefix)))
+            .RemoveRange(source.Select(s => s.Key).Where(k => k.StartsWith(Strings.tagPrefix)))
             .SetItem(Strings.state, state.ToString());
     }
 
@@ -141,7 +116,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     public async Task<int> RunAsync()
     {
         var targetBlobContainer = new BlobContainerClient(Uri);
-        var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata)
+        var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags)
             .OrderBy(b => b.Name).ToListAsync();
         var snapshotPolicy = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
@@ -152,7 +127,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         await Helpers.ForEachAsync(!SingleThreaded, FilterDirectories(targetBlobs), token, async (blob, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
-            Exception ex = null;
+            Exception? ex = null;
             var path = blob.Name;
 
             string operation = "";
@@ -163,24 +138,32 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             {
                 Console.WriteLine($"{prefix}: START (State={state})");
 
-                if (blob.Metadata.TryGetValue(Strings.snapshot, out var snapshotId))
+                if (blob.Tags.TryGetValue(Strings.snapshot, out var snapshotId))
                 {
                     // Retain referenced snapshots
                     snapshotPolicy[snapshotId] = DateTime.MaxValue;
                 }
 
-                if (state == BlobState.ghosted && (blob.Metadata.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero) > refreshExpiry)
-                {
-                    // File is ghosted and sufficiently recently refreshed
-                    operation = "up to date";
-                    return;
-                }
-                else if (state == BlobState.active && (blob.Properties.ContentLength == 0 || blob.Properties.LastModified > Expiry))
+                if (state == BlobState.active && (blob.Properties.ContentLength == 0 || blob.Properties.LastModified > Expiry))
                 {
                     // Blob is committed and has zero length or was modified recently
                     // Leave active for now
                     operation = "recently active";
                     return;
+                }
+                else if (state == BlobState.ghost
+                    && Out.Var<Timestamp?>(out var lastRefreshTime, (blob.Tags.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero)) > refreshExpiry)
+                {
+                    if ((blob.Metadata.ValueOrDefault(Strings.dirty_time) ?? Timestamp.Zero) > lastRefreshTime)
+                    {
+                        // The FS marked the file dirty (i.e. has some leftover uncommitted blocks), need to refresh
+                    }
+                    else
+                    {
+                        // File is ghosted and sufficiently recently refreshed
+                        operation = "up to date";
+                        return;
+                    }
                 }
 
                 var blobClient = targetBlobContainer.GetBlockBlobClient(path);
@@ -196,6 +179,16 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     IfMatch = blob.Properties.ETag
                 };
 
+                var headers = new BlobHttpHeaders()
+                {
+                    CacheControl = blob.Properties.CacheControl,
+                    ContentDisposition = blob.Properties.ContentDisposition,
+                    ContentEncoding = blob.Properties.ContentEncoding,
+                    ContentHash = blob.Properties.ContentHash,
+                    ContentLanguage = blob.Properties.ContentLanguage,
+                    ContentType = blob.Properties.ContentType,
+                };
+
                 snapshotId = null;
                 Timestamp operationTimestamp = Timestamp.Now;
 
@@ -209,12 +202,12 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 }
                 else if (state == BlobState.transitioning)
                 {
-                    snapshotId = blob.Metadata[Strings.snapshot];
+                    snapshotId = blob.Tags[Strings.snapshot];
                 }
-                else if (state == BlobState.ghosted)
+                else if (state == BlobState.ghost)
                 {
                     // Needs precommit
-                    var blockPrefix = blob.Metadata[Strings.block_prefix];
+                    var blockPrefix = blob.Tags[Strings.block_prefix];
                     var currentBlockList = await blobClient.GetBlockListAsync();
                     var blocksToCommit = currentBlockList.Value.UncommittedBlocks
                         .Select(b => b.Name)
@@ -225,8 +218,12 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     // Change to active state
                     var crsp = await blobClient.CommitBlockListAsync(
                         base64BlockIds: blocksToCommit,
-                        metadata: GetStrippedMetadata(blob.Metadata, BlobState.active),
-                        conditions: conditions,
+                        options: new CommitBlockListOptions()
+                        {
+                            Tags = GetStrippedTags(blob.Tags, BlobState.active),
+                            Conditions = conditions,
+                            HttpHeaders = headers
+                        },
                         cancellationToken: token);
 
                     conditions.IfMatch = crsp.Value.ETag;
@@ -247,15 +244,16 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
                 fileSize = snapshotLength;
 
-                var metadata = GetStrippedMetadata(blob.Metadata, BlobState.transitioning)
+                var tags = GetStrippedTags(blob.Tags, BlobState.transitioning)
                     .SetItem(Strings.size, snapshotLength.ToString())
                     .SetItem(Strings.snapshot, snapshotId);
 
-                // Clear block list and set Transitioning metadata
+                // Clear block list and set Transitioning tag
                 var commitResponse = await blobClient.CommitBlockListAsync([], new CommitBlockListOptions()
                 {
-                    Metadata = metadata,
-                    Conditions = conditions
+                    Tags = tags,
+                    Conditions = conditions,
+                    HttpHeaders = headers
                 },
                 cancellationToken: token);
 
@@ -280,13 +278,13 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     blocks.Add(blockName);
                 }
 
-                metadata = GetStrippedMetadata(blob.Metadata, BlobState.ghosted)
+                tags = GetStrippedTags(blob.Tags, BlobState.ghost)
                     .SetItem(Strings.block_prefix, operationTimestamp.ToBlockIdPrefix())
                     .SetItem(Strings.size, snapshotLength.ToString())
                     .SetItem(Strings.last_refresh_time, Timestamp.Now);
 
                 // Blocks are left uncommitted intentionally so that blob is materialized on demand
-                await blobClient.SetMetadataAsync(metadata, new BlobRequestConditions()
+                await blobClient.SetTagsAsync(tags, new BlobRequestConditions()
                 {
                     IfMatch = commitResponse.Value.ETag
                 }, cancellationToken: token);
@@ -328,7 +326,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         {
             return BlobState.active;
         }
-        else if (blob.Metadata.TryGetValue(Strings.state, out var stateValue)
+        else if (blob.Tags.TryGetValue(Strings.state, out var stateValue)
             && Enum.TryParse<BlobState>(stateValue, out var state))
         {
             return state;
