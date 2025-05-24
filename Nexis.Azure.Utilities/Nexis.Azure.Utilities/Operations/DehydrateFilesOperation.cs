@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Xml.Linq;
 using Azure;
 using Azure.Core;
@@ -31,6 +32,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     }
 
     public required Uri Uri;
+
+    public string? LocalSource;
 
     public static ImmutableDictionary<string, string> BaseTags = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase)
         .Add("archive_version", "1")
@@ -88,6 +91,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
     private enum BlobState
     {
+        pending,
         ghost,
         transitioning,
         active
@@ -115,8 +119,13 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
     public async Task<int> RunAsync()
     {
-        var targetBlobContainer = new BlobContainerClient(Uri);
-        var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags)
+        var rootBlobClient = new BlobClient(Uri);
+        var targetBlobContainer = rootBlobClient.GetParentBlobContainerClient();
+        var prefix = !string.IsNullOrEmpty(Out.Var(out var rootPath, rootBlobClient.Name.TrimEnd('/')))
+            ? rootPath + '/'
+            : null;
+
+        var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
             .OrderBy(b => b.Name).ToListAsync();
         var snapshotPolicy = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
@@ -237,9 +246,6 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     isEmphemeralSnapshot = true;
                 }
 
-                // Retain referenced snapshots
-                snapshotPolicy[snapshotId] = DateTime.MaxValue;
-
                 var snapshotClient = blobClient.WithSnapshot(snapshotId);
                 var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
                 fileSize = snapshotLength;
@@ -256,6 +262,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     HttpHeaders = headers
                 },
                 cancellationToken: token);
+
+                // Retain referenced snapshots
+                snapshotPolicy[snapshotId] = DateTime.MaxValue;
 
                 // Copy content of file to blob store (block names should be sortable by order in blob)
                 const long MAX_BLOCK_SIZE = 1 << 30; // 1gb
@@ -292,17 +301,17 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 if (isEmphemeralSnapshot)
                 {
                     // Post-processing will wait some interval before deleting the ephemeral snapshot
-                    snapshotPolicy[snapshotId] = DateTime.UtcNow + EphemeralSnapshotDeleteDelay;
+                    // snapshotPolicy[snapshotId] = DateTime.UtcNow + EphemeralSnapshotDeleteDelay;
                 }
 
-                //try
-                //{
-                //    //await snapshotClient.DeleteAsync(cancellationToken: token);
-                //}
-                //catch (Exception exception)
-                //{
-                //    Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
-                //}
+                try
+                {
+                    await snapshotClient.DeleteAsync(cancellationToken: token);
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
+                }
             }
             catch (Exception exception)
             {
