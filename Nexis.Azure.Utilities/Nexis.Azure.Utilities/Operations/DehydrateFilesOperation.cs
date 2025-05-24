@@ -41,7 +41,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
 
     public int RefreshBatches = 5;
 
-    public bool ShouldDeleteExtraneousTargetFiles;
+    //public bool Force;
 
     // Set to zero to delete ephemeral snapshots immediately
     public string EphemeralSnapshotDeleteDelayValue = "5m";
@@ -72,6 +72,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         }
     }
 
+    // Set to zero to force staging of active blobs
     public required string ExpiryValue = "1h";
 
     public DateTimeOffset Expiry

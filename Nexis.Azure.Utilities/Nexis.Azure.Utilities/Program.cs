@@ -139,7 +139,7 @@ public class Program
 
                     m.Option(c => ref c.EphemeralSnapshotDeleteDelayValue, name: "stage-delete-delay", description: "Time to wait before deleting staging snapshots", defaultValue: "5m");
                     m.Option(c => ref c.RefreshIntervalValue, name: "refresh-interval", description: "Refresh interval", defaultValue: "5d");
-                    m.Option(c => ref c.ShouldDeleteExtraneousTargetFiles, name: "delete-extraneous", description: "Delete blobs missing from source", defaultValue: false);
+                    //m.Option(c => ref c.Force, name: "force", description: "Force ghosting files which are up to date.", defaultValue: false);
                     m.Option(c => ref c.RefreshBatches, name: "refresh-batches", description: "Number of refresh batches", defaultValue: 5);
                     return result;
                 },
