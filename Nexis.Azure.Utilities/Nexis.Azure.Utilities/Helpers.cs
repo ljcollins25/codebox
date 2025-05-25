@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections;
+using System.Collections.Immutable;
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
@@ -9,12 +10,17 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Azure;
+using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.Shares.Models;
 
 namespace Nexis.Azure.Utilities;
 
 public static class Helpers
 {
+    public static ImmutableDictionary<string, string> EmptyStringMap = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
+
+    public static IDictionary<string, string> Tags(this BlobItem b) => b.Tags ?? EmptyStringMap;
+    public static IDictionary<string, string> Metadata(this BlobItem b) => b.Metadata ?? EmptyStringMap;
 
     public static readonly Regex VariableSeparatorPattern = new Regex(@"[\._\-]");
     public static readonly Regex VariablePattern = new Regex(@"\$\(([\w\._\-]+)\)");

@@ -140,6 +140,8 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
             var parsed = new Parsed<TField>(parse);
             AfterSetActions.Add(model =>
             {
+                if (parsed.Text == null) return;
+
                 getFieldRef(model) = parsed.Value;
             });
 

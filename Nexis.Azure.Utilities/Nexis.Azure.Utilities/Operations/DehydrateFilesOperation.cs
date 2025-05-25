@@ -23,6 +23,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     {
         public const string tagPrefix = "ghostd_";
         public const string last_refresh_time = $"{tagPrefix}refresh_time";
+        public const string last_access = $"{tagPrefix}last_access";
         public const string snapshot = $"{tagPrefix}snapshot";
         public const string state = $"{tagPrefix}state";
         public const string block_prefix = $"{tagPrefix}block_prefix";
@@ -63,7 +64,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         active
     }
 
-    private static ImmutableDictionary<string, string> GetStrippedTags(IEnumerable<KeyValuePair<string, string>> source, BlobState state)
+    private static ImmutableDictionary<string, string> GetStrippedTags(
+        IEnumerable<KeyValuePair<string, string>> source,
+        BlobState state)
     {
         return BaseTags
             .SetItems(source)
@@ -75,7 +78,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     {
         foreach (var blob in blobs)
         {
-            if (!blob.Metadata.ContainsKey(Strings.dir_metadata))
+            if (!blob.Metadata().ContainsKey(Strings.dir_metadata))
             {
                 yield return blob;
             }
@@ -113,10 +116,27 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             {
                 Console.WriteLine($"{prefix}: START (State={state})");
 
-                if (blob.Tags.TryGetValue(Strings.snapshot, out var snapshotId))
+                if (blob.Tags().TryGetValue(Strings.snapshot, out var snapshotId))
                 {
                     // Retain referenced snapshots
                     snapshotPolicy[snapshotId] = DateTime.MaxValue;
+                }
+
+
+                string tagCondition;
+                if (blob.Tags().TryGetValue(Strings.last_access, out var lastTouch))
+                {
+                    if (Timestamp.Parse(lastTouch) > Expiry)
+                    {
+                        operation = "recently touched";
+                        return;
+                    }
+
+                    tagCondition = $"{Strings.last_access} = '{lastTouch}'";
+                }
+                else
+                {
+                    tagCondition = $"{Strings.last_access} = null";
                 }
 
                 if (state == BlobState.active && (blob.Properties.ContentLength == 0 || blob.Properties.LastModified > Expiry))
@@ -127,9 +147,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     return;
                 }
                 else if (state == BlobState.ghost
-                    && Out.Var<Timestamp?>(out var lastRefreshTime, (blob.Tags.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero)) > refreshExpiry)
+                    && Out.Var<Timestamp?>(out var lastRefreshTime, (blob.Tags()!.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero)) > refreshExpiry)
                 {
-                    if ((blob.Metadata.ValueOrDefault(Strings.dirty_time) ?? Timestamp.Zero) > lastRefreshTime)
+                    if ((blob.Metadata()!.ValueOrDefault(Strings.dirty_time) ?? Timestamp.Zero) > lastRefreshTime)
                     {
                         // The rclone FS marked the file dirty (i.e. has some leftover uncommitted blocks), need to refresh
                     }
@@ -151,7 +171,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 // Create snapshot
                 var conditions = new BlobRequestConditions()
                 {
-                    IfMatch = blob.Properties.ETag
+                    IfMatch = blob.Properties.ETag,
+                    TagConditions = tagCondition
                 };
 
                 //var headers = new BlobHttpHeaders()
@@ -195,7 +216,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                         base64BlockIds: blocksToCommit,
                         options: new CommitBlockListOptions()
                         {
-                            Tags = GetStrippedTags(blob.Tags, BlobState.active),
+                            Tags = GetStrippedTags(blob.Tags(), BlobState.active),
                             Conditions = conditions,
                             //HttpHeaders = headers
                         },
@@ -216,7 +237,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
                 fileSize = snapshotLength;
 
-                var tags = GetStrippedTags(blob.Tags, BlobState.transitioning)
+                var tags = GetStrippedTags(blob.Tags(), BlobState.transitioning)
                     .SetItem(Strings.size, snapshotLength.ToString())
                     .SetItem(Strings.snapshot, snapshotId);
 
@@ -245,7 +266,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                         sourceUri: snapshotClient.Uri,
                         options: new StageBlockFromUriOptions()
                         {
-                            SourceRange = new HttpRange(offset, blockLength)
+                            SourceRange = new HttpRange(offset, blockLength),
                         },
                         cancellationToken: token
                     );
@@ -253,7 +274,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     blocks.Add(blockName);
                 }
 
-                tags = GetStrippedTags(blob.Tags, BlobState.ghost)
+                tags = GetStrippedTags(blob.Tags(), BlobState.ghost)
                     .SetItem(Strings.block_prefix, operationTimestamp.ToBlockIdPrefix())
                     .SetItem(Strings.size, snapshotLength.ToString())
                     .SetItem(Strings.last_refresh_time, Timestamp.Now);
@@ -261,7 +282,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 // Blocks are left uncommitted intentionally so that blob is materialized on demand
                 await blobClient.SetTagsAsync(tags, new BlobRequestConditions()
                 {
-                    IfMatch = commitResponse.Value.ETag
+                    //IfMatch = commitResponse.Value.ETag
+                    TagConditions = tagCondition
                 }, cancellationToken: token);
 
                 if (isEmphemeralSnapshot)
@@ -270,13 +292,16 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     // snapshotPolicy[snapshotId] = DateTime.UtcNow + EphemeralSnapshotDeleteDelay;
                 }
 
-                try
+                if (isEmphemeralSnapshot)
                 {
-                    await snapshotClient.DeleteAsync(cancellationToken: token);
-                }
-                catch (Exception exception)
-                {
-                    Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
+                    try
+                    {
+                        await snapshotClient.DeleteAsync(cancellationToken: token);
+                    }
+                    catch (Exception exception)
+                    {
+                        Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
+                    }
                 }
             }
             catch (Exception exception)
@@ -286,7 +311,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             finally
             {
                 var result = ex == null ? "Success" : $"Failure\n{ex}";
-                Console.WriteLine($"{prefix}: Completed {operation}. Result = {result}");
+                Console.WriteLine($"{prefix}: Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
         });
 
@@ -301,7 +326,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         {
             return BlobState.active;
         }
-        else if (blob.Tags.TryGetValue(Strings.state, out var stateValue)
+        else if (blob.Tags().TryGetValue(Strings.state, out var stateValue)
             && Enum.TryParse<BlobState>(stateValue, out var state))
         {
             return state;

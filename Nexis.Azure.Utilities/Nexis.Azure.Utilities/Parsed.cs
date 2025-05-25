@@ -52,11 +52,11 @@ public class Parsed<T>(Func<string, T> parse, string? text = null)
 {
     public string Text = text!;
 
-    private T? _value;
+    private Optional<T>? _value;
 
     public T Value
     {
-        get => _value ??= parse(Text);
+        get => (_value ??= parse(Text)).Value!;
         set => _value = value;
     }
 }

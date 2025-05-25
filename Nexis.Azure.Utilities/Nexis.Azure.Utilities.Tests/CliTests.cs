@@ -22,8 +22,9 @@ public partial class CliTests : CliTestsBase
         Console.SetError(Console.Out);
         await Program.RunAsync(new Program.Args(
             "dehydrate",
-            "--uri", ContainerUriWus2,
-            "--expiry", "1h"
+            "--uri", ContainerUriWus2
+            , "--expiry", "0"
+            //, "--refresh-interval", "5d"
         ));
     }
 }

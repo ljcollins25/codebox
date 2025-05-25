@@ -14,6 +14,11 @@ public record struct Timestamp(DateTime Value) : IComparable<Timestamp>
 
     public static Timestamp Now => DateTime.UtcNow;
 
+    public static Timestamp Parse(string value)
+    {
+        return value;
+    }
+
     public static bool operator <(Timestamp left, Timestamp right)
     {
         return left.CompareTo(right) < 0;
