@@ -8,21 +8,22 @@ using FluentAssertions;
 
 namespace Nexis.Azure.Utilities.Tests;
 
-public partial class CliTests
-{
-    public string ShareUriWus2 { get; } = "";
-    public string ContainerUriWus2 { get; } = "";
 
+public abstract partial class CliTestsBase
+{
+    public virtual string ContainerUriWus2 { get; }
+}
+
+public partial class CliTests : CliTestsBase
+{
     [Fact]
     public async Task TestHelp()
     {
         Console.SetError(Console.Out);
         await Program.RunAsync(new Program.Args(
             "dehydrate",
-            "--share-uri",
-            ShareUriWus2,
-            "--container-uri",
-            ContainerUriWus2
+            "--uri", ContainerUriWus2,
+            "--expiry", "1h"
         ));
     }
 }

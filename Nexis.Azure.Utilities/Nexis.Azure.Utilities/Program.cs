@@ -11,6 +11,7 @@ using Azure.Storage.Sas;
 namespace Nexis.Azure.Utilities;
 
 using static Helpers;
+using static Parsed;
 
 public class Program
 {
@@ -134,13 +135,17 @@ public class Program
                     var result = new DehydrateOperation(m.Console, cts.Token)
                     {
                         Uri = m.Option(c => ref c.Uri, name: "uri", description: "Container sas uri", required: true, aliases: ["container-uri"]),
-                        ExpiryValue = m.Option(c => ref c.ExpiryValue, name: "expiry", description: "Expiry value (e.g. 1h, 2d)", defaultValue: "1h", required: true),
+                        Expiry = m.ParsedOption(c => ref c.Expiry, ParsePastDateTimeOffset, v => m.Option(c => ref v.Text, name: "expiry", description: "Expiry value (e.g. 1h, 2d)",
+                            defaultValue: "1h", required: true)),
                     };
 
-                    m.Option(c => ref c.EphemeralSnapshotDeleteDelayValue, name: "stage-delete-delay", description: "Time to wait before deleting staging snapshots", defaultValue: "5m");
-                    m.Option(c => ref c.RefreshIntervalValue, name: "refresh-interval", description: "Refresh interval", defaultValue: "5d");
+                    m.ParsedOption(c => ref c.EphemeralSnapshotDeleteDelay, ParseTimeSpan, v => m.Option(c => ref v.Text, name: "stage-delete-delay",
+                        description: "Time to wait before deleting staging snapshots", defaultValue: "5m"));
+                    m.ParsedOption(c => ref c.RefreshInterval, ParseTimeSpan, v => m.Option(c => ref v.Text, name: "refresh-interval",
+                        description: "Refresh interval", defaultValue: "5d"));
                     //m.Option(c => ref c.Force, name: "force", description: "Force ghosting files which are up to date.", defaultValue: false);
-                    m.Option(c => ref c.RefreshBatches, name: "refresh-batches", description: "Number of refresh batches", defaultValue: 5);
+                    m.Option(c => ref c.RefreshBatches, name: "refresh-batches",
+                        description: "Number of refresh batches", defaultValue: 5);
                     return result;
                 },
                 r => r.RunAsync()),

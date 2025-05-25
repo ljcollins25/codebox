@@ -85,12 +85,18 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
     public CancellationToken Token { get; set; } = default;
 
     private List<Action<T, InvocationContext>> SetFields { get; } = new();
+    private List<Action<T>> AfterSetActions { get; } = new();
 
     public void Apply(T target, InvocationContext context)
     {
         foreach (var item in SetFields)
         {
             item(target, context);
+        }
+
+        foreach (var item in AfterSetActions)
+        {
+            item(target);
         }
     }
 
@@ -121,6 +127,28 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
         return default!;
     }
 
+    public delegate string ReceiveRef<TField>(Parsed<TField> value);
+
+    public TField ParsedOption<TField>(
+        RefFunc<T, TField> getFieldRef,
+        Func<string, TField> parse,
+        Action<Parsed<TField>> receiver
+        )
+    {
+        if (OptionsMode)
+        {
+            var parsed = new Parsed<TField>(parse);
+            AfterSetActions.Add(model =>
+            {
+                getFieldRef(model) = parsed.Value;
+            });
+
+            receiver(parsed);
+        }
+
+        return default!;
+    }
+
     public TField Option<TField>(
         RefFunc<T, TField> getFieldRef,
         string name,
@@ -141,7 +169,7 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
                     {
                         if (defaultValue.HasValue)
                         {
-
+                            return defaultValue.Value!;
                         }
 
                         return parse!(argResult);

@@ -44,49 +44,14 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     //public bool Force;
 
     // Set to zero to delete ephemeral snapshots immediately
-    public string EphemeralSnapshotDeleteDelayValue = "5m";
-
-    public TimeSpan EphemeralSnapshotDeleteDelay
-    {
-        get
-        {
-            if (TimeSpan.TryParse(EphemeralSnapshotDeleteDelayValue, out var ts)) return ts;
-            if (TimeSpanSetting.TryParseReadableTimeSpan(EphemeralSnapshotDeleteDelayValue, out ts)) return ts;
-
-            throw new FormatException($"Unable to parse Expiry '{EphemeralSnapshotDeleteDelayValue}' as timeSpan");
-        }
-    }
+    public TimeSpan EphemeralSnapshotDeleteDelay = ParseTimeSpan("5m");
 
     // Set to zero to refresh everything
     // Set to large value to refresh nothing
-    public string RefreshIntervalValue = "5d";
-
-    public TimeSpan RefreshInterval
-    {
-        get
-        {
-            if (TimeSpan.TryParse(RefreshIntervalValue, out var ts)) return ts;
-            if (TimeSpanSetting.TryParseReadableTimeSpan(RefreshIntervalValue, out ts)) return ts;
-
-            throw new FormatException($"Unable to parse Expiry '{RefreshIntervalValue}' as timeSpan");
-        }
-    }
+    public TimeSpan RefreshInterval = ParseTimeSpan("5d");
 
     // Set to zero to force staging of active blobs
-    public required string ExpiryValue = "1h";
-
-    public DateTimeOffset Expiry
-    {
-        get
-        {
-            if (DateTime.TryParse(ExpiryValue, out var d)) return d.ToUniversalTime();
-            if (DateTimeOffset.TryParse(ExpiryValue, out var dto)) return dto;
-            if (TimeSpan.TryParse(ExpiryValue, out var ts)) return DateTimeOffset.UtcNow - ts;
-            if (TimeSpanSetting.TryParseReadableTimeSpan(ExpiryValue, out ts)) return DateTimeOffset.UtcNow - ts;
-
-            throw new FormatException($"Unable to parse Expiry '{ExpiryValue}' as date or TimeSpan");
-        }
-    }
+    public required DateTimeOffset Expiry = ParsePastDateTimeOffset("1h");
 
     public bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
 
@@ -189,15 +154,15 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     IfMatch = blob.Properties.ETag
                 };
 
-                var headers = new BlobHttpHeaders()
-                {
-                    CacheControl = blob.Properties.CacheControl,
-                    ContentDisposition = blob.Properties.ContentDisposition,
-                    ContentEncoding = blob.Properties.ContentEncoding,
-                    ContentHash = blob.Properties.ContentHash,
-                    ContentLanguage = blob.Properties.ContentLanguage,
-                    ContentType = blob.Properties.ContentType,
-                };
+                //var headers = new BlobHttpHeaders()
+                //{
+                //    CacheControl = blob.Properties.CacheControl,
+                //    ContentDisposition = blob.Properties.ContentDisposition,
+                //    ContentEncoding = blob.Properties.ContentEncoding,
+                //    ContentHash = blob.Properties.ContentHash,
+                //    ContentLanguage = blob.Properties.ContentLanguage,
+                //    ContentType = blob.Properties.ContentType,
+                //};
 
                 snapshotId = null;
                 Timestamp operationTimestamp = Timestamp.Now;
@@ -232,7 +197,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                         {
                             Tags = GetStrippedTags(blob.Tags, BlobState.active),
                             Conditions = conditions,
-                            HttpHeaders = headers
+                            //HttpHeaders = headers
                         },
                         cancellationToken: token);
 
@@ -260,7 +225,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 {
                     Tags = tags,
                     Conditions = conditions,
-                    HttpHeaders = headers
+                    //HttpHeaders = headers
                 },
                 cancellationToken: token);
 
