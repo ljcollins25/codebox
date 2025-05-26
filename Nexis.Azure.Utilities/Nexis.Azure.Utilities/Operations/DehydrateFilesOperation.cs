@@ -357,52 +357,51 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             .ToListAsync();
         await Helpers.ForEachAsync(!SingleThreaded, snapshots, token, async (blobItem, token) =>
         {
+            string result = "Success";
             var blobClient = container.GetBlobClient(blobItem.Name);
             var prefix = GetName(blobClient.Name);
             string operation = "skipped";
-
-            if (blobItem.VersionId is { } versionId && !string.IsNullOrEmpty(versionId))
-            {
-                blobClient = blobClient.WithVersion(versionId);
-                prefix += $"?version={versionId}";
-            }
-            else if (blobItem.Snapshot is { } snapshotId && string.IsNullOrEmpty(snapshotId))
-            {
-                blobClient = blobClient.WithSnapshot(snapshotId);
-                prefix += $"?snapshot={snapshotId}";
-
-                if (snapshotPolicy.TryGetValue(snapshotId, out var retainedUntil))
-                {
-                    if (retainedUntil == DateTime.MaxValue)
-                    {
-                        operation = "skipped due to reference or failed transition";
-                        return;
-                    }
-
-                    var delay = retainedUntil - DateTime.UtcNow;
-                    if (delay > TimeSpan.Zero)
-                    {
-                        Console.WriteLine($"{prefix}: Waiting {operation} for {delay} before cleaning up snapshot");
-                        await Task.Delay(delay);
-                        Console.WriteLine($"{prefix}: Waited {operation} for {delay} before cleaning up snapshot");
-                    }
-                }
-
-                // Snapshot policy supercedes this check (namely for ephemeral staging snapshots and snapshots still referenced by base blob)
-                if (blobItem.Properties.LastModified > Expiry)
-                {
-                    operation = "skipped due to last modified time";
-                    return;
-                }
-            }
-            else
-            {
-                return;
-            }
-
-            string result = "Success";
             try
             {
+
+                if (blobItem.VersionId is { } versionId && !string.IsNullOrEmpty(versionId))
+                {
+                    blobClient = blobClient.WithVersion(versionId);
+                    prefix += $"?version={versionId}";
+                }
+                else if (blobItem.Snapshot is { } snapshotId && !string.IsNullOrEmpty(snapshotId))
+                {
+                    blobClient = blobClient.WithSnapshot(snapshotId);
+                    prefix += $"?snapshot={snapshotId}";
+
+                    if (snapshotPolicy.TryGetValue(snapshotId, out var retainedUntil))
+                    {
+                        if (retainedUntil == DateTime.MaxValue)
+                        {
+                            operation = "skipped due to reference or failed transition";
+                            return;
+                        }
+
+                        var delay = retainedUntil - DateTime.UtcNow;
+                        if (delay > TimeSpan.Zero)
+                        {
+                            Console.WriteLine($"{prefix}: Waiting {operation} for {delay} before cleaning up snapshot");
+                            await Task.Delay(delay);
+                            Console.WriteLine($"{prefix}: Waited {operation} for {delay} before cleaning up snapshot");
+                        }
+                    }
+
+                    // Snapshot policy supercedes this check (namely for ephemeral staging snapshots and snapshots still referenced by base blob)
+                    if (blobItem.Properties.LastModified > Expiry)
+                    {
+                        operation = "skipped due to last modified time";
+                        return;
+                    }
+                }
+                else
+                {
+                    return;
+                }
                 operation = "deleting";
                 await blobClient.DeleteIfExistsAsync();
             }
