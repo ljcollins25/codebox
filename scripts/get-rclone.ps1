@@ -1,7 +1,7 @@
 # Download-Rclone.ps1
 
 # URL of the rclone.exe binary
-$downloadUrl = "https://github.com/Xollective/PublicToolsRelease/releases/download/latest/rclone.exe"
+$downloadUrl = "https://github.com/ljcollins25/rclone/releases/download/contrib/rclone.exe"
 
 # Destination path (same as the script's directory)
 $scriptDir = $PSScriptRoot
