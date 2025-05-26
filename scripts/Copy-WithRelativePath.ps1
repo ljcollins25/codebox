@@ -27,7 +27,7 @@ if (-not (Test-Path -Path $TargetPath)) {
 }
 
 # Run robocopy
-$rc = robocopy $SourcePath $TargetPath /E /COPY:DAT /R:3 /W:5
+& robocopy $SourcePath $TargetPath /E /COPY:DAT /R:3 /W:5
 
 # robocopy returns exit codes using a bitmask, 0 and 1 are generally OK
 if ($LASTEXITCODE -le 1) {
