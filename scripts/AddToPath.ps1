@@ -1,8 +1,7 @@
 # Add-PathToSystem.ps1
 
 param (
-    [Parameter(Mandatory = $true)]
-    [string]$NewPath
+    [string]$NewPath = $PSScriptRoot
 )
 
 # Get current system PATH
@@ -19,6 +18,6 @@ if ($existingPath.Split(';') -contains $NewPath) {
     [Environment]::SetEnvironmentVariable("Path", $updatedPath, "Machine")
     Write-Host "Path '$NewPath' has been added to the system PATH."
 
-    # Notify user that a reboot or logoff may be required
-    Write-Host "You may need to restart your session or log off for changes to take full effect."
+    # Inform user about session reload
+    Write-Host "You may need to restart your terminal or log off/log on for changes to take effect."
 }
