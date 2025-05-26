@@ -23,7 +23,7 @@ public partial class CliTests : CliTestsBase
         await Program.RunAsync(new Program.Args(
             "dehydrate",
             "--uri", ContainerUriWus2
-            , "--expiry", "0"
+            //, "--expiry", "0"
             //, "--refresh-interval", "5d"
         ));
     }

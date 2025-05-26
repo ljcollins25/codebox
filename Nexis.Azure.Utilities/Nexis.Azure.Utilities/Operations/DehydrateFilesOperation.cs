@@ -1,4 +1,5 @@
-﻿using System.Collections.Immutable;
+﻿using System;
+using System.Collections.Immutable;
 using System.CommandLine;
 using System.CommandLine.IO;
 using System.ComponentModel;
@@ -6,6 +7,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection.Metadata;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Azure;
 using Azure.Core;
@@ -85,6 +87,18 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         }
     }
 
+    private static Regex regex = new Regex(@"\[\[(?<displayName>[^\]]+)\]\].*");
+
+    private static string GetName(string blobName)
+    {
+        var m = regex.Match(blobName);
+        if (m.Success)
+        {
+            return m.Groups["displayName"].Value;
+        }
+
+        return blobName;
+    }
 
     public async Task<int> RunAsync()
     {
@@ -111,7 +125,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             string operation = "";
 
             BlobState state = GetBlobState(blob);
-            var prefix = $"[{state.ToString().PadRight(15, ' ')}] {path}";
+            var prefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
             try
             {
                 Console.WriteLine($"{prefix}: START (State={state})");
@@ -280,6 +294,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     .SetItem(Strings.last_refresh_time, Timestamp.Now);
 
                 // Blocks are left uncommitted intentionally so that blob is materialized on demand
+
+                Console.WriteLine($"{prefix}: Finalizing ghosting. Tag condition = \"{tagCondition}\"");
                 await blobClient.SetTagsAsync(tags, new BlobRequestConditions()
                 {
                     //IfMatch = commitResponse.Value.ETag
@@ -310,7 +326,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             }
             finally
             {
-                var result = ex == null ? "Success" : $"Failure\n{ex}";
+                var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
                 Console.WriteLine($"{prefix}: Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
         });
@@ -342,7 +358,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         await Helpers.ForEachAsync(!SingleThreaded, snapshots, token, async (blobItem, token) =>
         {
             var blobClient = container.GetBlobClient(blobItem.Name);
-            var prefix = blobClient.Name;
+            var prefix = GetName(blobClient.Name);
             string operation = "skipped";
 
             if (blobItem.VersionId is { } versionId && !string.IsNullOrEmpty(versionId))
