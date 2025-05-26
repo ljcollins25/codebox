@@ -3,7 +3,10 @@ param (
     [string]$SourcePath,      # e.g. D:\Media\Videos
 
     [Parameter(Mandatory = $true)]
-    [string]$MountName        # e.g. MediaMount
+    [string]$MountName,        # e.g. MediaMount
+
+    [ValidateSet("robocopy", "rclone")]
+    [string]$Tool = "rclone"
 )
 
 # Set source root (must end with backslash)
@@ -18,11 +21,18 @@ if (-not ($SourcePath.ToLower().StartsWith($sourceRoot.ToLower()))) {
 # Compute relative path (strip off D:\)
 $relativePath = $SourcePath.Substring($sourceRoot.Length)
 
-# Target root is C:\mount\$MountName
-$targetRoot = "C:\mount\$MountName"
+if ($Tool -eq "rclone") {
+    Write-Host "Copying with rclone..."
+    $rcloneCmd = "rclone copy `"$SourcePath`" `"${MountName}:media\$relativePath`" --update --inplace --create-empty-src-dirs"
+    Write-Host $rcloneCmd
+    Invoke-Expression $rcloneCmd
+} else {
+    # Target root is C:\mount\$MountName
+    $targetRoot = "C:\mount\$MountName"
 
-# Path to the Copy-WithRelativePath script (assumes in same folder)
-$copyScript = Join-Path -Path $PSScriptRoot -ChildPath "Copy-WithRelativePath.ps1"
+    # Path to the Copy-WithRelativePath script (assumes in same folder)
+    $copyScript = Join-Path -Path $PSScriptRoot -ChildPath "Copy-WithRelativePath.ps1"
 
-# Call the copy script
-& $copyScript -SourceRoot $sourceRoot -TargetRoot $targetRoot -RelativePath $relativePath
+    # Call the copy script
+    & $copyScript -SourceRoot $sourceRoot -TargetRoot $targetRoot -RelativePath $relativePath
+}
