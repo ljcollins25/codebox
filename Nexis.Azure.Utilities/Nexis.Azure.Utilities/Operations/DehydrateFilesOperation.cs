@@ -5,6 +5,7 @@ using System.CommandLine;
 using System.CommandLine.IO;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.ContractsLight;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection.Metadata;
@@ -125,26 +126,27 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         await Helpers.ForEachAsync(!SingleThreaded, FilterDirectories(targetBlobs), token, async (blob, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
+            var readTags = blob.Tags().ToImmutableDictionary();
             Exception? ex = null;
             var path = blob.Name;
 
             string operation = "";
             BlobState state = GetBlobState(blob);
-            var prefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
+            var logPrefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
             try
             {
 
-                if (blob.Tags().TryGetValue(Strings.snapshot, out var snapshotId))
+                if (readTags.TryGetValue(Strings.snapshot, out var snapshotId))
                 {
                     // Retain referenced snapshots
                     snapshotPolicy[snapshotId] = DateTime.MaxValue;
                 }
 
-                Console.WriteLine($"{prefix}: (Snapshot={snapshotId})");
+                Console.WriteLine($"{logPrefix}: (Snapshot={snapshotId})");
 
 
                 string tagCondition;
-                if (blob.Tags().TryGetValue(Strings.last_access, out var lastTouch))
+                if (readTags.TryGetValue(Strings.last_access, out var lastTouch))
                 {
                     if (Timestamp.Parse(lastTouch) > Expiry)
                     {
@@ -167,7 +169,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     return;
                 }
                 else if (state == BlobState.ghost
-                    && Out.Var<Timestamp?>(out var lastRefreshTime, (blob.Tags()!.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero)) > refreshExpiry)
+                    && Out.Var<Timestamp?>(out var lastRefreshTime, (readTags!.ValueOrDefault(Strings.last_refresh_time) ?? Timestamp.Zero)) > refreshExpiry)
                 {
                     if ((blob.Metadata()!.ValueOrDefault(Strings.dirty_time) ?? Timestamp.Zero) > lastRefreshTime)
                     {
@@ -220,25 +222,38 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 {
                     snapshotId = blob.Tags[Strings.snapshot];
 
-                    var currentBlockList = await blobClient.GetBlockListAsync();
+                    if (snapshotId != null)
+                    {
+                        var snapshotExists = await blobClient.WithSnapshot(snapshotId).ExistsAsync(cancellationToken: token);
+                        if (!snapshotExists)
+                        {
+                            state = BlobState.ghost;
+                            readTags = readTags.SetItem(Strings.block_prefix, readTags.GetValueOrDefault(Strings.block_prefix, ""));
+                            snapshotId = null;
+                        }
+                    }
                 }
-                else if (state == BlobState.ghost)
+
+                if (state == BlobState.ghost)
                 {
                     // Needs precommit
-                    var blockPrefix = blob.Tags[Strings.block_prefix];
+                    var blockPrefix = readTags[Strings.block_prefix];
                     var currentBlockList = await blobClient.GetBlockListAsync();
                     var blocksToCommit = currentBlockList.Value.UncommittedBlocks
-                        .Select(b => b.Name)
-                        .Where(b => b.StartsWith(blockPrefix))
-                        .Order()
+                        .Where(b => b.Name.StartsWith(blockPrefix))
+                        .OrderBy(b => b.Name)
                         .ToList();
+
+                    var totalSize = blocksToCommit.Sum(b => (long?)b.SizeLong) ?? 0;
+                    var expectedSize = readTags.GetValueOrDefault(Strings.size, "0");
+                    Contract.Assert(totalSize.ToString() == readTags[Strings.size], $"actual size ({totalSize.ToString()}) != expected size ({expectedSize})");
 
                     // Change to active state
                     var crsp = await blobClient.CommitBlockListAsync(
-                        base64BlockIds: blocksToCommit,
+                        base64BlockIds: blocksToCommit.Select(b => b.Name),
                         options: new CommitBlockListOptions()
                         {
-                            Tags = GetStrippedTags(blob.Tags(), BlobState.active),
+                            Tags = GetStrippedTags(readTags, BlobState.active),
                             Conditions = conditions,
                             //HttpHeaders = headers
                         },
@@ -262,8 +277,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
                 fileSize = snapshotLength;
 
-                var tags = GetStrippedTags(blob.Tags(), BlobState.transitioning)
+                var tags = GetStrippedTags(readTags, BlobState.transitioning)
                     .SetItem(Strings.size, snapshotLength.ToString())
+                    .SetItem(Strings.block_prefix, operationTimestamp.ToBlockIdPrefix())
                     .SetItem(Strings.snapshot, snapshotId);
 
                 // Clear block list and set Transitioning tag
@@ -296,14 +312,14 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     blocks.Add(blockName);
                 }
 
-                tags = GetStrippedTags(blob.Tags(), BlobState.ghost)
+                tags = GetStrippedTags(readTags, BlobState.ghost)
                     .SetItem(Strings.block_prefix, operationTimestamp.ToBlockIdPrefix())
                     .SetItem(Strings.size, snapshotLength.ToString())
                     .SetItem(Strings.last_refresh_time, Timestamp.Now);
 
                 // Blocks are left uncommitted intentionally so that blob is materialized on demand
 
-                Console.WriteLine($"{prefix}: Finalizing ghosting. Tag condition = \"{tagCondition}\"");
+                Console.WriteLine($"{logPrefix}: Finalizing ghosting. Tag condition = \"{tagCondition}\"");
                 await blobClient.SetTagsAsync(tags, new BlobRequestConditions()
                 {
                     //IfMatch = commitResponse.Value.ETag
@@ -324,7 +340,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     }
                     catch (Exception exception)
                     {
-                        Console.WriteLine($"{prefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
+                        Console.WriteLine($"{logPrefix}: Failed to delete snapshot {operation}:\n{exception.Message}");
                     }
                 }
             }
@@ -335,11 +351,11 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             finally
             {
                 var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
-                Console.WriteLine($"{prefix}: Completed {operation} in {watch.Elapsed}. Result = {result}");
+                Console.WriteLine($"{logPrefix}: Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
         });
 
-        await DeleteOldSnapshotsAsync(targetBlobContainer, snapshotPolicy);
+        await DeleteOldSnapshotsAsync(targetBlobContainer, prefix, snapshotPolicy);
 
         return 0;
     }
@@ -359,9 +375,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         return BlobState.active;
     }
 
-    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, IReadOnlyDictionary<string, DateTime> snapshotPolicy)
+    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, string? prefix, IReadOnlyDictionary<string, DateTime> snapshotPolicy)
     {
-        var snapshots = await container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots | BlobStates.Version)
+        var snapshots = await container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots | BlobStates.Version, prefix: prefix)
             .ToListAsync();
         await Helpers.ForEachAsync(!SingleThreaded, snapshots, token, async (blobItem, token) =>
         {
