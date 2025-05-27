@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.CommandLine;
 using System.CommandLine.IO;
@@ -104,13 +105,18 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     {
         var rootBlobClient = new BlobClient(Uri);
         var targetBlobContainer = rootBlobClient.GetParentBlobContainerClient();
+        var suffix = "/";
+        if (await rootBlobClient.ExistsAsync())
+        {
+            suffix = "";
+        }
         var prefix = !string.IsNullOrEmpty(Out.Var(out var rootPath, rootBlobClient.Name.TrimEnd('/')))
-            ? rootPath + '/'
+            ? rootPath + suffix
             : null;
 
         var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
             .OrderBy(b => b.Name).ToListAsync();
-        var snapshotPolicy = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        var snapshotPolicy = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
         var maxRefreshes = (targetBlobs.Count + (RefreshBatches - 1)) / RefreshBatches;
 
@@ -123,18 +129,18 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
             var path = blob.Name;
 
             string operation = "";
-
             BlobState state = GetBlobState(blob);
             var prefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
             try
             {
-                Console.WriteLine($"{prefix}: START (State={state})");
 
                 if (blob.Tags().TryGetValue(Strings.snapshot, out var snapshotId))
                 {
                     // Retain referenced snapshots
                     snapshotPolicy[snapshotId] = DateTime.MaxValue;
                 }
+
+                Console.WriteLine($"{prefix}: (Snapshot={snapshotId})");
 
 
                 string tagCondition;
@@ -213,6 +219,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                 else if (state == BlobState.transitioning)
                 {
                     snapshotId = blob.Tags[Strings.snapshot];
+
+                    var currentBlockList = await blobClient.GetBlockListAsync();
                 }
                 else if (state == BlobState.ghost)
                 {
@@ -247,6 +255,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     isEmphemeralSnapshot = true;
                 }
 
+                // Retain referenced snapshots
+                snapshotPolicy[snapshotId] = DateTime.MaxValue;
+
                 var snapshotClient = blobClient.WithSnapshot(snapshotId);
                 var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
                 fileSize = snapshotLength;
@@ -263,9 +274,6 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
                     //HttpHeaders = headers
                 },
                 cancellationToken: token);
-
-                // Retain referenced snapshots
-                snapshotPolicy[snapshotId] = DateTime.MaxValue;
 
                 // Copy content of file to blob store (block names should be sortable by order in blob)
                 const long MAX_BLOCK_SIZE = 1 << 30; // 1gb
@@ -351,7 +359,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
         return BlobState.active;
     }
 
-    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, Dictionary<string, DateTime> snapshotPolicy)
+    private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, IReadOnlyDictionary<string, DateTime> snapshotPolicy)
     {
         var snapshots = await container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots | BlobStates.Version)
             .ToListAsync();
