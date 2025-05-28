@@ -60,4 +60,3 @@ public class Parsed<T>(Func<string, T> parse, string? text = null)
         set => _value = value;
     }
 }
-

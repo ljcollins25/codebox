@@ -40,6 +40,31 @@ public static class Helpers
         }
     }
 
+    public static string UriCombine(string? baseUri, string relativeUri)
+    {
+        baseUri ??= "";
+        string path;
+        if (string.IsNullOrEmpty(relativeUri))
+        {
+            path = baseUri;
+        }
+        else if (string.IsNullOrEmpty(baseUri))
+        {
+            path = relativeUri.TrimStart('/');
+        }
+        else if (relativeUri.Contains(':'))
+        {
+            // This is actually a full uri. Just return it.
+            path = relativeUri;
+        }
+        else
+        {
+            path = $"{baseUri.TrimEnd('/')}/{relativeUri.TrimStart('/')}";
+        }
+
+        return path;
+    }
+
     public static ShareFileHttpHeaders ToHttpHeaders(this ShareFileProperties properties)
     {
         return new ShareFileHttpHeaders
@@ -161,6 +186,11 @@ public static class Helpers
     public static TValue? ValueOrDefault<TKey, TValue>(this IDictionary<TKey, TValue> map, TKey key, TValue defaultValue = default!)
     {
         return map.TryGetValue(key, out var value) ? value : defaultValue;
+    }
+
+    public static TResult FluidSelect<T, TResult>(this T c, Func<T, TResult> selector)
+    {
+        return selector(c);
     }
 
 

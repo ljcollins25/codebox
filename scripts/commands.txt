@@ -1,0 +1,35 @@
+    docker run -d \
+    --name jellyfin \
+    --user uid:gid \
+    --net=host \
+    -p 8096:8096 \
+    --volume /jellyfin/config:/config \
+    --volume /jellyfin/cache:/cache \
+    --mount type=bind,source=/jellyfin/media,target=/media \
+    --restart=unless-stopped \
+    jellyfin/jellyfin
+
+    docker run -d \
+    --name jellyfin \
+    --net=host \
+    -p 8096:8096 \
+    --volume /jellyfin/config:/config \
+    --volume /jellyfin/cache:/cache \
+    --mount type=bind,source=/jellyfin/media,target=/media \
+    --restart=unless-stopped \
+    jellyfin/jellyfin
+
+[media]
+type = azureblob
+sas_url = $(media-wus-sas-url)
+ghostd_snapshot_ttl_minutes = 10
+directory_markers = true
+chunk_size = 64M
+delete_snapshots = include
+
+rclone config create media azureblob \
+  sas_url="${media_wus_sas_url}" \
+  ghostd_snapshot_ttl_minutes=10 \
+  directory_markers=true \
+  chunk_size=64M \
+  delete_snapshots=include

@@ -21,29 +21,8 @@ using Azure.Storage.Files.Shares.Models;
 
 namespace Nexis.Azure.Utilities;
 
-public class DehydrateOperation(IConsole Console, CancellationToken token)
+public class DehydrateOperation(IConsole Console, CancellationToken token) : DriveOperationBase(Console, token)
 {
-    private static class Strings
-    {
-        public const string tagPrefix = "ghostd_";
-        public const string last_refresh_time = $"{tagPrefix}refresh_time";
-        public const string last_access = $"{tagPrefix}last_access";
-        public const string snapshot = $"{tagPrefix}snapshot";
-        public const string state = $"{tagPrefix}state";
-        public const string block_prefix = $"{tagPrefix}block_prefix";
-        public const string size = $"{tagPrefix}size";
-        public const string dirty_time = $"{tagPrefix}dirty_time";
-        public const string dir_metadata = "hdi_isfolder";
-    }
-
-    public required Uri Uri;
-
-    public string? LocalSource;
-
-    public static ImmutableDictionary<string, string> BaseTags = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase)
-        .Add("archive_version", "1")
-        ;
-
     public int RefreshBatches = 5;
 
     //public bool Force;
@@ -58,62 +37,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     // Set to zero to force staging of active blobs
     public required DateTimeOffset Expiry = ParsePastDateTimeOffset("1h");
 
-    public bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
-
-    private enum BlobState
-    {
-        pending,
-        ghost,
-        transitioning,
-        active
-    }
-
-    private static ImmutableDictionary<string, string> GetStrippedTags(
-        IEnumerable<KeyValuePair<string, string>> source,
-        BlobState state)
-    {
-        return BaseTags
-            .SetItems(source)
-            .RemoveRange(source.Select(s => s.Key).Where(k => k.StartsWith(Strings.tagPrefix)))
-            .SetItem(Strings.state, state.ToString());
-    }
-
-    public IEnumerable<BlobItem> FilterDirectories(IEnumerable<BlobItem> blobs)
-    {
-        foreach (var blob in blobs)
-        {
-            if (!blob.Metadata().ContainsKey(Strings.dir_metadata))
-            {
-                yield return blob;
-            }
-        }
-    }
-
-    private static Regex regex = new Regex(@"\[\[(?<displayName>[^\]]+)\]\].*");
-
-    private static string GetName(string blobName)
-    {
-        var m = regex.Match(blobName);
-        if (m.Success)
-        {
-            return m.Groups["displayName"].Value;
-        }
-
-        return blobName;
-    }
-
     public async Task<int> RunAsync()
     {
-        var rootBlobClient = new BlobClient(Uri);
-        var targetBlobContainer = rootBlobClient.GetParentBlobContainerClient();
-        var suffix = "/";
-        if (await rootBlobClient.ExistsAsync())
-        {
-            suffix = "";
-        }
-        var prefix = !string.IsNullOrEmpty(Out.Var(out var rootPath, rootBlobClient.Name.TrimEnd('/')))
-            ? rootPath + suffix
-            : null;
+        BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
 
         var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
             .OrderBy(b => b.Name).ToListAsync();
@@ -378,6 +304,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token)
     private async Task DeleteOldSnapshotsAsync(BlobContainerClient container, string? prefix, IReadOnlyDictionary<string, DateTime> snapshotPolicy)
     {
         var snapshots = await container.GetBlobsAsync(BlobTraits.None, BlobStates.Snapshots | BlobStates.Version, prefix: prefix)
+            .Where(b => b.Snapshot.IsNonEmpty() || b.VersionId.IsNonEmpty())
             .ToListAsync();
         await Helpers.ForEachAsync(!SingleThreaded, snapshots, token, async (blobItem, token) =>
         {

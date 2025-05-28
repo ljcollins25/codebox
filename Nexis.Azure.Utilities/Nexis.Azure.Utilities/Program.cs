@@ -128,6 +128,21 @@ public class Program
             GetStorageCommand(),
 
             // Add DehydrateOperation command
+            CliModel.Bind<UploadFilesOperation>(
+                new Command("upload", "Dehydrate Azure Files to Azure Blob Storage."),
+                m =>
+                {
+                    var result = new UploadFilesOperation(m.Console, cts.Token)
+                    {
+                        Uri = m.Option(c => ref c.Uri, name: "uri", description: "Container sas directory uri", required: true, aliases: ["container-uri"]),
+                        LocalSourcePath = m.Option(c => ref c.LocalSourcePath, "path", "Source file/directory path", required: true)
+                    };
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            // Add DehydrateOperation command
             CliModel.Bind<DehydrateOperation>(
                 new Command("dehydrate", "Dehydrate Azure Files to Azure Blob Storage."),
                 m =>
@@ -186,21 +201,21 @@ public class Program
 
         return new Command("storage")
         {
-            CliModel.Bind<UploadOperation>(
-                new Command("upload"),
-                m =>
-                {
-                    var result = new UploadOperation(m.Console, m.Token)
-                    {
-                        Source = m.Option(c => ref c.Source, name: "source", description: "The source file path", required: true),
-                        TargetUri = m.Option(c => ref c.TargetUri, name: "target", description: "The target blob uri", required: true),
-                    };
+            //CliModel.Bind<UploadOperation>(
+            //    new Command("uploadfile"),
+            //    m =>
+            //    {
+            //        var result = new UploadOperation(m.Console, m.Token)
+            //        {
+            //            Source = m.Option(c => ref c.Source, name: "source", description: "The source file path", required: true),
+            //            TargetUri = m.Option(c => ref c.TargetUri, name: "target", description: "The target blob uri", required: true),
+            //        };
 
-                    m.Option(c => ref c.Overwrite, name: "overwrite", defaultValue: false);
+            //        m.Option(c => ref c.Overwrite, name: "overwrite", defaultValue: false);
 
-                    return result;
-                },
-                r => r.RunAsync()),
+            //        return result;
+            //    },
+            //    r => r.RunAsync()),
 
             new Command("account")
             {
