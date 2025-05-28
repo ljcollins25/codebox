@@ -18,7 +18,7 @@ jobs:
         run: dotnet publish Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release -o publish
 
       - name: Publish project
-        run: dotnet publish AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
+        run: dotnet publish AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
