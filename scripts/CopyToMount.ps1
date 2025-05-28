@@ -23,7 +23,7 @@ $relativePath = $SourcePath.Substring($sourceRoot.Length)
 
 if ($Tool -eq "rclone") {
     Write-Host "Copying with rclone..."
-    $rcloneCmd = "rclone copy `"$SourcePath`" `"${MountName}:media\$relativePath`" --update --inplace --create-empty-src-dirs"
+    $rcloneCmd = "rclone copy `"$SourcePath`" `"${MountName}:media\$relativePath`" --update --inplace --create-empty-src-dirs --progress"
     Write-Host $rcloneCmd
     Invoke-Expression $rcloneCmd
 } else {

@@ -1,7 +1,7 @@
 # Git-PullHere.ps1
 
 # Navigate to the script's directory
-Set-Location -Path $PSScriptRoot
+Set-Location -Path $PSScriptRoot/..
 
 # Check if .git folder exists
 if (-not (Test-Path ".git")) {
