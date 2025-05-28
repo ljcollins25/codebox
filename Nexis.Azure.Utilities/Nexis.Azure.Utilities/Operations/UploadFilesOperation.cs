@@ -31,7 +31,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public IReadOnlyDictionary<string, FileInfo> GetFiles()
     {
-        LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath));
+        LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
         var rootPath = File.Exists(LocalSourcePath) ? Path.GetDirectoryName(LocalSourcePath) : LocalSourcePath;
         rootPath = rootPath!.TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
 
@@ -48,7 +48,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         var files = GetFiles();
 
         Url targetRoot = Uri;
-        if (RelativePath != null)
+        if (!string.IsNullOrEmpty(RelativePath))
         {
             if (File.Exists(LocalSourcePath))
             {
@@ -75,12 +75,17 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             Stopwatch watch = Stopwatch.StartNew();
             Exception? ex = null;
             var path = entry.Key;
+            if (!string.IsNullOrEmpty(RelativePath))
+            {
+                path = Path.Combine(RelativePath, path).Replace('\\', '/');
+            }
             var file = entry.Value;
             Timestamp fileLastModifiedTime = file.LastWriteTimeUtc;
             var fileLength = file.Length;
             var blob = targetBlobs.GetValueOrDefault(path);
 
-            Timestamp? blobLastModifiedTime = blob?.Metadata()?.ValueOrDefault<string, string>(Strings.mtime_metadata)
+            var blobMtime = blob?.Metadata()?.ValueOrDefault<string, string>(Strings.mtime_metadata);
+            Timestamp? blobLastModifiedTime = blobMtime
                 ?? (Timestamp?)blob?.Properties.LastModified;
 
             var logPrefix = $"{GetName(path)}";
@@ -95,7 +100,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 }
 
 
-                operation = $"Copying Length = {fileLength}. Last Modified Time = {fileLastModifiedTime}. Blob Last Modified = {blobLastModifiedTime}";
+                operation = $"Copying Length = {fileLength}. Last Modified Time = {fileLastModifiedTime}. Blob Last Modified = {blobLastModifiedTime} ({blobMtime})";
                 // Copy content of file to blob store (block names should be sortable by order in blob)
                 const long MAX_BLOCK_SIZE = 1 << 28; // 256mb
                 var blocks = new List<string>();
@@ -138,7 +143,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
                 var completed = Interlocked.Add(ref copiedBytes, fileLength);
                 var percent = (completed * 100) / totalLength;
-                Console.WriteLine($"{logPrefix}: [{percent}] Completed {operation} in {watch.Elapsed}. Result = {result}");
+                Console.WriteLine($"{logPrefix}: [{percent}% {totalLength} bytes] Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
         });
 
