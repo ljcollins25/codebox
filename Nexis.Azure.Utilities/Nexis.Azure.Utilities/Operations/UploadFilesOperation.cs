@@ -27,15 +27,16 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 {
     public required string LocalSourcePath;
 
+    public string RelativePath;
 
     public IReadOnlyDictionary<string, FileInfo> GetFiles()
     {
-        var fullPath = Path.GetFullPath(LocalSourcePath);
-        var rootPath = File.Exists(LocalSourcePath) ? Path.GetDirectoryName(fullPath) : fullPath;
+        LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath));
+        var rootPath = File.Exists(LocalSourcePath) ? Path.GetDirectoryName(LocalSourcePath) : LocalSourcePath;
         rootPath = rootPath!.TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
 
         var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
-            .Where(f => f.FullName.StartsWith(fullPath, StringComparison.OrdinalIgnoreCase))
+            .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
             .ToImmutableSortedDictionary(f => f.FullName.Substring(rootPath.Length).Replace('\\', '/'), f => f)
             ;
 
@@ -44,14 +45,26 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public async Task<int> RunAsync()
     {
-        BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
+        var files = GetFiles();
+
         Url targetRoot = Uri;
+        if (RelativePath != null)
+        {
+            if (File.Exists(LocalSourcePath))
+            {
+                RelativePath = Path.GetDirectoryName(RelativePath) ?? string.Empty;
+            }
+            
+            targetRoot = targetRoot.Combine(Uri.EscapeUriString(RelativePath.Replace('\\', '/')));
+            Uri = targetRoot;
+        }
+
+        BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
 
         var targetBlobs = FilterDirectories(await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
             .ToListAsync()).ToImmutableDictionary(b => b.Name);
 
 
-        var files = GetFiles();
         Timestamp operationTimestamp = Timestamp.Now;
 
         var totalLength = files.Sum(f => f.Value.Length);
