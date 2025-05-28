@@ -1,12 +1,10 @@
-name: Build and Release Nexis.Azure.Utilities
+name: Build and Release
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-    paths:
-      - 'Nexis.Azure.Utilities/**'
 
 jobs:
   build-and-release:
@@ -19,12 +17,15 @@ jobs:
       - name: Publish project
         run: dotnet publish Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release -o publish
 
+      - name: Publish project
+        run: dotnet publish AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: latest
           tag_name: latest
           prerelease: true
-          files: publish/nexutils.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            publish/nexutils.exe
+            publish/azputils.exe
