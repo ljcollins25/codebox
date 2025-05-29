@@ -187,6 +187,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 var blocks = new List<string>();
                 int blockId = 0;
                 var blobClient = targetBlobContainer.GetBlockBlobClient(path);
+                var totalBlocks = (fileLength + (BlockSize - 1)) / BlockSize;
                 using (var fileStream = File.Open(file.FullName, FileMode.Open))
                 using (var segmentStream = new StreamSegment(fileStream))
                 {
@@ -205,7 +206,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
                         Interlocked.Add(ref copiedBytes, blockLength);
 
-                        printStatus(blockLength, $"Uploaded block {bid}");
+                        printStatus(blockLength, $"Uploaded block {bid}/{totalBlocks}");
                         blocks.Add(blockName);
                     }
                 }
