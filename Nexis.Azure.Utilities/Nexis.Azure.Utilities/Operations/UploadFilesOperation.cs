@@ -28,7 +28,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 {
     public required string LocalSourcePath;
 
-    public string RelativePath;
+    public string? RelativePath;
 
     public long BlockSize = 1 << 27; // 128mb
 
