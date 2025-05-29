@@ -107,9 +107,10 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 ?? (Timestamp?)blob?.Properties.LastModified;
 
             var logPrefix = $"{GetName(path)}";
-            if (blobLastModifiedTime != null && blobLastModifiedTime >= fileLastModifiedTime)
+            var op = "Skipped";
+            if (blobLastModifiedTime != null && (blobLastModifiedTime < fileLastModifiedTime || (UpdateTimestamps && blobLastModifiedTime != fileLastModifiedTime)))
             {
-                var op = UpdateTimestamps && blobLastModifiedTime != fileLastModifiedTime ? "Updated" : "Skipping";
+                op = "Updated";
                 try
                 {
                     var bc = targetBlobContainer.GetBlockBlobClient(blob!.Name);
@@ -125,24 +126,29 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 {
                     op = $"Failed\n{ex}\n";
                 }
-                Console.WriteLine($"{logPrefix}: {op} blob last modified time ({blobLastModifiedTime}) >= ({fileLastModifiedTime}) file last modified time");
                 lock (targetBlobs)
                 {
                     files.Remove(path);
                 }
             }
+
+            Console.WriteLine($"{logPrefix}: {op} blob last modified time ({blobLastModifiedTime}) > ({fileLastModifiedTime}) file last modified time");
+
         });
 
-        Console.Out.WriteLine($"Target blobs Length={targetBlobs.Count}, FirstKey={targetBlobs.FirstOrDefault().Key}");
 
 
         Timestamp operationTimestamp = Timestamp.Now;
 
+        var fileCount = files.Count;
+        int completedFiles = 0;
         var totalLength = files.Sum(f => f.Value.Length);
         var copiedBytes = 0L;
         var completedBytes = 0L;
         Stopwatch totalWatch = Stopwatch.StartNew();
+        Console.Out.WriteLine($"Target blobs Length={targetBlobs.Count}, FirstKey={targetBlobs.FirstOrDefault().Key}");
 
+        Console.Out.WriteLine($"Total files to upload: {fileCount}, Total Length: {totalLength} bytes, Block Size: {BlockSize} bytes, Threads: {ThreadCount}");
         await Helpers.ForEachAsync(ThreadCount, files, token, async (entry, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
@@ -163,7 +169,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             void printStatus(long length, string operation)
             {
                 var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
-                var completed = Interlocked.Add(ref completedBytes, fileLength);
+                var completed = Interlocked.Add(ref completedBytes, length);
                 var percent = (completed * 100) / totalLength;
                 var elapsed = watch.Elapsed;
                 var totalElapsed = totalWatch.Elapsed;
@@ -171,7 +177,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 var remainingBytes = totalLength - completed;
                 var estimatedSeconds = avgSpeed > 0 ? remainingBytes / avgSpeed : 0;
                 var eta = TimeSpan.FromSeconds(estimatedSeconds);
-                Console.WriteLine($"{logPrefix}: [{percent}% {totalLength} bytes (est {eta:g})] Completed {operation} in {watch.Elapsed}. Result = {result}");
+                Console.WriteLine($"{logPrefix}: [{completedFiles}/{fileCount} {percent}% {totalLength} bytes (est {eta:g})] Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
 
             try
@@ -234,7 +240,8 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             }
             finally
             {
-                printStatus(fileLength, operation);
+                Interlocked.Increment(ref completedFiles);
+                printStatus(0, operation);
             }
         });
 
