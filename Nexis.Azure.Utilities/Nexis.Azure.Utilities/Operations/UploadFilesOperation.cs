@@ -40,11 +40,18 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         var rootPath = File.Exists(LocalSourcePath) ? Path.GetDirectoryName(LocalSourcePath) : LocalSourcePath;
         rootPath = rootPath!.TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
 
+        var relativePath = RelativePath;
+        if (!string.IsNullOrEmpty(RelativePath) && File.Exists(LocalSourcePath))
+        {
+            relativePath = Path.GetDirectoryName(relativePath) ?? string.Empty;
+
+        }
+
         string getPath(string path)
         {
-            if (!string.IsNullOrEmpty(RelativePath))
+            if (!string.IsNullOrEmpty(relativePath))
             {
-                path = Path.Combine(RelativePath, path).Replace('\\', '/');
+                path = Path.Combine(relativePath, path).Replace('\\', '/');
             }
 
             return path;
@@ -52,7 +59,8 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
         var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
             .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
-            .ToDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f)
+            .ToImmutableSortedDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f, StringComparer.OrdinalIgnoreCase)
+            .ToBuilder()
             ;
 
         return files;
@@ -71,11 +79,6 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         Url targetRoot = Uri;
         if (!string.IsNullOrEmpty(RelativePath))
         {
-            if (File.Exists(LocalSourcePath))
-            {
-                RelativePath = Path.GetDirectoryName(RelativePath) ?? string.Empty;
-            }
-
             targetRoot = targetRoot.Combine(RelativePath.Replace('\\', '/'));
             Uri = targetRoot;
             Console.Out.WriteLine($"Target URI: {Uri}");
@@ -87,7 +90,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             .ToListAsync())
             .ToImmutableDictionary(b => b.Name);
 
-        foreach (var entry in files)
+        foreach (var entry in files.ToImmutableSortedDictionary(StringComparer.OrdinalIgnoreCase))
         {
             var path = entry.Key;
             var file = entry.Value;

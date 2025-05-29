@@ -30,11 +30,13 @@ public partial class CliTests : CliTestsBase
         //));
 
         var path = @"C:\mount\mediawus2\Media\TV Shows\Fall In Love {tmdb-130652}\tvshow.nfo";
-        var relativeUri = string.Join('/', Path.GetDirectoryName(path)!.Split('\\')[3..]);
+        var root = string.Join("\\", path.Split("\\")[..3]);
+        //var relativeUri = string.Join('/', Path.GetDirectoryName(path)!.Split('\\')[3..]);
         await Program.RunAsync(new Program.Args(
             "upload",
-            "--uri", ContainerUriWus.Combine(relativeUri),
-            "--path", path
+            "--uri", ContainerUriWus,//.Combine(relativeUri),
+            "--path", root,
+            "--relative", path
         //, "--expiry", "0"
         //, "--refresh-interval", "5d"
         ));
