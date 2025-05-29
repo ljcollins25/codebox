@@ -160,7 +160,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             var logPrefix = $"{GetName(path)}";
             string operation = "";
 
-            void printStatus(string s = "")
+            void printStatus(long length, string operation)
             {
                 var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
                 var completed = Interlocked.Add(ref completedBytes, fileLength);
@@ -171,7 +171,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 var remainingBytes = totalLength - completed;
                 var estimatedSeconds = avgSpeed > 0 ? remainingBytes / avgSpeed : 0;
                 var eta = TimeSpan.FromSeconds(estimatedSeconds);
-                Console.WriteLine($"{logPrefix}{s}: [{percent}% {totalLength} bytes (est {eta:g})] Completed {operation} in {watch.Elapsed}. Result = {result}");
+                Console.WriteLine($"{logPrefix}: [{percent}% {totalLength} bytes (est {eta:g})] Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
 
             try
@@ -205,7 +205,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
                         Interlocked.Add(ref copiedBytes, blockLength);
 
-                        printStatus($"({bid})");
+                        printStatus(blockLength, $"Uploaded block {bid}");
                         blocks.Add(blockName);
                     }
                 }
@@ -233,7 +233,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             }
             finally
             {
-                printStatus();
+                printStatus(fileLength, operation);
             }
         });
 
