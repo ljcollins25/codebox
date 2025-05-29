@@ -30,7 +30,9 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public string? RelativePath;
 
-    public long BlockSize = 1 << 27; // 128mb
+    public long BlockSizeMb = 128; // 128mb
+
+    public long BlockSize => BlockSizeMb << 20;
 
     public int ThreadCount = SingleThreaded ? 1 : 4;
 
@@ -158,6 +160,20 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             var logPrefix = $"{GetName(path)}";
             string operation = "";
 
+            void printStatus(string s = "")
+            {
+                var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
+                var completed = Interlocked.Add(ref completedBytes, fileLength);
+                var percent = (completed * 100) / totalLength;
+                var elapsed = watch.Elapsed;
+                var totalElapsed = totalWatch.Elapsed;
+                var avgSpeed = copiedBytes / totalElapsed.TotalSeconds;
+                var remainingBytes = totalLength - completed;
+                var estimatedSeconds = avgSpeed > 0 ? remainingBytes / avgSpeed : 0;
+                var eta = TimeSpan.FromSeconds(estimatedSeconds);
+                Console.WriteLine($"{logPrefix}{s}: [{percent}% {totalLength} bytes (est {eta:g})] Completed {operation} in {watch.Elapsed}. Result = {result}");
+            }
+
             try
             {
                 if (blobLastModifiedTime != null && blobLastModifiedTime >= fileLastModifiedTime)
@@ -176,6 +192,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                 {
                     for (long offset = 0; offset < fileLength; offset += BlockSize)
                     {
+                        var bid = blockId;
                         var blockName = operationTimestamp.ToBlockId(blockId++);
                         var blockLength = Math.Min(BlockSize, fileLength - offset);
                         segmentStream.Adjust(offset, blockLength);
@@ -188,6 +205,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
                         Interlocked.Add(ref copiedBytes, blockLength);
 
+                        printStatus($"({bid})");
                         blocks.Add(blockName);
                     }
                 }
@@ -215,16 +233,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             }
             finally
             {
-                var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
-                var completed = Interlocked.Add(ref completedBytes, fileLength);
-                var percent = (completed * 100) / totalLength;
-                var elapsed = watch.Elapsed;
-                var totalElapsed = totalWatch.Elapsed;
-                var avgSpeed = copiedBytes / totalElapsed.TotalSeconds;
-                var remainingBytes = totalLength - completed;
-                var estimatedSeconds = avgSpeed > 0 ? remainingBytes / avgSpeed : 0;
-                var eta = TimeSpan.FromSeconds(estimatedSeconds);
-                Console.WriteLine($"{logPrefix}: [{percent}% {totalLength} bytes (est {eta:g})] Completed {operation} in {watch.Elapsed}. Result = {result}");
+                printStatus();
             }
         });
 
