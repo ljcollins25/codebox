@@ -109,7 +109,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             var logPrefix = $"{GetName(path)}";
             if (blobLastModifiedTime != null && blobLastModifiedTime >= fileLastModifiedTime)
             {
-                var op = UpdateTimestamps ? "Updated" : "Skipping";
+                var op = UpdateTimestamps && blobLastModifiedTime != fileLastModifiedTime ? "Updated" : "Skipping";
                 try
                 {
                     var bc = targetBlobContainer.GetBlockBlobClient(blob!.Name);
