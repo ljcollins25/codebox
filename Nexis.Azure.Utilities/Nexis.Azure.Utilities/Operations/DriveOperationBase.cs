@@ -43,7 +43,7 @@ public class DriveOperationBase(IConsole Console, CancellationToken token)
         .Add("archive_version", "1")
         ;
 
-    public bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
+    public static bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
 
     protected BlobContainerClient GetTargetContainerAndPrefix(out string? prefix)
     {

@@ -29,6 +29,10 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public string RelativePath;
 
+    public long BlockSize = 1 << 27; // 128mb
+
+    public int ThreadCount = SingleThreaded ? 1 : 16;
+
     public IReadOnlyDictionary<string, FileInfo> GetFiles()
     {
         LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
@@ -45,6 +49,12 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public async Task<int> RunAsync()
     {
+        if (!string.IsNullOrEmpty(RelativePath) && RelativePath.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            // If RelativePath is a full path, we need to remove the LocalSourcePath prefix
+            RelativePath = RelativePath.Substring(LocalSourcePath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+
         var files = GetFiles();
 
         Url targetRoot = Uri;
@@ -57,6 +67,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             
             targetRoot = targetRoot.Combine(Uri.EscapeUriString(RelativePath.Replace('\\', '/')));
             Uri = targetRoot;
+            Console.Out.WriteLine($"Target URI: {Uri}");
         }
 
         BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
@@ -64,13 +75,17 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         var targetBlobs = FilterDirectories(await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
             .ToListAsync()).ToImmutableDictionary(b => b.Name);
 
+        Console.Out.WriteLine($"Target blobs Length={targetBlobs.Count}, FirstKey={targetBlobs.FirstOrDefault().Key}");
+
 
         Timestamp operationTimestamp = Timestamp.Now;
 
         var totalLength = files.Sum(f => f.Value.Length);
         var copiedBytes = 0L;
+        var completedBytes = 0L;
+        Stopwatch totalWatch = Stopwatch.StartNew();
 
-        await Helpers.ForEachAsync(SingleThreaded ? 1 : 4, files, token, async (entry, token) =>
+        await Helpers.ForEachAsync(ThreadCount, files, token, async (entry, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
             Exception? ex = null;
@@ -99,20 +114,18 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                     return;
                 }
 
-
                 operation = $"Copying Length = {fileLength}. Last Modified Time = {fileLastModifiedTime}. Blob Last Modified = {blobLastModifiedTime} ({blobMtime})";
                 // Copy content of file to blob store (block names should be sortable by order in blob)
-                const long MAX_BLOCK_SIZE = 1 << 28; // 256mb
                 var blocks = new List<string>();
                 int blockId = 0;
-                var blobClient = targetBlobContainer.GetBlockBlobClient(Helpers.UriCombine(prefix, path));
+                var blobClient = targetBlobContainer.GetBlockBlobClient(path);
                 using (var fileStream = File.Open(file.FullName, FileMode.Open))
                 using (var segmentStream = new StreamSegment(fileStream))
                 {
-                    for (long offset = 0; offset < fileLength; offset += MAX_BLOCK_SIZE)
+                    for (long offset = 0; offset < fileLength; offset += BlockSize)
                     {
                         var blockName = operationTimestamp.ToBlockId(blockId++);
-                        var blockLength = Math.Min(MAX_BLOCK_SIZE, fileLength - offset);
+                        var blockLength = Math.Min(BlockSize, fileLength - offset);
                         segmentStream.Adjust(offset, blockLength);
                         segmentStream.Position = 0;
                         await blobClient.StageBlockAsync(
@@ -120,6 +133,8 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                             content: segmentStream,
                             cancellationToken: token
                         );
+                        
+                        Interlocked.Add(ref copiedBytes, blockLength);
 
                         blocks.Add(blockName);
                     }
@@ -134,6 +149,14 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                     },
                     cancellationToken: token);
             }
+            catch (TaskCanceledException)
+            {
+                operation = "Operation was cancelled.";
+            }
+            catch (OperationCanceledException)
+            {
+                operation = "Operation was cancelled.";
+            }
             catch (Exception exception)
             {
                 ex = exception;
@@ -141,9 +164,15 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             finally
             {
                 var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
-                var completed = Interlocked.Add(ref copiedBytes, fileLength);
+                var completed = Interlocked.Add(ref completedBytes, fileLength);
                 var percent = (completed * 100) / totalLength;
-                Console.WriteLine($"{logPrefix}: [{percent}% {totalLength} bytes] Completed {operation} in {watch.Elapsed}. Result = {result}");
+                var elapsed = watch.Elapsed;
+                var totalElapsed = totalWatch.Elapsed;
+                var avgSpeed = copiedBytes / totalElapsed.TotalSeconds;
+                var remainingBytes = totalLength - completed;
+                var estimatedSeconds = avgSpeed > 0 ? remainingBytes / avgSpeed : 0;
+                var eta = TimeSpan.FromSeconds(estimatedSeconds);
+                Console.WriteLine($"{logPrefix}: [{percent}% {totalLength} bytes (est {eta:g})] Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
         });
 
