@@ -132,16 +132,17 @@ public class Program
                 new Command("upload", "Dehydrate Azure Files to Azure Blob Storage."),
                 m =>
                 {
-                    var result = new UploadFilesOperation(m.Console, cts.Token)
+                    var r = new UploadFilesOperation(m.Console, cts.Token)
                     {
                         Uri = m.Option(c => ref c.Uri, name: "uri", description: "Container sas directory uri", required: true, aliases: ["container-uri"]),
                         LocalSourcePath = m.Option(c => ref c.LocalSourcePath, "path", "Source file/directory path", required: true)
                     };
 
-                    m.Option(c => ref c.UpdateTimestamps, name: "timestamps", description: "Update timestamps.", defaultValue: false);
+                    m.Option(c => ref c.ThreadCount, name: "threads", description: "The thread count", defaultValue: r.ThreadCount);
+                    m.Option(c => ref c.UpdateTimestamps, name: "timestamps", description: "Update timestamps.", defaultValue: r.UpdateTimestamps);
                     m.Option(c => ref c.RelativePath, name: "relative-path", description: "Relative path to upload files from", aliases: ["relative", "rel"]);
 
-                    return result;
+                    return r;
                 },
                 r => r.RunAsync()),
 
