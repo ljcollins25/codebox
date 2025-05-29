@@ -33,7 +33,7 @@ public partial class CliTests : CliTestsBase
         var relativeUri = string.Join('/', Path.GetDirectoryName(path)!.Split('\\')[3..]);
         await Program.RunAsync(new Program.Args(
             "upload",
-            "--uri", ContainerUriJpe.Combine(relativeUri),
+            "--uri", ContainerUriWus.Combine(relativeUri),
             "--path", path
         //, "--expiry", "0"
         //, "--refresh-interval", "5d"

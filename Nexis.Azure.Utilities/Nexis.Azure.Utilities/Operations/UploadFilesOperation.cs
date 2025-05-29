@@ -7,6 +7,7 @@ using System.CommandLine.IO;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.ContractsLight;
+using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection.Metadata;
@@ -31,17 +32,27 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public long BlockSize = 1 << 27; // 128mb
 
-    public int ThreadCount = SingleThreaded ? 1 : 16;
+    public int ThreadCount = SingleThreaded ? 1 : 4;
 
-    public IReadOnlyDictionary<string, FileInfo> GetFiles()
+    public IDictionary<string, FileInfo> GetFiles()
     {
         LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
         var rootPath = File.Exists(LocalSourcePath) ? Path.GetDirectoryName(LocalSourcePath) : LocalSourcePath;
         rootPath = rootPath!.TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
 
+        string getPath(string path)
+        {
+            if (!string.IsNullOrEmpty(RelativePath))
+            {
+                path = Path.Combine(RelativePath, path).Replace('\\', '/');
+            }
+
+            return path;
+        }
+
         var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
             .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
-            .ToImmutableSortedDictionary(f => f.FullName.Substring(rootPath.Length).Replace('\\', '/'), f => f)
+            .ToDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f)
             ;
 
         return files;
@@ -64,8 +75,8 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             {
                 RelativePath = Path.GetDirectoryName(RelativePath) ?? string.Empty;
             }
-            
-            targetRoot = targetRoot.Combine(Uri.EscapeUriString(RelativePath.Replace('\\', '/')));
+
+            targetRoot = targetRoot.Combine(RelativePath.Replace('\\', '/'));
             Uri = targetRoot;
             Console.Out.WriteLine($"Target URI: {Uri}");
         }
@@ -73,7 +84,28 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
 
         var targetBlobs = FilterDirectories(await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
-            .ToListAsync()).ToImmutableDictionary(b => b.Name);
+            .ToListAsync())
+            .ToImmutableDictionary(b => b.Name);
+
+        foreach (var entry in files)
+        {
+            var path = entry.Key;
+            var file = entry.Value;
+            Timestamp fileLastModifiedTime = file.LastWriteTimeUtc;
+            var fileLength = file.Length;
+            var blob = targetBlobs.GetValueOrDefault(path);
+
+            var blobMtime = blob?.Metadata()?.ValueOrDefault<string, string>(Strings.mtime_metadata);
+            Timestamp? blobLastModifiedTime = blobMtime
+                ?? (Timestamp?)blob?.Properties.LastModified;
+
+            var logPrefix = $"{GetName(path)}";
+            if (blobLastModifiedTime != null && blobLastModifiedTime >= fileLastModifiedTime)
+            {
+                Console.WriteLine($"{logPrefix}: Skipping blob last modified time ({blobLastModifiedTime}) >= ({fileLastModifiedTime}) file last modified time");
+                files.Remove(path);
+            }
+        }
 
         Console.Out.WriteLine($"Target blobs Length={targetBlobs.Count}, FirstKey={targetBlobs.FirstOrDefault().Key}");
 
@@ -90,10 +122,6 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             Stopwatch watch = Stopwatch.StartNew();
             Exception? ex = null;
             var path = entry.Key;
-            if (!string.IsNullOrEmpty(RelativePath))
-            {
-                path = Path.Combine(RelativePath, path).Replace('\\', '/');
-            }
             var file = entry.Value;
             Timestamp fileLastModifiedTime = file.LastWriteTimeUtc;
             var fileLength = file.Length;
@@ -108,7 +136,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
             try
             {
-                if (blobLastModifiedTime !=  null && blobLastModifiedTime >= fileLastModifiedTime)
+                if (blobLastModifiedTime != null && blobLastModifiedTime >= fileLastModifiedTime)
                 {
                     operation = $"Skipping blob last modified time ({blobLastModifiedTime}) >= ({fileLastModifiedTime}) file last modified time";
                     return;
@@ -133,7 +161,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
                             content: segmentStream,
                             cancellationToken: token
                         );
-                        
+
                         Interlocked.Add(ref copiedBytes, blockLength);
 
                         blocks.Add(blockName);

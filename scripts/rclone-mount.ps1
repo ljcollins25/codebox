@@ -6,6 +6,8 @@ param (
     [string[]]$ExtraArgs
 )
 
+mkdir "C:\mount\$Name"
+
 & rclone mount "${Name}:media\" "C:\mount\$Name" `
     --network-mode `
     --vfs-cache-mode full `

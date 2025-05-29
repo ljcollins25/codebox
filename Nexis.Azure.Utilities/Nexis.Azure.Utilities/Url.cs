@@ -1,4 +1,6 @@
-﻿namespace Nexis.Azure.Utilities;
+﻿using System.Threading.Tasks.Dataflow;
+
+namespace Nexis.Azure.Utilities;
 
 #nullable disable
 
@@ -10,8 +12,10 @@ public readonly struct Url(Uri uri, string uriString)
         .FluidSelect(static s => new Uri(s).FluidSelect(u => u.IsAbsoluteUri ? u : new Uri("file://" + s)));
     public string UriString => uriString ?? uri?.ToString();
 
-    public UriBuilder UriBuilder => uri?.FluidSelect(static u => new UriBuilder(u))
-        ?? uriString?.FluidSelect(static s => new UriBuilder(s));
+    public UriBuilder UriBuilder => Uri.FluidSelect(static u => new UriBuilder(u)
+    {
+        Port = u.IsDefaultPort ? -1 : u.Port
+    });
 
     public static implicit operator Uri(Url u) => u.Uri;
     public static implicit operator UriBuilder(Url u) => new(u.Uri);
@@ -24,7 +28,7 @@ public readonly struct Url(Uri uri, string uriString)
     {
         UriBuilder builder = this;
         builder.Path = UriCombine(builder.Path, relativeUri);
-        return builder.Uri;
+        return new Uri(builder.ToString());
     }
 
     public override string ToString()
