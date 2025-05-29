@@ -138,6 +138,7 @@ public class Program
                         LocalSourcePath = m.Option(c => ref c.LocalSourcePath, "path", "Source file/directory path", required: true)
                     };
 
+                    m.Option(c => ref c.UpdateTimestamps, name: "timestamps", description: "Update timestamps.", defaultValue: false);
                     m.Option(c => ref c.RelativePath, name: "relative-path", description: "Relative path to upload files from", aliases: ["relative", "rel"]);
 
                     return result;

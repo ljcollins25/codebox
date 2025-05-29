@@ -25,6 +25,20 @@ public static class Helpers
     public static readonly Regex VariableSeparatorPattern = new Regex(@"[\._\-]");
     public static readonly Regex VariablePattern = new Regex(@"\$\(([\w\._\-]+)\)");
 
+    internal static class Strings
+    {
+        public const string tagPrefix = "ghostd_";
+        public const string last_refresh_time = $"{tagPrefix}refresh_time";
+        public const string last_access = $"{tagPrefix}last_access";
+        public const string snapshot = $"{tagPrefix}snapshot";
+        public const string state = $"{tagPrefix}state";
+        public const string block_prefix = $"{tagPrefix}block_prefix";
+        public const string size = $"{tagPrefix}size";
+        public const string dirty_time = $"{tagPrefix}dirty_time";
+        public const string dir_metadata = "hdi_isfolder";
+        public const string mtime_metadata = "mtime";
+    }
+
     public static Guid GenerateGuidFromString(string input)
     {
         // Use SHA-1 to hash the input string
@@ -63,6 +77,12 @@ public static class Helpers
         }
 
         return path;
+    }
+
+    public static Timestamp? GetFileLastModifiedTime(this BlobItem blobItem)
+    {
+        return blobItem.Metadata()!.ValueOrDefault(Strings.mtime_metadata)
+            ?? (Timestamp?)blobItem.Properties.LastModified;
     }
 
     public static ShareFileHttpHeaders ToHttpHeaders(this ShareFileProperties properties)

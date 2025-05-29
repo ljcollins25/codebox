@@ -179,8 +179,9 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                         base64BlockIds: blocksToCommit.Select(b => b.Name),
                         options: new CommitBlockListOptions()
                         {
-                            Tags = GetStrippedTags(readTags, BlobState.active),
+                            Tags = RemoveCustomKeys(readTags, BlobState.active),
                             Conditions = conditions,
+                            Metadata = blob.Metadata,
                             //HttpHeaders = headers
                         },
                         cancellationToken: token);
@@ -203,7 +204,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                 var snapshotLength = await snapshotClient.GetPropertiesAsync(cancellationToken: token).ThenAsync(r => r.Value.ContentLength);
                 fileSize = snapshotLength;
 
-                var tags = GetStrippedTags(readTags, BlobState.transitioning)
+                var tags = RemoveCustomKeys(readTags, BlobState.transitioning)
                     .SetItem(Strings.size, snapshotLength.ToString())
                     .SetItem(Strings.block_prefix, operationTimestamp.ToBlockIdPrefix())
                     .SetItem(Strings.snapshot, snapshotId);
@@ -213,6 +214,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                 {
                     Tags = tags,
                     Conditions = conditions,
+                    Metadata = blob.Metadata
                     //HttpHeaders = headers
                 },
                 cancellationToken: token);
@@ -238,7 +240,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                     blocks.Add(blockName);
                 }
 
-                tags = GetStrippedTags(readTags, BlobState.ghost)
+                tags = RemoveCustomKeys(readTags, BlobState.ghost)
                     .SetItem(Strings.block_prefix, operationTimestamp.ToBlockIdPrefix())
                     .SetItem(Strings.size, snapshotLength.ToString())
                     .SetItem(Strings.last_refresh_time, Timestamp.Now);

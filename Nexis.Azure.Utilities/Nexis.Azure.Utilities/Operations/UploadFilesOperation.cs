@@ -34,6 +34,8 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public int ThreadCount = SingleThreaded ? 1 : 4;
 
+    public bool UpdateTimestamps = false;
+
     public IDictionary<string, FileInfo> GetFiles()
     {
         LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
@@ -90,7 +92,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             .ToListAsync())
             .ToImmutableDictionary(b => b.Name);
 
-        foreach (var entry in files.ToImmutableSortedDictionary(StringComparer.OrdinalIgnoreCase))
+        await Helpers.ForEachAsync(ThreadCount, files.ToImmutableSortedDictionary(StringComparer.OrdinalIgnoreCase), token, async (entry, token) =>
         {
             var path = entry.Key;
             var file = entry.Value;
@@ -105,10 +107,29 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             var logPrefix = $"{GetName(path)}";
             if (blobLastModifiedTime != null && blobLastModifiedTime >= fileLastModifiedTime)
             {
-                Console.WriteLine($"{logPrefix}: Skipping blob last modified time ({blobLastModifiedTime}) >= ({fileLastModifiedTime}) file last modified time");
-                files.Remove(path);
+                var op = UpdateTimestamps ? "Updated" : "Skipping";
+                try
+                {
+                    var bc = targetBlobContainer.GetBlockBlobClient(blob!.Name);
+                    await bc.SetMetadataAsync(blob.Metadata().ToImmutableDictionary()
+                            .SetItem(Strings.mtime_metadata, fileLastModifiedTime),
+                        new BlobRequestConditions()
+                        {
+                            IfMatch = blob.Properties.ETag
+                        },
+                        cancellationToken: token);
+                }
+                catch (Exception ex)
+                {
+                    op = $"Failed\n{ex}\n";
+                }
+                Console.WriteLine($"{logPrefix}: {op} blob last modified time ({blobLastModifiedTime}) >= ({fileLastModifiedTime}) file last modified time");
+                lock (targetBlobs)
+                {
+                    files.Remove(path);
+                }
             }
-        }
+        });
 
         Console.Out.WriteLine($"Target blobs Length={targetBlobs.Count}, FirstKey={targetBlobs.FirstOrDefault().Key}");
 

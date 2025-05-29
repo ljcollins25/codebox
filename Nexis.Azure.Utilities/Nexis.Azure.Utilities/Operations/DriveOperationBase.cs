@@ -23,19 +23,6 @@ namespace Nexis.Azure.Utilities;
 
 public class DriveOperationBase(IConsole Console, CancellationToken token)
 {
-    protected static class Strings
-    {
-        public const string tagPrefix = "ghostd_";
-        public const string last_refresh_time = $"{tagPrefix}refresh_time";
-        public const string last_access = $"{tagPrefix}last_access";
-        public const string snapshot = $"{tagPrefix}snapshot";
-        public const string state = $"{tagPrefix}state";
-        public const string block_prefix = $"{tagPrefix}block_prefix";
-        public const string size = $"{tagPrefix}size";
-        public const string dirty_time = $"{tagPrefix}dirty_time";
-        public const string dir_metadata = "hdi_isfolder";
-        public const string mtime_metadata = "mtime";
-    }
 
     public required Uri Uri;
 
@@ -69,7 +56,7 @@ public class DriveOperationBase(IConsole Console, CancellationToken token)
         active
     }
 
-    protected static ImmutableDictionary<string, string> GetStrippedTags(
+    protected static ImmutableDictionary<string, string> RemoveCustomKeys(
         IEnumerable<KeyValuePair<string, string>> source,
         BlobState state)
     {
