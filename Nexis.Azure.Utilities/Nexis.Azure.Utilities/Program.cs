@@ -139,7 +139,7 @@ public class Program
                     };
 
                     m.Option(c => ref c.ThreadCount, name: "threads", description: "The thread count", defaultValue: r.ThreadCount);
-                    m.Option(c => ref c.BlockSize, name: "block-size-mb", description: "The thread count", defaultValue: r.ThreadCount);
+                    m.Option(c => ref c.BlockSizeMb, name: "block-size-mb", description: "The block size (in mb)", defaultValue: r.BlockSizeMb);
                     m.Option(c => ref c.UpdateTimestamps, name: "timestamps", description: "Update timestamps.", defaultValue: r.UpdateTimestamps);
                     m.Option(c => ref c.RelativePath, name: "relative-path", description: "Relative path to upload files from", aliases: ["relative", "rel"]);
 
