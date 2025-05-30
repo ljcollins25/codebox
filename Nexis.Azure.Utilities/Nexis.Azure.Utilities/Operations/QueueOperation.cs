@@ -32,6 +32,31 @@ public class QueueOperation(IConsole Console, CancellationToken token) : DriveOp
         Get
     }
 
+    public enum Stages
+    {
+        Convert,
+
+        // Extract audio and split into separate audio files
+        // Wrap audio files in video container with blank video stream
+        Split,
+
+        // Upload video-wrapped audio to HeyGen using Playwright
+        Translate,
+
+        // Download translated video-wrapped audio
+        // Download translated ass files
+        Download,
+
+        // Transform ass files into sub files
+        // Merge sub files
+        SubMerge,
+
+        // Extract audio
+        // Merge into single audio file
+        // ? Delete entries in HeyGen
+        AudioMerge
+    }
+
     public required Modes Mode;
 
     public required string LocalSourcePath;
