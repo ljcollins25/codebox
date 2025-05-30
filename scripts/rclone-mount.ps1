@@ -6,10 +6,9 @@ param (
     [string[]]$ExtraArgs
 )
 
-mkdir "C:\mount\$Name"
+cmd /C mkdir "C:\mount"
 
 & rclone mount "${Name}:media\" "C:\mount\$Name" `
-    --network-mode `
     --vfs-cache-mode full `
     --vfs-cache-max-size 10G `
     --vfs-cache-max-age 24h `

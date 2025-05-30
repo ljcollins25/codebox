@@ -1,0 +1,36 @@
+
+"mp4" => "6D7034"
+"mkv" => "6D6B76"
+"aac" => "616163"
+"mp3" => "6D7033"
+
+Transfer video to storage
+root\video1\video.mp4
+
+Split audio tracks (and video wrap)
+root\video1\svwa\0.mp3.mp4
+root\video1\svwa\1.mp3.mp4
+
+Convert video
+root\video1\conv\video.mp4
+
+Download translated audio (video wrapped) [dev\local]
+root\video1\tss\0.jpn.mp3.ass
+root\video1\tss\1.jpn.mp3.ass
+root\video1\tss\2.jpn.mp3.ass
+
+root\video1\tvwa\0.jpn.mp3.mp4
+root\video1\tvwa\1.jpn.mp3.mp4
+root\video1\tvwa\2.jpn.mp3.mp4
+
+Unwrap audio
+root\video1\tsa\0.jpn.mp3
+root\video1\tsa\1.jpn.mp3
+root\video1\tsa\2.jpn.mp3
+
+Merge audio
+root\ta\video1\jpn.mp3
+
+
+
+https://files2.heygen.ai/video_translate/62fc98e7212e4013b3707f2483ec1965/caption.ass?Expires=1749184585&Signature=lD39DRSDhB8Pgd8rFKViRW6jhsSe9AhjDgWHBUYQHryjuiYhRf5wgjiCPFh9mWgDV5LwKMKZhU1L08LgzzfeuFeiZwEyCaMCfbEK7aahjoIqO2zauVzgJIJVIHgRKRRSFCmdU8OGvrZh2MDS0bFT11JDy3JK8NJ9Zp923zXcGsZD~LPbiS-IyA7zhgiAP7cFIDCFqiDTgHB8PXXPdHK2uOFl44EjrO~986qjrSf8uHTVfN5biaew8B8WApM2bEm~q1aQAfyruj3VukQqzoyP-btMiL4LGUt-opQWRrGvJ1JGgAyu2j4W3YASvMEkbayD51JpPkEJirr-C33xloiGYw__&Key-Pair-Id=K38HBHX5LX3X2H

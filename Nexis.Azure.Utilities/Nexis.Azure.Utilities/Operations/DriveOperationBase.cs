@@ -23,7 +23,6 @@ namespace Nexis.Azure.Utilities;
 
 public class DriveOperationBase(IConsole Console, CancellationToken token)
 {
-
     public required Uri Uri;
 
     protected static ImmutableDictionary<string, string> BaseTags = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase)

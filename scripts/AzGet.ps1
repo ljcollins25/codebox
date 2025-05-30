@@ -35,12 +35,12 @@ if (-not (Test-Path $azcopyExe)) {
 
     Write-Host "AzCopy downloaded to: $azcopyExe"
 } else {
-    Write-Host "azcopy.exe already present."
+    Write-Host "azcopy.exea already present."
 }
 
 # --- Step 2: Perform azcopy login (browser prompt) ---
-Write-Host "Logging into Azure via AzCopy (browser window will open)..."
-& $azcopyExe login
+Write-Host "Logging into Azure via AzCopy (browser window will open )..."
+& $azcopyExe login --tenant-id 71da4e6c-2f14-4d2f-84c4-9b7af4c3c867
 if ($LASTEXITCODE -ne 0) {
     Write-Error "azcopy login failed."
     exit 1
