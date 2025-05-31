@@ -25,7 +25,7 @@ using Microsoft.Playwright;
 
 namespace Nexis.Azure.Utilities;
 
-public record class GetAudioSegments(IConsole Console, CancellationToken token)
+public record class SplitAudio(IConsole Console, CancellationToken token)
 {
     public required string VideoFile;
 

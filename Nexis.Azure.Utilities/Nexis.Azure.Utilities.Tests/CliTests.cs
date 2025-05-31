@@ -38,7 +38,7 @@ public partial class CliTests : TestBase
     [Fact]
     public async Task TestSplit()
     {
-        var op = new GetAudioSegments(TestConsole, Token)
+        var op = new SplitAudio(TestConsole, Token)
         {
             VideoFile = @"C:\mount\mediawus2\Media\TV Shows\Fall In Love {tmdb-130652}\Season 01\Fall In Love - S01E01 - Episode 1.mp4",
             OutputFolder = @"C:\mount\outputs\stage"
