@@ -12,6 +12,8 @@ using System.Text.RegularExpressions;
 using Azure;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.Shares.Models;
+using CliWrap;
+using Command = System.CommandLine.Command;
 
 namespace Nexis.Azure.Utilities;
 
@@ -37,6 +39,16 @@ public static class Helpers
         public const string dirty_time = $"{tagPrefix}dirty_time";
         public const string dir_metadata = "hdi_isfolder";
         public const string mtime_metadata = "mtime";
+    }
+
+    public static async Task<int> ExecAsync(string processName, params string[] args)
+    {
+        var cmd = Cli.Wrap(processName)
+            .WithArguments(args);
+
+        var result = await cmd.ExecuteAsync();
+
+        return result.ExitCode;
     }
 
     public static string GetDownloadTranslationTargetPath(string targetFolder, LanguageCode language, FileType type)
