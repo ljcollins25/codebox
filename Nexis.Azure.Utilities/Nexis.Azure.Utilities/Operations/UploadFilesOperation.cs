@@ -48,7 +48,6 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         if (!string.IsNullOrEmpty(RelativePath) && File.Exists(LocalSourcePath))
         {
             relativePath = Path.GetDirectoryName(relativePath) ?? string.Empty;
-
         }
 
         string getPath(string path)

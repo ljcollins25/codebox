@@ -9,15 +9,31 @@ using FluentAssertions;
 namespace Nexis.Azure.Utilities.Tests;
 
 
-public abstract partial class CliTestsBase
+public abstract partial class TestBase
 {
     public virtual Url ContainerUriWus2 { get; }
     public virtual Url ContainerUriWus { get; }
     public virtual Url ContainerUriJpe { get; }
+
+    public IConsole TestConsole { get; } = new SystemConsole();
+
+    public CancellationToken Token { get; } = CancellationToken.None; 
 }
 
-public partial class CliTests : CliTestsBase
+public partial class CliTests : TestBase
 {
+    [Fact]
+    public async Task TestTranslate()
+    {
+        var op = new TranslateOperation(TestConsole, Token)
+        {
+            AudioFile = @"C:\mount\YellowBoots.S01E72.trimmed-6e40ab2a-000.mp4",
+            Languages = [eng, jpn, zho]
+        };
+
+        await op.RunAsync();
+    }
+
     [Fact]
     public async Task TestHelp()
     {
