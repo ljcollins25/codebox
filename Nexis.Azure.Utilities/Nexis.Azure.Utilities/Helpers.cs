@@ -52,6 +52,8 @@ public static class Helpers
         return result.ExitCode;
     }
 
+    public static string[] SplitArgs(this string args) => CommandLineStringSplitter.Instance.Split(args).ToArray();
+
     public static string GetDownloadTranslationTargetPath(string targetFolder, LanguageCode language, FileType type)
         => Path.Combine(targetFolder, $"{language}.audio.{type}");
 

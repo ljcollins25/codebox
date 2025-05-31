@@ -49,6 +49,19 @@ public partial class CliTests : TestBase
 
 
     [Fact]
+    public async Task TestMergeAudio()
+    {
+        var op = new MergeAudio(TestConsole, Token)
+        {
+            OutputAudioFile = @"C:\mount\outputs\stage\merge.m4a",
+            InputFolder = @"C:\mount\outputs\stage"
+        };
+
+        await op.RunAsync();
+    }
+
+
+    [Fact]
     public async Task TestDownload()
     {
         var op = new DownloadTranslation(TestConsole, Token)
