@@ -8,6 +8,14 @@ public enum LanguageCode
     zho,
 }
 
+public enum FileType
+{
+    mp4,
+    mkv,
+    srt,
+    ass
+}
+
 public static class LanguageCodeExtensions
 {
     public static string ToDisplayName(this LanguageCode languageCode)

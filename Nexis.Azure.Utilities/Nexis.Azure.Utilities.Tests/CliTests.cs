@@ -34,6 +34,20 @@ public partial class CliTests : TestBase
         await op.RunAsync();
     }
 
+
+    [Fact]
+    public async Task TestDownload()
+    {
+        var op = new DownloadTranslation(TestConsole, Token)
+        {
+            VideoId = "c4962cbfda574318817cdae2dad4d661",
+            TargetFolder = @"C:\mount\outputs\YellowBoots.S01E72.1",
+            Language = eng
+        };
+
+        await op.RunAsync();
+    }
+
     [Fact]
     public async Task TestHelp()
     {

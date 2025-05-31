@@ -39,6 +39,9 @@ public static class Helpers
         public const string mtime_metadata = "mtime";
     }
 
+    public static string GetDownloadTranslationTargetPath(string targetFolder, LanguageCode language, FileType type)
+        => Path.Combine(targetFolder, $"{language}.audio.{type}");
+
     public static Guid GenerateGuidFromString(string input)
     {
         // Use SHA-1 to hash the input string
@@ -213,6 +216,16 @@ public static class Helpers
         return selector(c);
     }
 
+    public static ValueTask<T> AsValueTask<T>(this Task<T> task) => new(task);
+
+    public static async IAsyncEnumerable<T> AsAsyncEnumerable<T>(this Task<IReadOnlyList<T>> listTask)
+    {
+        var list = await listTask;
+        foreach (var item in list)
+        {
+            yield return item;
+        }
+    }
 
     public static Timestamp GetLastWriteTimestamp(this ShareFileItem file)
     {
