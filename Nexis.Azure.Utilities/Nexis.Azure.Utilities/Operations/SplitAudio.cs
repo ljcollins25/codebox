@@ -49,13 +49,14 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
 
         string tempAudioPattern = Path.Combine(intermediateFolder, $"[[{OperationId:n}]].audio-%03d.{audioExt}");
 
+        var duration = ((int)SegmentDuration.TotalSeconds).ToString();
         var result = await ExecAsync("ffmpeg",
         [
             "-i", VideoFile,
             "-f", "segment",
-            "-segment_time", ((int)SegmentDuration.TotalSeconds).ToString(),
+            "-segment_time", duration,
             "-vn",
-            "-acodec", "aac",
+            "-c:a", "copy",
             tempAudioPattern
         ]);
 
@@ -63,11 +64,12 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
 
         foreach (var audioFile in audioFiles)
         {
-            var videoWrappedAudioFile = audioFile + ".mp4";
+
+            var videoWrappedAudioFile = Path.Combine(OutputFolder, Path.GetFileName(audioFile) + ".mp4");
             await ExecAsync("ffmpeg",
             [
                 "-f", "lavfi",
-                "-i", $"color=size={VideoSize}:rate=30:duration={SegmentDuration}",
+                "-i", $"color=size={VideoSize}:rate=30:duration={duration}",
                 "-i", audioFile,
                 "-map", "1:a",
                 "-map", "0:v",

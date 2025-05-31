@@ -44,7 +44,8 @@ public static class Helpers
     public static async Task<int> ExecAsync(string processName, params string[] args)
     {
         var cmd = Cli.Wrap(processName)
-            .WithArguments(args);
+            .WithArguments(args)
+            .WithValidation(CommandResultValidation.ZeroExitCode);
 
         var result = await cmd.ExecuteAsync();
 
