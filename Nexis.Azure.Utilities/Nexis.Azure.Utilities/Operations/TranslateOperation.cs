@@ -35,7 +35,7 @@ public record class TranslateOperation(IConsole Console, CancellationToken token
 
     public required string AudioFile;
 
-    public string GdrivePath;
+    public string? GdrivePath;
 
     public bool DryRun = false;
 

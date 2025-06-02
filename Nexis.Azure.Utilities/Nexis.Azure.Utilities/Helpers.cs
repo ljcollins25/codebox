@@ -64,7 +64,7 @@ public static class Helpers
         return enumerate();
     }
 
-    public static string PrepPath(string root, string relative)
+    public static string CreateDirectoryForFile(string root, string relative  = "")
     {
         var path = Path.Combine(root, relative);
         EnsureParentDirectory(path);
@@ -93,7 +93,7 @@ public static class Helpers
         }
     }
 
-    public static string UriCombine(string? baseUri, string relativeUri)
+    public static string UriCombine(this string? baseUri, string relativeUri)
     {
         baseUri ??= "";
         string path;

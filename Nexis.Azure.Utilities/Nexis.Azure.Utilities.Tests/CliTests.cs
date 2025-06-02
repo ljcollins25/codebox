@@ -44,10 +44,11 @@ public partial class CliTests : TestBase
     {
         var op = new TransformFiles(TestConsole, Token)
         {
+            UploadUri = ContainerUriJpe,
             LocalSourcePath = @"C:\mount\mediawus2",
             RelativePath = @"C:\mount\mediawus2\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01\Dear Heaven - S01E01 - Episode 1.mp4",
             CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
-            GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}.mp4",
+            GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
             Languages = [eng, jpn, zho],
             OutputRoot = @"C:\mount\outputs",
 

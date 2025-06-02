@@ -42,7 +42,9 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
     public required string RelativePath;
 
-    public string GdrivePath;
+    public string? GdrivePath;
+
+    public Uri? UploadUri;
 
     public static bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
 
@@ -68,7 +70,6 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         if (!string.IsNullOrEmpty(RelativePath) && File.Exists(LocalSourcePath))
         {
             relativePath = Path.GetDirectoryName(relativePath) ?? string.Empty;
-
         }
 
         string getPath(string path)
@@ -127,12 +128,20 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
         var files = GetFiles();
 
+        if (UploadUri == null)
+        {
+            RunStages.Remove(Stages.upload);
+        }
+
         var entries = files.Select(e =>
         {
             var sourceVid = e.Value.FullName;
             var entry = new FileEntry(sourceVid, e.Key, sourceVid, sourceVid, Guid.NewGuid());
             return entry;
         }).ToAsyncEnumerable();
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var translationCompletions = WaitForTranslationsAsync(cts);
 
         await RunPipeline(
             entries,
@@ -147,92 +156,85 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
                 await splitter.RunAsync();
             }),
-            )
-
-        var splits = RunStageAsync("split", ThreadCount, entries, async (entry, token) =>
-        {
-            var splitter = new SplitAudio(Console, token)
+            i => RunStageAsync(Stages.translate, 1, i, async (entry, token) =>
             {
-                VideoFile = entry.Origin,
-                OutputFolder = entry.Target,
-                OperationId = entry.OperationId
-            };
-
-            await splitter.RunAsync();
-        });
-
-        var translations = RunStageAsync("translate", 1, splits, async (entry, token) =>
-        {
-            var videoWrappedAudioFiles = Directory.GetFiles(entry.Source, "*.mp4");
-            entry.SegmentCount = videoWrappedAudioFiles.Length;
-            foreach (var audioFile in videoWrappedAudioFiles)
-            {
-                var op = new TranslateOperation(Console, token)
+                var videoWrappedAudioFiles = Directory.GetFiles(entry.Source, "*.mp4");
+                entry.SegmentCount = videoWrappedAudioFiles.Length;
+                int index = 0;
+                foreach (var audioFile in videoWrappedAudioFiles)
                 {
-                    AudioFile = audioFile,
-                    GdrivePath = GdrivePath,
-                    Languages = Languages,
-                };
+                    var op = new TranslateOperation(Console, token)
+                    {
+                        AudioFile = audioFile,
+                        GdrivePath = GdrivePath?.UriCombine($"{entry.OperationId:n}-{index++}{Path.GetExtension(audioFile)}"),
+                        Languages = Languages,
+                    };
 
-                await op.RunAsync();
-            }
-        });
-
-        var translationsByLanguage = translations.SelectMany(f => Languages.Select(l => f with { Language = l }).ToAsyncEnumerable());
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var translationCompletions = WaitForTranslationsAsync(cts);
-
-        await RunPipeline(
-            i => )
-
-        var downloads = RunStageAsync("download", 1, translationsByLanguage, async (entry, token) =>
-        {
-            // Wait for translations to complete
-            Contract.Assert(entry.SegmentCount.HasValue);
-            var pending = AddPending(entry.OperationId, entry.Language.Value);
-            pending.FileEntry = entry;
-            pending.CompleteIfReady();
-
-            await Task.WhenAny(pending.Completion.Task, Task.Delay(Timeout.InfiniteTimeSpan, cts.Token)).Unwrap();
-
-            var videoIdFiles = Directory.GetFiles(pending.OutputFolder, "*.json");
-            foreach (var videoIdFile in videoIdFiles)
-            {
-                var record = TranslationRecord.ReadFromFile(videoIdFile);
-                var language = record.GetLanguageCode();
-                var op = new DownloadTranslation(Console, token)
-                {
-                    VideoId = record.event_data.video_translate_id,
-                    TargetFolder = entry.Target,
-                    BaseName = record.FileName,
-                    Language = language,
-                    Delete = true
-                };
-
-                if (Exists(op.SubFile) && Exists(op.VideoFile))
-                {
-                    continue;
+                    await op.RunAsync();
                 }
+            }),
+            i => i.SelectMany(f => Languages.Select(l => f with { Language = l }).ToAsyncEnumerable()),
+
+            i => RunStageAsync(Stages.download, 1, i, async (entry, token) =>
+            {
+                // Wait for translations to complete
+                Contract.Assert(entry.SegmentCount.HasValue);
+                var pending = AddPending(entry.OperationId, entry.Language!.Value);
+                pending.FileEntry = entry;
+                pending.CompleteIfReady();
+
+                await Task.WhenAny(pending.Completion.Task, Task.Delay(Timeout.InfiniteTimeSpan, cts.Token)).Unwrap();
+
+                var videoIdFiles = Directory.GetFiles(pending.OutputFolder, "*.json");
+                foreach (var videoIdFile in videoIdFiles)
+                {
+                    var record = TranslationRecord.ReadFromFile(videoIdFile);
+                    var language = record.GetLanguageCode();
+                    var op = new DownloadTranslation(Console, token)
+                    {
+                        VideoId = record.event_data.video_translate_id,
+                        TargetFolder = entry.Target,
+                        BaseName = record.FileName,
+                        Language = language,
+                        Delete = true
+                    };
+
+                    if (Exists(op.SubFile) && Exists(op.VideoFile))
+                    {
+                        continue;
+                    }
+
+                    await op.RunAsync();
+                }
+            },
+            endSignal: cts),
+            i => RunStageAsync(Stages.output, 1, i, async (entry, token) =>
+            {
+                var op = new MergeAudio(Console, token)
+                {
+                    InputFolder = entry.Source,
+                    OutputAudioFile = entry.Target.Replace(".mp4", "") + ".ogg",
+                };
 
                 await op.RunAsync();
-            }
-        },
-        endSignal: cts);
-
-        var outputs = RunStageAsync("output", 1, downloads, async (entry, token) =>
-        {
-            var op = new MergeAudio(Console, token)
+            }),
+            i => RunStageAsync(Stages.upload, ThreadCount, i, async (entry, token) =>
             {
-                InputFolder = entry.Source,
-                OutputAudioFile = entry.Target.Replace(".mp4", "") + ".ogg",
-            };
+                var op = new UploadFilesOperation(Console, token)
+                {
+                    Force = true,
+                    RequiredInfixes = [ $".{entry.Language!.Value}." ],
+                    LocalSourcePath = GetStageRoot(Stages.output),
+                    ThreadCount = 1,
+                    RelativePath = Path.GetDirectoryName(entry.Source)!,
+                    Uri = UploadUri!,
+                    ExcludedExtensions = [".marker"],
+                    UpdateTimestamps = true
+                };
 
-            await op.RunAsync();
-        });
+                await op.RunAsync();
+            }));
 
-
-        var list = await outputs.ToArrayAsync();
 
         await translationCompletions;
 
@@ -294,6 +296,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         return pending;
     }
 
+    private string GetStageRoot(Stages stage) => Path.Combine(OutputRoot, stage.ToString());
+
     public async IAsyncEnumerable<FileEntry> RunStageAsync(
         Stages stage,
         Parallelism parallelism,
@@ -305,7 +309,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
     {
         var stageName = stage.ToString();
         bool isRunning = RunStages.Contains(stage);
-        var root = Path.Combine(OutputRoot, stageName);
+        var root = GetStageRoot(stage);
         var channel = Channel.CreateBounded<FileEntry>(StageCapacity);
 
 
@@ -324,6 +328,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                         Target = Path.GetFullPath(Path.Combine(root, entry.RelativePath + suffix))
                     };
                     var marker = entry.Target + ".marker";
+                    CreateDirectoryForFile(marker);
                     if (!Exists(marker))
                     {
                         if (!isRunning)

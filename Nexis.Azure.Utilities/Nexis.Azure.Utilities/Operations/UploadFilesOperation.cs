@@ -38,7 +38,11 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public bool UpdateTimestamps = false;
 
+    public bool Force = true;
+
     public List<string> ExcludedExtensions = [".marker"];
+
+    public List<string> RequiredInfixes = [];
 
     public IDictionary<string, FileInfo> GetFiles()
     {
@@ -65,6 +69,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
             .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
             .Where(f => !ExcludedExtensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase))
+            .Where(f => RequiredInfixes.All(i => f.Name.Contains(i, StringComparison.OrdinalIgnoreCase)))
             .ToImmutableSortedDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f, StringComparer.OrdinalIgnoreCase)
             .ToBuilder()
             ;
@@ -92,9 +97,11 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
         BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
 
-        var targetBlobs = FilterDirectories(await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
-            .ToListAsync())
-            .ToImmutableDictionary(b => b.Name);
+        var targetBlobs = !Force
+            ? FilterDirectories(await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
+                .ToListAsync())
+                .ToImmutableDictionary(b => b.Name)
+            : ImmutableDictionary<string, BlobItem>.Empty;
 
         await Helpers.ForEachAsync(ThreadCount, files.ToImmutableSortedDictionary(StringComparer.OrdinalIgnoreCase), token, async (entry, token) =>
         {
