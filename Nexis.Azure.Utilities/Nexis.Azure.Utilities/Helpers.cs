@@ -6,9 +6,11 @@ using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.ContractsLight;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Web;
 using Azure;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.Shares.Models;
@@ -41,16 +43,35 @@ public static class Helpers
         public const string mtime_metadata = "mtime";
     }
 
-    public static async Task<int> ExecAsync(string processName, params string[] args)
+    public static async Task<int> ExecAsync(string processName, string[] args, PipeTarget? target = null)
     {
         var cmd = Cli.Wrap(processName)
             .WithArguments(args)
             .WithValidation(CommandResultValidation.ZeroExitCode);
 
+        if (target != null)
+        {
+            cmd = cmd.WithStandardOutputPipe(target);
+        }
+
         var result = await cmd.ExecuteAsync();
 
         return result.ExitCode;
     }
+
+    public static IAsyncEnumerable<T> AsyncEnum<T>(Func<IAsyncEnumerable<T>> enumerate)
+    {
+        return enumerate();
+    }
+
+    public static string PrepPath(string root, string relative)
+    {
+        var path = Path.Combine(root, relative);
+        EnsureParentDirectory(path);
+        return path;
+    }
+
+    public static void EnsureParentDirectory(string path) => Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
     public static string[] SplitArgs(this string args) => CommandLineStringSplitter.Instance.Split(args).ToArray();
 
@@ -298,7 +319,7 @@ public static class Helpers
         return !string.IsNullOrEmpty(s);
     }
 
-    public static void Add<K,V>(this IDictionary<K,V> map, IEnumerable<KeyValuePair<K, V>> entries)
+    public static void Add<K, V>(this IDictionary<K, V> map, IEnumerable<KeyValuePair<K, V>> entries)
     {
         foreach (var entry in entries)
         {
@@ -378,6 +399,22 @@ public static class Helpers
         }
     }
 
+    public static async Task ForEachAsync<TSource>(Parallelism parallel, IAsyncEnumerable<TSource> source, CancellationToken token, Func<TSource, CancellationToken, ValueTask> body)
+    {
+        if (parallel.Options is { } options)
+        {
+            options.CancellationToken = token;
+            await Parallel.ForEachAsync(source, options, body);
+        }
+        else
+        {
+            await foreach (var item in source)
+            {
+                await body(item, token);
+            }
+        }
+    }
+
     private static string PrintAndReturn(string value, bool print)
     {
         if (print) Console.WriteLine(value);
@@ -431,6 +468,149 @@ public static class Helpers
             {
                 yield return word;
             }
+        }
+    }
+
+    public static string? ExtractFilenameFromContentDispositionUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+
+        var result = extractCore(url);
+        if (result?.StartsWith("http") == true)
+        {
+            result = extractCore(result);
+        }
+
+        return result;
+
+        string? extractCore(string url)
+        {
+            Uri uri;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out uri))
+                return null;
+
+            var query = HttpUtility.ParseQueryString(uri.Query);
+            string? contentDisposition = query["response-content-disposition"];
+
+            if (!string.IsNullOrEmpty(contentDisposition))
+            {
+                // Decode URL-encoded header value
+                string decoded = Uri.UnescapeDataString(contentDisposition);
+
+                const string marker = "filename*=UTF-8''";
+
+                if (decoded.Contains(marker))
+                {
+                    int start = decoded.IndexOf(marker) + marker.Length;
+                    string filename = decoded[start..].TrimEnd(';').Trim();
+                    return filename;
+                }
+
+                // Fallback: Try to find simple "filename=" case (not RFC 5987)
+                const string simpleMarker = "filename=";
+                if (decoded.Contains(simpleMarker))
+                {
+                    int start = decoded.IndexOf(simpleMarker) + simpleMarker.Length;
+                    string filename = decoded[start..].Trim('\"', ';', ' ');
+                    return filename;
+                }
+            }
+            else if (query["filename"] is { } fileName && !string.IsNullOrEmpty(fileName))
+            {
+                return fileName;
+            }
+
+            // Final fallback: Look for [[filename]]
+            var match = Regex.Match(url, @"\[\[(.+)\]\]");
+            if (match.Success)
+            {
+                return match.Groups[1].Value;
+            }
+
+            return null;
+        }
+    }
+
+    public static (Guid Id, int Index) ExtractFileDescriptor(string name)
+    {
+        var match = Regex.Match(name, @"\[\[(?<id>\w+)-(?<index>\d+)\]\]");
+        if (match.Success)
+        {
+            var id = Guid.Parse(match.Groups["id"].Value);
+            var index = int.Parse(match.Groups["index"].Value);
+            return (id, index);
+        }
+
+        throw new FormatException(name);
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="SemaphoreSlim"/> representing a mutex which can only be entered once.
+    /// </summary>
+    /// <returns>the semaphore</returns>
+    public static SemaphoreSlim CreateMutex()
+    {
+        return new SemaphoreSlim(initialCount: 1, maxCount: 1);
+    }
+
+    /// <summary>
+    /// Asynchronously acquire a semaphore
+    /// </summary>
+    /// <param name="semaphore">The semaphore to acquire</param>
+    /// <param name="cancellationToken">The cancellation token</param>
+    /// <returns>A disposable which will release the semaphore when it is disposed.</returns>
+    public static async ValueTask<SemaphoreReleaser> AcquireAsync(this SemaphoreSlim semaphore, CancellationToken cancellationToken = default(CancellationToken))
+    {
+        Contract.Requires(semaphore != null);
+        await semaphore.WaitAsync(cancellationToken);
+        return new SemaphoreReleaser(semaphore);
+    }
+
+    /// <summary>
+    /// Allows an IDisposable-conforming release of an acquired semaphore
+    /// </summary>
+    [SuppressMessage("Microsoft.Performance", "CA1815:OverrideEqualsAndOperatorEqualsOnValueTypes")]
+    public struct SemaphoreReleaser : IDisposable
+    {
+        public bool IsAcquired => m_semaphore != null;
+
+        private readonly SemaphoreSlim m_semaphore;
+
+        /// <summary>
+        /// Creates a new releaser.
+        /// </summary>
+        /// <param name="semaphore">The semaphore to release when Dispose is invoked.</param>
+        /// <remarks>
+        /// Assumes the semaphore is already acquired.
+        /// </remarks>
+        internal SemaphoreReleaser(SemaphoreSlim semaphore)
+        {
+            this.m_semaphore = semaphore;
+        }
+
+        /// <summary>
+        /// IDispoaable.Dispose()
+        /// </summary>
+        public void Dispose()
+        {
+            m_semaphore?.Release();
+        }
+
+        /// <summary>
+        /// Whether this semaphore releaser is valid (and not the default value)
+        /// </summary>
+        public bool IsValid
+        {
+            get { return m_semaphore != null; }
+        }
+
+        /// <summary>
+        /// Gets the number of threads that will be allowed to enter the semaphore.
+        /// </summary>
+        public int CurrentCount
+        {
+            get { return m_semaphore.CurrentCount; }
         }
     }
 }

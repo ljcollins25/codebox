@@ -30,6 +30,15 @@ public static class LanguageCodeExtensions
         };
     }
 
+    public static LanguageCode GetLanguageCode(string lang)
+    {
+        return Enum.GetValues<LanguageCode>().Where(code =>
+        {
+            return lang.Contains(code.ToLanguageOption(), StringComparison.OrdinalIgnoreCase)
+            || lang.Contains(code.ToDisplayName(), StringComparison.OrdinalIgnoreCase);
+        }).First();
+    }
+
     public static string ToLanguageOption(this LanguageCode languageCode)
     {
         return languageCode switch

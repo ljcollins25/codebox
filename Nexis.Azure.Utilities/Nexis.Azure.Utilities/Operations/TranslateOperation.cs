@@ -11,6 +11,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection.Metadata;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Azure;
@@ -20,37 +21,72 @@ using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
 using Azure.Storage.Files.Shares;
 using Azure.Storage.Files.Shares.Models;
+using CliWrap;
 using DotNext.IO;
 using Microsoft.Playwright;
 
 namespace Nexis.Azure.Utilities;
 
-public record class TranslateOperation(IConsole Console, CancellationToken token)
+public record class TranslateOperation(IConsole Console, CancellationToken token) : BrowserOperationBase(Console, token)
 {
+    public bool Legacy = false;
+
     public required List<LanguageCode> Languages { get; set; } = [eng, jpn, kor, zho];
 
     public required string AudioFile;
 
-    public async Task<int> RunAsync()
+    public string GdrivePath;
+
+    public bool DryRun = false;
+
+    public override async Task<int> RunAsync(IPlaywright playwright, IBrowser browser, IPage page)
     {
-        var playwright = await Playwright.CreateAsync();
-        var browser = await playwright.Chromium.ConnectOverCDPAsync("http://localhost:19222");
-
-        var page = browser.Contexts.First().Pages.FirstOrDefault();
-
         //var page = await browser.NewPageAsync();
-        await page.GotoAsync("https://app.heygen.com/projects");
 
-        await page.GetByText("Create video").ClickAsync();
-
-        await page.GetByText("Translate a video").ClickAsync();
-
-        var fileChooser = await page.RunAndWaitForFileChooserAsync(async () =>
+        if (Legacy)
         {
-            await page.GetByText("Drag and drop video here").ClickAsync();
-        });
+            await page.GotoAsync("https://app.heygen.com/projects");
 
-        await fileChooser.SetFilesAsync(AudioFile);
+            await page.GetByText("Create video").ClickAsync();
+
+            await page.GetByText("Translate a video").ClickAsync();
+        }
+        else
+        {
+            await page.GotoAsync("https://app.heygen.com/projects?create_video_modal=true&index&modal_screen=translate_new");
+        }
+
+        if (!string.IsNullOrEmpty(GdrivePath))
+        {
+            await ExecAsync("rclone", ["copyto", AudioFile, GdrivePath]);
+
+            var link = new StringBuilder();
+
+            await ExecAsync("rclone", ["link", GdrivePath], PipeTarget.ToStringBuilder(link));
+
+            var fileName = Uri.EscapeDataString(Path.GetFileName(AudioFile));
+            AudioFile = link.ToString().Trim().Replace("open?id=", "file/d/") + "/view?filename=" + fileName;
+        }
+
+        if (AudioFile.StartsWith("http"))
+        {
+            var videoInput = page.GetByPlaceholder("Paste your video");
+            await videoInput.FillAsync(AudioFile);
+
+            await videoInput.PressAsync("Enter");
+
+            await page.GetByText("Next").ClickAsync();
+        }
+        else
+        {
+            var fileChooser = await page.RunAndWaitForFileChooserAsync(async () =>
+            {
+                //await page.GetByText("Drag and drop video here").ClickAsync();
+                await page.GetByText("Browse Local Files").ClickAsync();
+            });
+
+            await fileChooser.SetFilesAsync(Path.GetFullPath(AudioFile));
+        }
 
         await page.GetByText("Advanced", new() { Exact = true }).ClickAsync();
 
@@ -81,7 +117,15 @@ public record class TranslateOperation(IConsole Console, CancellationToken token
 
         await page.GetByText("Enable captions").ClickAsync();
 
-        await page.GetByText("Translate", new() { Exact = true }).ClickAsync();
+        if (!DryRun)
+        {
+            await page.GetByText("Translate", new() { Exact = true }).ClickAsync();
+        }
+
+        if (!string.IsNullOrEmpty(GdrivePath))
+        {
+            await Task.Delay(2000);
+        }
 
         return 0;
     }

@@ -33,7 +33,9 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
 
     public Guid OperationId = Guid.NewGuid();
 
-    public TimeSpan SegmentDuration = TimeSpan.FromMinutes(25);
+    public static TimeSpan DefaultSegmentDuration = TimeSpan.FromMinutes(25);
+
+    public TimeSpan SegmentDuration = DefaultSegmentDuration;
 
     public string VideoSize { get; set; } = "640x360";
 
@@ -47,7 +49,7 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
             ? "m4a"
             : "mp3";
 
-        string tempAudioPattern = Path.Combine(intermediateFolder, $"[[{OperationId:n}]].audio-%03d.{audioExt}");
+        string tempAudioPattern = Path.Combine(intermediateFolder, $"[[{OperationId:n}-%03d]].{audioExt}");
 
         var duration = ((int)SegmentDuration.TotalSeconds).ToString();
         var result = await ExecAsync("ffmpeg",

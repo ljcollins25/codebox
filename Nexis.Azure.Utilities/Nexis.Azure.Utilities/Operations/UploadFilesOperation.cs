@@ -38,6 +38,8 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public bool UpdateTimestamps = false;
 
+    public List<string> ExcludedExtensions = [".marker"];
+
     public IDictionary<string, FileInfo> GetFiles()
     {
         LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
@@ -62,6 +64,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
         var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
             .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
+            .Where(f => !ExcludedExtensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase))
             .ToImmutableSortedDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f, StringComparer.OrdinalIgnoreCase)
             .ToBuilder()
             ;

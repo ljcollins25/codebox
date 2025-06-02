@@ -11,6 +11,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection.Metadata;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Azure;
@@ -25,7 +26,7 @@ using Microsoft.Playwright;
 
 namespace Nexis.Azure.Utilities;
 
-public record class DownloadTranslation(IConsole Console, CancellationToken token)
+public record class DownloadTranslation(IConsole Console, CancellationToken token) : BrowserOperationBase(Console, token)
 {
     public required LanguageCode Language;
 
@@ -33,36 +34,54 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
     public required string TargetFolder;
 
-    public async Task<int> RunAsync()
+    public string BaseName = "";
+
+    public bool Delete = false;
+
+    public bool Download = true;
+
+    public string SubFile => TargetFile(FileType.srt);
+    public string VideoFile => TargetFile(FileType.mp4);
+
+    public string TargetFile(FileType type) => Path.Combine(TargetFolder, $"{BaseName}{Language}.audio.{type}");
+
+    public override async Task<int> RunAsync(IPlaywright playwright, IBrowser browser, IPage page)
     {
         Directory.CreateDirectory(TargetFolder);
-        using var playwright = await Playwright.CreateAsync();
-        await using var browser = await playwright.Chromium.ConnectOverCDPAsync("http://localhost:19222");
-
-        var page = browser.Contexts.First().Pages.FirstOrDefault();
 
         //var page = await browser.NewPageAsync();
         await page.GotoAsync($"https://app.heygen.com/videos/{VideoId}?index");
 
         await Task.Delay(1000);
 
-        await page.GetByTitle("Download").ClickAsync();
-
-        await Task.Delay(1000);
-
-        foreach (var type in new[] { FileType.mp4, FileType.ass })
+        if (Download)
         {
-            if (type == FileType.ass)
+            await page.GetByTitle("Download").ClickAsync();
+
+            await Task.Delay(1000);
+
+            foreach (var type in new[] { FileType.mp4, FileType.ass })
             {
-                await page.GetByRole(AriaRole.Button, new() { Name = "Captions" }).ClickAsync();
+                if (type == FileType.ass)
+                {
+                    await page.GetByRole(AriaRole.Button, new() { Name = "Captions" }).ClickAsync();
+                }
+
+                var chooser = await page.RunAndWaitForDownloadAsync(async () =>
+                {
+                    await page.GetByText("Download", new() { Exact = true }).Nth(1).ClickAsync();
+                });
+
+                await chooser.SaveAsAsync(TargetFile(type));
             }
+        }
 
-            var chooser = await page.RunAndWaitForDownloadAsync(async () =>
-            {
-                await page.GetByText("Download", new() { Exact = true }).Nth(1).ClickAsync();
-            });
+        if (Delete)
+        {
 
-            await chooser.SaveAsAsync(Path.Combine(TargetFolder, $"{Language}.audio.{type}"));
+            await page.ClickAsync("[name='more-vertical']");
+
+            await page.ClickAsync("[name='delete']");
         }
 
         return 0;
