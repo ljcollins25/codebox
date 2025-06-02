@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
+using System.Diagnostics;
 using Azure.Storage.Blobs.Specialized;
 using FluentAssertions;
 
@@ -18,6 +19,11 @@ public abstract partial class TestBase
     public IConsole TestConsole { get; } = new SystemConsole();
 
     public CancellationToken Token { get; } = CancellationToken.None;
+
+    public TestBase()
+    {
+        Console.SetError(Console.Out);
+    }
 }
 
 public partial class CliTests : TestBase
@@ -39,19 +45,24 @@ public partial class CliTests : TestBase
         await op.RunAsync();
     }
 
-    [Fact]
-    public async Task TestTransform()
+    [Theory]
+    [InlineData(0, null)]
+    [InlineData(36, @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe")]
+    public async Task TestTransform(int skip, string? browserPath)
     {
+        BrowserOperationBase.BrowserProcessPath.Value = browserPath;
+
         var op = new TransformFiles(TestConsole, Token)
         {
             UploadUri = ContainerUriJpe,
-            LocalSourcePath = @"C:\mount\mediawus2",
-            RelativePath = @"C:\mount\mediawus2\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01\Dear Heaven - S01E01 - Episode 1.mp4",
+            LocalSourcePath = @"C:\mount\mediajpe",
+            RelativePath = @"C:\mount\mediajpe\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01",
             CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
             GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
             Languages = [eng, jpn, zho],
-            OutputRoot = @"C:\mount\outputs",
-
+            OutputRoot = @"Q:\mediaoutputs",
+            Limit = 5,
+            Skip = skip
         };
 
         await op.RunAsync();
@@ -89,8 +100,8 @@ public partial class CliTests : TestBase
     {
         var op = new DownloadTranslation(TestConsole, Token)
         {
-            VideoId = "c4962cbfda574318817cdae2dad4d661",
-            TargetFolder = @"C:\mount\outputs\YellowBoots.S01E72.1",
+            VideoId = "a2568ce511694e529ba07015156a1133",
+            TargetFolder = @"C:\mediaoutputs\test",
             Language = eng,
             Delete = true,
             Download = false
@@ -106,9 +117,16 @@ public partial class CliTests : TestBase
     }
 
     [Fact]
+    public async Task TestProc()
+    {
+        await BrowserOperationBase.EnsureChromiumRunning();
+
+        await Task.Delay(100000);
+    }
+
+    [Fact]
     public async Task TestHelp()
     {
-        Console.SetError(Console.Out);
         //await Program.RunAsync(new Program.Args(
         //    "dehydrate",
         //    "--uri", ContainerUriWus2

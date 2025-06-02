@@ -79,11 +79,41 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
         if (Delete)
         {
 
-            await page.ClickAsync("[name='more-vertical']");
+            //await page.ClickAsync("[name='more-vertical']");
 
-            await page.ClickAsync("[name='delete']");
+            //await page.ClickAsync("[name='delete']");
+
+            await page.GotoAsync("https://app.heygen.com/projects?index");
+
+            //await page.PostDataFromBrowserContextAsync(
+            //    "https://api2.heygen.com/v1/video_translate/trash",
+            //    new DeleteRequest()
+            //    {
+            //        items = [
+            //            new() { id = VideoId }
+            //        ]
+            //    });
         }
 
         return 0;
     }
+
+    private void Page_Request(object? sender, IRequest e)
+    {
+    }
+
+    public class DeleteRequest
+    {
+        public List<Item> items { get; set; } = new();
+
+        public class Item
+        {
+            public string item_type { get; set; } = "video_translate";
+
+            public required string id { get; set; }
+        }
+    }
+
+
+
 }

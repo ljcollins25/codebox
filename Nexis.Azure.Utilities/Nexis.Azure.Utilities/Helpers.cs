@@ -9,12 +9,14 @@ using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Web;
 using Azure;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.Shares.Models;
 using CliWrap;
+using Microsoft.Playwright;
 using Command = System.CommandLine.Command;
 
 namespace Nexis.Azure.Utilities;
@@ -64,7 +66,34 @@ public static class Helpers
         return enumerate();
     }
 
-    public static string CreateDirectoryForFile(string root, string relative  = "")
+    public static Task PostDataFromBrowserContextAsync<T>(this IPage page, string url, T data)
+    {
+        return PostJsonFromBrowserContextAsync(page, url, JsonSerializer.Serialize<T>(data));
+    }
+
+    public static async Task PostJsonFromBrowserContextAsync(this IPage page, string url, string jsonPayload)
+    {
+        // Evaluate JavaScript in browser to send POST with fetch
+        var responseText = await page.EvaluateAsync<string>(
+            @"async (url, jsonBody) => {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: jsonBody
+            });
+            return await res.text(); // or res.json() if expecting JSON
+        }",
+            new[] { url, jsonPayload }
+        );
+
+        Console.WriteLine("Response:");
+        Console.WriteLine(responseText);
+    }
+
+
+    public static string CreateDirectoryForFile(string root, string relative = "")
     {
         var path = Path.Combine(root, relative);
         EnsureParentDirectory(path);

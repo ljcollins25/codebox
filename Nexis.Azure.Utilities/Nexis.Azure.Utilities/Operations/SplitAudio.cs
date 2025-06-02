@@ -49,7 +49,8 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
             ? "m4a"
             : "mp3";
 
-        string tempAudioPattern = Path.Combine(intermediateFolder, $"[[{OperationId:n}-%03d]].{audioExt}");
+        var opId = $"{OperationId:n}";
+        string tempAudioPattern = Path.Combine(intermediateFolder, $"[[{opId}-%03d]].{audioExt}");
 
         var duration = ((int)SegmentDuration.TotalSeconds).ToString();
         var result = await ExecAsync("ffmpeg",
@@ -62,11 +63,11 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
             tempAudioPattern
         ]);
 
-        var audioFiles = Directory.GetFiles(intermediateFolder);
+        var audioFiles = Directory.GetFiles(intermediateFolder)
+            .Where(f => f.Contains(opId));
 
         foreach (var audioFile in audioFiles)
         {
-
             var videoWrappedAudioFile = Path.Combine(OutputFolder, Path.GetFileName(audioFile) + ".mp4");
             await ExecAsync("ffmpeg",
             [

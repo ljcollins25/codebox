@@ -28,6 +28,7 @@ using Azure.Storage.Files.Shares.Models;
 using DotNext;
 using DotNext.IO;
 using Microsoft.Playwright;
+using Nikse.SubtitleEdit.Core.Common;
 using static Nexis.Azure.Utilities.Helpers;
 
 namespace Nexis.Azure.Utilities;
@@ -52,6 +53,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
     public int Limit = int.MaxValue;
 
+    public int Skip = 0;
+
     public int StageCapacity = 5;
 
     public required List<LanguageCode> Languages { get; set; } = [eng, jpn, kor, zho];
@@ -59,6 +62,10 @@ public class TransformFiles(IConsole Console, CancellationToken token)
     public List<string> Extensions = [".mp4", ".avi", ".mkv", ".webm", ".m4v"];
 
     private ConcurrentDictionary<(Guid Id, LanguageCode Language), PendingTranslation> PendingTranslations = new();
+
+    public bool RestoreState = false;
+
+    public string ShutdownFilePath => Path.Combine(OutputRoot, "gracefulshutdown.txt");
 
     public IDictionary<string, FileInfo> GetFiles()
     {
@@ -86,6 +93,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
             .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
             .Where(f => Extensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase))
             .OrderBy(f => f.FullName, StringComparer.OrdinalIgnoreCase)
+            .Skip(Skip)
             .Take(Limit)
             .ToImmutableSortedDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f, StringComparer.OrdinalIgnoreCase)
             .ToBuilder()
@@ -109,13 +117,30 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         IAsyncEnumerable<FileEntry> inputs,
         params Func<IAsyncEnumerable<FileEntry>, IAsyncEnumerable<FileEntry>>[] steps)
     {
-        var result = inputs;
-        foreach (var step in steps)
+        try
         {
-            result = step(result);
-        }
+            if (File.Exists(ShutdownFilePath))
+            {
+                // File wasn't cleaned up so there was an abrupt shutdown
+                // need to restore state
+                RestoreState = true;
+            }
 
-        var list = await result.ToListAsync();
+            File.WriteAllText(ShutdownFilePath, DateTime.Now.ToString("o"));
+
+            var result = inputs;
+            foreach (var step in steps)
+            {
+                result = step(result);
+            }
+
+            var list = await result.ToListAsync();
+        }
+        finally
+        {
+            // Delete file to indicate graceful shutodwn
+            File.Delete(ShutdownFilePath);
+        }
     }
 
     public async Task<int> RunAsync()
@@ -158,7 +183,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
             }),
             i => RunStageAsync(Stages.translate, 1, i, async (entry, token) =>
             {
-                var videoWrappedAudioFiles = Directory.GetFiles(entry.Source, "*.mp4");
+                var videoWrappedAudioFiles = entry.GetSplitFiles();
                 entry.SegmentCount = videoWrappedAudioFiles.Length;
                 int index = 0;
                 foreach (var audioFile in videoWrappedAudioFiles)
@@ -175,7 +200,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
             }),
             i => i.SelectMany(f => Languages.Select(l => f with { Language = l }).ToAsyncEnumerable()),
 
-            i => RunStageAsync(Stages.download, 1, i, async (entry, token) =>
+            i => RunStageAsync(Stages.download, SingleThreaded ? 1 : ThreadCount * Languages.Count, i, async (entry, token) =>
             {
                 // Wait for translations to complete
                 Contract.Assert(entry.SegmentCount.HasValue);
@@ -243,6 +268,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
     private async Task WaitForTranslationsAsync(CancellationTokenSource cts)
     {
+        HashSet<string> failures = new();
+
         while (!cts.Token.IsCancellationRequested)
         {
             var files = Directory.Exists(CompletedTranslationFolder)
@@ -252,9 +279,17 @@ public class TransformFiles(IConsole Console, CancellationToken token)
             {
                 try
                 {
+                    if (failures.Contains(file)) continue;
+
                     var text = File.ReadAllText(file);
 
                     var record = TranslationRecord.Parse(text);
+                    if (record.event_type.Contains("fail"))
+                    {
+                        failures.Add(file);
+                        continue;
+                    }
+
                     var info = ExtractFileDescriptor(record.FileName);
                     var language = record.GetLanguageCode();
                     var pending = AddPending(info.Id, language);
@@ -321,32 +356,61 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
                 await ForEachAsync(parallelism, items, token, async (entry, token) =>
                 {
-                    var suffix = entry.Language is { } lang ? $".{lang}" : "";
-                    entry = entry with
+                    string result = "Succeeded";
+                    try
                     {
-                        Source = entry.Target,
-                        Target = Path.GetFullPath(Path.Combine(root, entry.RelativePath + suffix))
-                    };
-                    var marker = entry.Target + ".marker";
-                    CreateDirectoryForFile(marker);
-                    if (!Exists(marker))
-                    {
-                        if (!isRunning)
+                        Console.WriteLine($"[{stageName}] Start {entry.RelativePath}");
+                        var suffix = entry.Language is { } lang ? $".{lang}" : "";
+                        entry = entry with
                         {
-                            return;
+                            Source = entry.Target,
+                            Target = Path.GetFullPath(Path.Combine(root, entry.RelativePath + suffix))
+                        };
+                        var marker = entry.Target + ".marker";
+                        CreateDirectoryForFile(marker);
+                        if (stage == Stages.translate && RestoreState)
+                        {
+                            var id = entry.OperationId.ToString().Substring(0, 8);
+                            entry.SegmentCount = Directory.GetFiles(entry.Source, "*.mp4")
+                                .Where(f => f.Contains(id))
+                                .Count();
                         }
 
-                        await runAsync.Invoke(entry, token);
-                        File.WriteAllText(marker, JsonSerializer.Serialize(
-                            new MarkerData(entry.OperationId, entry.SegmentCount)));
-                    }
-                    else if (readMarker)
-                    {
-                        var markerData = JsonSerializer.Deserialize<MarkerData>(Out.Var(out var mt, File.ReadAllText(marker)));
-                        entry = entry with { OperationId = markerData.Id, SegmentCount = markerData.SegmentCount };
-                    }
+                        if (!Exists(marker))
+                        {
+                            if (!isRunning)
+                            {
+                                result = "Skipping";
+                                return;
+                            }
 
-                    await channel.Writer.WriteAsync(entry);
+                            await runAsync.Invoke(entry, token);
+                            File.WriteAllText(marker, JsonSerializer.Serialize(
+                                new MarkerData(entry.OperationId, entry.SegmentCount)));
+                        }
+                        else if (readMarker)
+                        {
+                            var markerData = JsonSerializer.Deserialize<MarkerData>(Out.Var(out var mt, File.ReadAllText(marker)));
+                            entry = entry with { OperationId = markerData!.Id, SegmentCount = entry.SegmentCount ?? markerData.SegmentCount };
+                            result = "Up to date";
+
+                            if (RestoreState)
+                            {
+                                markerData = markerData with { SegmentCount = entry.SegmentCount };
+                                File.WriteAllText(marker, JsonSerializer.Serialize(markerData));
+                            }
+                        }
+
+                        await channel.Writer.WriteAsync(entry);
+                    }
+                    catch (Exception ex)
+                    {
+                        result = $"Failed: \n{ex}";
+                    }
+                    finally
+                    {
+                        Console.WriteLine($"[{stageName}] End {entry.RelativePath}. Result = {result}");
+                    }
                 });
             }
             finally
@@ -396,6 +460,9 @@ public class TransformFiles(IConsole Console, CancellationToken token)
     public record FileEntry(string Origin, string RelativePath, string Source, string Target, Guid OperationId, LanguageCode? Language = default)
     {
         public int? SegmentCount;
+
+        public string[] GetSplitFiles() => Directory.GetFiles(Source, "*.mp4")
+                                .Where(f => f.Contains(OperationId.ToString().Substring(0, 8))).ToArray();
     }
 
     private record MarkerData(Guid Id, int? SegmentCount);

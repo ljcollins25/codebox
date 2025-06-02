@@ -2,3 +2,5 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManage
 
 choco install azcopy10 -y
 choco install winfsp -y
+choco install ffmpeg -y
+choco install chromium -y
