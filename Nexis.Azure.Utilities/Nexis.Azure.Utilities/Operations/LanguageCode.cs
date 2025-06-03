@@ -46,7 +46,7 @@ public static class LanguageCodeExtensions
             LanguageCode.eng => "English (United States)",
             LanguageCode.jpn => "Japanese",
             LanguageCode.kor => "Korean",
-            LanguageCode.zho => "Chinese (Mandarin",
+            LanguageCode.zho => "Chinese (Mandarin, Simplified)",
             _ => throw new ArgumentOutOfRangeException(nameof(languageCode), languageCode, null)
         };
     }

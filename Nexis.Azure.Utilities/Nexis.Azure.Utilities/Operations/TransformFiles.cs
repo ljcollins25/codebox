@@ -65,6 +65,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
     public bool RestoreState = false;
 
+    public bool ApiMode = true;
+
     public string ShutdownFilePath => Path.Combine(OutputRoot, "gracefulshutdown.txt");
 
     public IDictionary<string, FileInfo> GetFiles()
@@ -200,7 +202,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
             }),
             i => i.SelectMany(f => Languages.Select(l => f with { Language = l }).ToAsyncEnumerable()),
 
-            i => RunStageAsync(Stages.download, SingleThreaded ? 1 : ThreadCount * Languages.Count, i, async (entry, token) =>
+            i => RunStageAsync(Stages.download, ThreadCount * Languages.Count, i, async (entry, token) =>
             {
                 // Wait for translations to complete
                 Contract.Assert(entry.SegmentCount.HasValue);
@@ -221,7 +223,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                         TargetFolder = entry.Target,
                         BaseName = record.FileName,
                         Language = language,
-                        Delete = false
+                        Delete = false,
+                        CompletedFolderId = "d90fd9fe544f4109bdbc3cc167451217"
                     };
 
                     if (Exists(op.SubFile) && Exists(op.VideoFile))
@@ -269,45 +272,76 @@ public class TransformFiles(IConsole Console, CancellationToken token)
     private async Task WaitForTranslationsAsync(CancellationTokenSource cts)
     {
         HashSet<string> failures = new();
+        HashSet<string> exists = new();
 
         while (!cts.Token.IsCancellationRequested)
         {
-            var files = Directory.Exists(CompletedTranslationFolder)
-                ? Directory.GetFiles(CompletedTranslationFolder, "*.json")
-                : [];
-            foreach (var file in files)
+            if (ApiMode)
             {
-                try
+                var list = new ListVideosOperation(Console, cts.Token)
                 {
-                    if (failures.Contains(file)) continue;
+                    Print = false
+                };
 
-                    var text = File.ReadAllText(file);
+                await list.RunAsync();
 
-                    var record = TranslationRecord.Parse(text);
-                    if (record.event_type.Contains("fail"))
+                foreach (var item in list.Results.Where(r => r.status == VideoStatus.completed))
+                {
+                    var info = item.GetInfo();
+                    if (info.Index < 0) continue;
+
+                    var pending = AddPending(info.Id, item.output_language);
+                    if (pending.FileEntry == null) continue;
+                    
+                    var record = TranslationRecord.FromVideoItem(item);
+                    var targetPath = Path.Combine(pending.OutputFolder, record.FileName + ".json");
+                    if (exists.Add(targetPath) && !File.Exists(targetPath))
                     {
-                        failures.Add(file);
-                        continue;
+                        File.WriteAllText(targetPath, JsonSerializer.Serialize(record));
+                        pending.CompletedSegmentCount++;
+                        pending.CompleteIfReady();
                     }
-
-                    var info = ExtractFileDescriptor(record.FileName);
-                    var language = record.GetLanguageCode();
-                    var pending = AddPending(info.Id, language);
-
-                    File.WriteAllText(Path.Combine(pending.OutputFolder, record.FileName + ".json"), text);
-                    File.Delete(file);
-                    pending.CompletedSegmentCount++;
-                    pending.CompleteIfReady();
                 }
-                catch
+            }
+            else
+            {
+                var files = Directory.Exists(CompletedTranslationFolder)
+                    ? Directory.GetFiles(CompletedTranslationFolder, "*.json")
+                    : [];
+                foreach (var file in files)
                 {
+                    try
+                    {
+                        if (failures.Contains(file)) continue;
 
+                        var text = File.ReadAllText(file);
+
+                        var record = TranslationRecord.Parse(text);
+                        if (record.event_type.Contains("fail"))
+                        {
+                            failures.Add(file);
+                            continue;
+                        }
+
+                        var info = ExtractFileDescriptor(record.FileName);
+                        var language = record.GetLanguageCode();
+                        var pending = AddPending(info.Id, language);
+
+                        File.WriteAllText(Path.Combine(pending.OutputFolder, record.FileName + ".json"), text);
+                        File.Delete(file);
+                        pending.CompletedSegmentCount++;
+                        pending.CompleteIfReady();
+                    }
+                    catch
+                    {
+
+                    }
                 }
             }
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(60), cts.Token);
+                await Task.Delay(TimeSpan.FromSeconds(300), cts.Token);
             }
             catch
             {

@@ -124,3 +124,937 @@ fetch("https://api2.heygen.com/v3/video_translate.create", {
     "msg": null,
     "message": null
 }
+
+fetch("https://api2.heygen.com/v1/heygen_project/list?limit=15&project_types=video_translate&project_types=video&project_types=mixed", {
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Google Chrome\";v=\"137\", \"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "traceparent": "00-00000000000000000affa819c7cef5b7-09bde9666a2e8674-01",
+    "x-datadog-origin": "rum",
+    "x-datadog-parent-id": "701973743017035380",
+    "x-datadog-sampling-priority": "1",
+    "x-datadog-trace-id": "792536888120374711",
+    "x-language-override": "en-US",
+    "x-last-build": "1748920038333",
+    "x-path": "/projects",
+    "x-ver": "4.1.0",
+    "x-zid": "E9BC0xibM5bw1DGeia1wn7VE2XDsO6XD"
+  },
+  "referrerPolicy": "no-referrer",
+  "body": null,
+  "method": "GET",
+  "mode": "cors",
+  "credentials": "include"
+});
+
+fetch("https://api2.heygen.com/v1/heygen_project_item/list?limit=12&video_type=all&sort_key=created_ts&sort_order=desc&traverse_deep=false&advanced_filters=true&item_types=heygen_video&item_types=heygen_video_draft&item_types=video_translate&item_types=video_translate_proofread", {
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Google Chrome\";v=\"137\", \"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "traceparent": "00-0000000000000000608cebfec353a5b2-6d1a24954d08681d-01",
+    "x-datadog-origin": "rum",
+    "x-datadog-parent-id": "7861636323189745693",
+    "x-datadog-sampling-priority": "1",
+    "x-datadog-trace-id": "6957195003811833266",
+    "x-language-override": "en-US",
+    "x-last-build": "1748920038333",
+    "x-path": "/projects",
+    "x-ver": "4.1.0",
+    "x-zid": "E9BC0xibM5bw1DGeia1wn7VE2XDsO6XD"
+  },
+  "referrerPolicy": "no-referrer",
+  "body": null,
+  "method": "GET",
+  "mode": "cors",
+  "credentials": "include"
+});
+
+{
+    "code": 100,
+    "data": {
+        "list": [
+            {
+                "id": "d56f904e12f147fab8e610396cfb5672",
+                "name": "%5B%5BDearHeaven_S01E61_5238bb7c-001%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "a6bc7beca637486db258081e6a97ed60",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928601
+                },
+                "caption_file_meta": {
+                    "id": "78e4bc0a64094db1a8b47f56b90ee13a",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928601
+                },
+                "status": 0,
+                "msg": "",
+                "eta": 4.1310018679271225,
+                "output_language": "English (United States)",
+                "position": 322140,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748928601,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 3600.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "4341733a337146988c3511e3d6368715",
+                "name": "%5B%5BDearHeaven_S01E61_5238bb7c-001%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "3fd8d497ea1f46b78bea8be3727ab01c",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928601
+                },
+                "caption_file_meta": {
+                    "id": "3701301866994de5b0c556664962d0a1",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928601
+                },
+                "status": 0,
+                "msg": "",
+                "eta": 4.1310018679271225,
+                "output_language": "Chinese (Mandarin, Simplified)",
+                "position": 322140,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748928601,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 3600.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "3298bf3dceee48b6bc6724287e114ff5",
+                "name": "%5B%5BDearHeaven_S01E61_5238bb7c-001%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "30e5e10b6b514fb08c943f31774d0816",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928601
+                },
+                "caption_file_meta": {
+                    "id": "0b9b7b8164b3489f94fcf7bd6c82e234",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928601
+                },
+                "status": 0,
+                "msg": "",
+                "eta": 4.1310018679271225,
+                "output_language": "Japanese",
+                "position": 322140,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748928601,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 3600.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "94313e26bef143bd8bedb4d4f28a6fb7",
+                "name": "%5B%5BDearHeaven_S01E61_5238bb7c-000%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "24c3c66496794d06a04ca2605fe21053",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928566
+                },
+                "caption_file_meta": {
+                    "id": "a14e13d67b97460d9d3526f93d2a8d5f",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928566
+                },
+                "status": 1,
+                "msg": "",
+                "eta": 96.04677652653841,
+                "output_language": "English (United States)",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748928566,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "20b7588d41d24824bbbe1d7b6cc9f2d5",
+                "name": "%5B%5BDearHeaven_S01E61_5238bb7c-000%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "9e424fd37f7c4dd985fa942fadc2fac8",
+                    "size": 22695350,
+                    "duration": 1500.12,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748928566
+                },
+                "caption_file_meta": {
+                    "id": "13b785c0ec004421b29d27f74423b1f6",
+                    "size": 23820494,
+                    "duration": 1500.12,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27%25255B%25255BDearHeaven_S01E61_5238bb7c-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748928566
+                },
+                "status": 2,
+                "msg": "",
+                "eta": 0.0,
+                "output_language": "Japanese",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748928566,
+                "caption_url": "https://files2.heygen.ai/video_translate/20b7588d41d24824bbbe1d7b6cc9f2d5/caption.ass?Expires=1749539301&Signature=nbeKHQnRPedCBgqOk~u8RqXaTzrhASLwc1gy86BFQhZntHzv0aqPqRm3sLUcPKGXTdUWOEBsBh-nbWCXIBvIrrLVSWlte2M4rGDlHZVLyw-lBiKVcS9f4CpgP2JEDlwlq5hwEjB21kDvan0GZf1W0x7axQo~FiFT69X~2MRDJuYnc4tzOV92L8dmqqVuUSTlgKW2VvWabNHhpph-7j~dWkHHGe0D4TsEJToax-FBle~~Jsptc2NM6tOf9Po6c647DypoSVCv94SEMs7-L8XwFdm9aWnjI1Hm2xrUOBu-Wgs-xrXyo8dxp1iKnoD~XumYN1yyx40IxHERnlSwgv6FAw__&Key-Pair-Id=K38HBHX5LX3X2H",
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "124dee80a29a4941904e492729d098dd",
+                "name": "%5B%5BDearHeaven_S01E61_5238bb7c-000%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "b3bd19ab1fad464fac6c3226b5b993c1",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928566
+                },
+                "caption_file_meta": {
+                    "id": "543b49cc834144bf8fc0c3d087b0c3fc",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748928566
+                },
+                "status": 1,
+                "msg": "",
+                "eta": 96.04677652653841,
+                "output_language": "Chinese (Mandarin, Simplified)",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748928566,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "3e77e52bedfc4057b0499147d61ad76a",
+                "name": "https://drive.google.com/file/d/1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-001%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "e5a404ef47124302938fd55b60526893",
+                    "size": 21154981,
+                    "duration": 1374.68,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748922168
+                },
+                "caption_file_meta": {
+                    "id": "7632db6b2209413a9c855384bcce6da9",
+                    "size": 22404916,
+                    "duration": 1374.68,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748922168
+                },
+                "status": 2,
+                "msg": "",
+                "eta": 0.0,
+                "output_language": "Japanese",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748922168,
+                "caption_url": "https://files2.heygen.ai/video_translate/3e77e52bedfc4057b0499147d61ad76a/caption.ass?Expires=1749539301&Signature=b2jdFlHrwFUJv8e-nMdqGhXY1Wr7Hf-GIKOAabxfDeyNaMSY8-yz~5B1zpBRHa6oM93~NSeNxswdCL~~Vb67oLHYd2~fN1YLT2qoaUWzqycYXKxZA-Qy3qKQ3cMfwh-xW7Qo~Pg1ce1JKZdUB0eJRjx5a4QzyXhbgo2Q~~Ugn59RIAmCGnqJsxcdnDeev67~YFOt3cZM3A5B4mI68r6XfwZgrPYFOcTewkyiSKyYxaySD~8MixZ5GNskr06D6PVCmakEWykSYi9~60jDXJestnh5zNEG~6gZq8mEDOXSIfhgmuOe5X60qhQ6Q0PB-GGRQvdfSSOalnyx3yQ6d6aTQg__&Key-Pair-Id=K38HBHX5LX3X2H",
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "38350c1ab7814c8d951700a5522fa193",
+                "name": "https://drive.google.com/file/d/1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-001%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "746987c32b454d649a285925676c6770",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748922168
+                },
+                "caption_file_meta": {
+                    "id": "3f07a0ef34ae49dc8bff11dac7128246",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748922168
+                },
+                "status": 1,
+                "msg": "",
+                "eta": 95.4278260209657,
+                "output_language": "Chinese (Mandarin, Simplified)",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748922168,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "0895f8c67b014c4397f0628cd2dc8a11",
+                "name": "https://drive.google.com/file/d/1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-001%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "63bc337b6deb4dba92fd553c6d01fc76",
+                    "size": 24003656,
+                    "duration": 1374.68,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748922168
+                },
+                "caption_file_meta": {
+                    "id": "774f58cdc16940eda7c44e3bfa838825",
+                    "size": 24708891,
+                    "duration": 1374.68,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-001%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748922168
+                },
+                "status": 2,
+                "msg": "",
+                "eta": 0.0,
+                "output_language": "English (United States)",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748922168,
+                "caption_url": "https://files2.heygen.ai/video_translate/0895f8c67b014c4397f0628cd2dc8a11/caption.ass?Expires=1749539301&Signature=UJ4Tjiq2hTehalplt2Je~Q7YpevN-ubnAB8lT1Y9EYBxX9R-ywFO1JwENEYjn6HA3O1NisnrrXAbYuozzkoJAq4pvg2OrHoN4iAFYI2Gx0peHodAhEIpHk67uK9gnkmZEW6q7QYtlJm077F1iyo~KpXOX5eVy2Di64QFl3JgIjmP1YwCaqvht3KeQ-hQ1Nvvi0Q-uXphDRpoOuCZMENelTfrVwhuDGvFmiyBo9zfghegB2AKTo3WcdVheE6YKapfej8VJokEV~sERDXIQV4NB1kT-1TC2JcLzKcF0acK9I1jSi1oamJDxPZIJEoQffdV323gRLbkh47IlPEv-Jb1cw__&Key-Pair-Id=K38HBHX5LX3X2H",
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "f5a341eb258e42d4bf339bd3a3d632bd",
+                "name": "https://drive.google.com/file/d/1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-000%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "7f631c5d771f417f8c152a391857d255",
+                    "size": 20973294,
+                    "duration": 1500.12,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748922138
+                },
+                "caption_file_meta": {
+                    "id": "c0c21ab298e84279b6b71ca1fb1b12bd",
+                    "size": 22120785,
+                    "duration": 1500.12,
+                    "status": 2,
+                    "mime_type": "video/mp4",
+                    "properties": {
+                        "width": 640,
+                        "height": 360
+                    },
+                    "meta": {
+                        "thumbnails": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/640x360.jpeg",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1280x720.jpeg",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1920x1080.jpeg"
+                        },
+                        "videos": {
+                            "640x360": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                            "1280x720": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                            "1920x1080": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B"
+                        },
+                        "variants": {
+                            "720p": {
+                                "key": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1280x720.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "720p",
+                                "width": 1280,
+                                "height": 720,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1280x720.jpeg"
+                            },
+                            "1080p": {
+                                "key": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1920x1080.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "1080p",
+                                "width": 1920,
+                                "height": 1080,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/1920x1080.jpeg"
+                            },
+                            "original": {
+                                "key": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9%2Fview%253Ffilename%253D%25255B%25255B5cc3fe3f31bc4e619360176e3e6f80a2-000%25255D%25255D.m4a.mp4%3B",
+                                "name": "original",
+                                "width": 640,
+                                "height": 360,
+                                "thumbnail": "https://resource2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption/640x360.jpeg"
+                            }
+                        }
+                    },
+                    "created_ts": 1748922138
+                },
+                "status": 2,
+                "msg": "",
+                "eta": 0.0,
+                "output_language": "Japanese",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748922138,
+                "caption_url": "https://files2.heygen.ai/video_translate/f5a341eb258e42d4bf339bd3a3d632bd/caption.ass?Expires=1749539301&Signature=bqWTTgf3IIJjMtBy5SI0x9OPi9N24cFurr7F2NS7wa1P08nSFLYVEZsK9uENjq2EemEidL5qIYFjNf92sUrCwmSDGRh63LV5P6GXhOc~jn2gGopc2L7My3icTc8LsUBbW8D03s6X-2xfPQEMVnuOj4FddIQGK5aDuVGxffXUzBGCeITzKnMYEF5-0MLiBwupkuuplcSnSoKLtWVlSW1O~47bEwLMiq-lOYokMj98AmthecqahZuzV7CgSeox9qQWopZu3By1EocOI8CE4GrjAhF62M9vzAJgkdluhwbn3HGSVLhJOxzWv1nZQvuPn7FficO9PUNUBfO38Z0TfQHIyQ__&Key-Pair-Id=K38HBHX5LX3X2H",
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "c98be1d7f6b242a7a6c6e56cf936df6e",
+                "name": "https://drive.google.com/file/d/1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-000%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "055d83bb7ba042529d9920c1c170d0af",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748922138
+                },
+                "caption_file_meta": {
+                    "id": "281e813db30d405f8d2a988136e2ae95",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748922138
+                },
+                "status": 1,
+                "msg": "",
+                "eta": 96.98974511648053,
+                "output_language": "English (United States)",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748922138,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            },
+            {
+                "id": "9b56f306597949c89efcde1edc86ad57",
+                "name": "https://drive.google.com/file/d/1GagYOl4iZDBY1CDJ7P0Q7V2CA13zp3B9/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-000%5D%5D.m4a.mp4",
+                "file_meta": {
+                    "id": "68a3b1ba0bce4b078764da22d55dcb92",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748922138
+                },
+                "caption_file_meta": {
+                    "id": "f7abcce6820442a081cdee94cffa671c",
+                    "size": 0,
+                    "duration": 0.0,
+                    "status": 0,
+                    "mime_type": null,
+                    "properties": null,
+                    "meta": {
+                        "thumbnails": {},
+                        "videos": {},
+                        "variants": {}
+                    },
+                    "created_ts": 1748922138
+                },
+                "status": 1,
+                "msg": "",
+                "eta": 96.98974511648053,
+                "output_language": "Chinese (Mandarin, Simplified)",
+                "position": null,
+                "is_trash": false,
+                "error_code": null,
+                "project_id": null,
+                "created_ts": 1748922138,
+                "caption_url": null,
+                "project_name": null,
+                "on_page_text_translation": false,
+                "enable_speech_enhancement": false,
+                "disable_music_track": false,
+                "creator_name": "Lance",
+                "waiting_time": 0.0,
+                "low_priority": false,
+                "item_type": "video_translate"
+            }
+        ],
+        "total": 185,
+        "token": "eyJzdGFydF9pZCI6ICI5YjU2ZjMwNjU5Nzk0OWM4OWVmY2RlMWVkYzg2YWQ1NyIsICJsYXN0X2NyZWF0ZWRfdHMiOiAiMjAyNS0wNi0wMyAwMzo0MjoxOCIsICJsYXN0X2ZldGNoZWRfbmFtZSI6ICIiLCAic29ydF9rZXkiOiAiY3JlYXRlZF90cyIsICJzb3J0X29yZGVyIjogImRlc2MifQ=="
+    },
+    "msg": null,
+    "message": null
+}

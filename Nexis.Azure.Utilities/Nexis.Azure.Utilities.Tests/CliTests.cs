@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Azure.Storage.Blobs.Specialized;
 using FluentAssertions;
+using Xunit.Abstractions;
 
 namespace Nexis.Azure.Utilities.Tests;
 
@@ -17,29 +18,44 @@ public abstract partial class TestBase
     public virtual Url ContainerUriWus { get; }
     public virtual Url ContainerUriJpe { get; }
 
-    public IConsole TestConsole { get; } = new SystemConsole();
+    public IConsole TestConsole { get; }
 
     public CancellationToken Token { get; } = CancellationToken.None;
 
-    public TestBase()
+    public TestBase(ITestOutputHelper output)
     {
-        Console.SetError(Console.Out);
+        Console.SetError(new TestOutputWriter(output));
+        Console.SetOut(new TestOutputWriter(output));
+        TestConsole = new OutputConsole();
+    }
+
+
+    private class OutputConsole : TestConsole
+    {
+        public OutputConsole()
+        {
+            Out = StandardStreamWriter.Create(System.Console.Out);
+            Error = StandardStreamWriter.Create(System.Console.Error);
+            IsErrorRedirected = true;
+            IsOutputRedirected = true;
+        }
     }
 }
 
-public partial class CliTests : TestBase
+public partial class CliTests(ITestOutputHelper output) : TestBase(output)
 {
     [Fact]
     public async Task TestTranslate()
     {
         var op = new TranslateOperation(TestConsole, Token)
         {
-            //AudioFile = "https://drive.google.com/file/d/11FrHoYSLuRfCcaDQvGqVYjYbxnlLneM-/view?filename=%5B%5Bhello%5D%5D",
-            AudioFile = @"C:\mount\outputs\split\hello.mp4",
-            GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}.mp4",
+            AudioFile = "https://drive.google.com/file/d/11FrHoYSLuRfCcaDQvGqVYjYbxnlLneM-/view?filename=%5B%5Bhello%5D%5D",
+            //AudioFile = @"C:\mount\outputs\split\hello.mp4",
+            //GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}.mp4",
             //AudioFile = @"C:\mount\YellowBoots.S01E72.trimmed-6e40ab2a-000.mp4",
 
-            Languages = [eng, jpn, zho],
+            Languages = [zho],
+            ApiMode = false,
             DryRun = true
         };
 
@@ -49,7 +65,7 @@ public partial class CliTests : TestBase
     [Theory]
     [InlineData(0, null)]
     [InlineData(45, null, 10)]
-    [InlineData(60, null, 1)]
+    [InlineData(51, null, 1)]
     [InlineData(36, @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe")]
     public async Task TestTransform(int skip, string? browserPath, int limit = 5)
     {
@@ -114,6 +130,19 @@ public partial class CliTests : TestBase
     }
 
     [Fact]
+    public async Task TestList()
+    {
+        var op = new ListVideosOperation(TestConsole, Token)
+        {
+            MarkerFolder = @"Q:\mediaoutputs\translate",
+            //Organize = true,
+            DryRun = false
+        };
+
+        await op.RunAsync();
+    }
+
+    [Fact]
     public async Task TestNaming()
     {
 
@@ -127,12 +156,21 @@ public partial class CliTests : TestBase
 
         var json = JsonSerializer.Serialize(md);
 
+        var tr = new TranslateRequest(
+            name: "",
+            google_url: "",
+            output_languages: [eng, jpn, zho]);
+        var trjson = JsonSerializer.Serialize(tr);
+
+
+
         var rt = JsonSerializer.Deserialize<TransformFiles.MarkerData>(json);
     }
 
     [Fact]
     public async Task TestId()
     {
+        
         var path = @"C:\mount\mediajpe\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01\Dear Heaven - S01E01 - Episode 1.mp4";
         var id = GetOperationId(path);
     }

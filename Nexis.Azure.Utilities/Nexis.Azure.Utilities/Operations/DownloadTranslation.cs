@@ -40,9 +40,9 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
     public bool Delete = false;
 
-    public string Name { get; set; }
-
     public bool Download = true;
+
+    public string? CompletedFolderId = null;
 
     public bool ApiMode = true;
 
@@ -53,6 +53,8 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
     public override async Task<int> RunAsync(IPlaywright playwright, IBrowser browser, IPage page)
     {
+        Console.WriteLine($"Downloading {VideoId} to {TargetFile(FileType.mp4)}");
+
         Directory.CreateDirectory(TargetFolder);
 
         var request = await page.GotoAndGetUrlRequest(
@@ -77,6 +79,8 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
                     var response = await client.GetAsync(url);
 
+                    response.EnsureSuccessStatusCode();
+
                     using (var fs = File.Create(TargetFile(type)))
                     {
                         await response.Content.CopyToAsync(fs, token);
@@ -86,14 +90,23 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
             if (Delete)
             {
-                var response = await client.PostAsJsonAsync(
-                    "https://api2.heygen.com/v1/video_translate/trash",
+                var response = await client.PostApiRequestAsync(
                     new DeleteRequest()
                     {
                         items = [
                             new() { id = VideoId }
                         ]
-                    });
+                    },
+                    token);
+            }
+            else if (!string.IsNullOrEmpty(CompletedFolderId))
+            {
+                var response = await client.PostApiRequestAsync(
+                    new MoveRequest(
+                        item_id: VideoId,
+                        project_id: CompletedFolderId
+                    ),
+                    token);
             }
         }
         else

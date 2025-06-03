@@ -7,6 +7,7 @@ using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -91,7 +92,13 @@ public static class Helpers
         foreach (var header in headers)
         {
             if (header.Key.StartsWith(":")) continue;
-            client.DefaultRequestHeaders.Add(header.Key, header.Value);
+            try
+            {
+                client.DefaultRequestHeaders.Add(header.Key, header.Value);
+            }
+            catch
+            {
+            }
         }
 
         return client;
@@ -549,7 +556,7 @@ public static class Helpers
         }
     }
 
-    public static string GetOperationId(string path)
+    public static string GetOperationId(string path, bool includeGuid = true)
     {
         var guid = Guid.NewGuid().ToString().Substring(0, 8);
         var fileName = Path.GetFileNameWithoutExtension(path);
@@ -578,8 +585,12 @@ public static class Helpers
             }
         }
 
-        sb.Append("_");
-        sb.Append(guid);
+        if (includeGuid)
+        {
+            sb.Append("_");
+            sb.Append(guid);
+        }
+
         return sb.ToString();
     }
 
@@ -646,8 +657,20 @@ public static class Helpers
         }
     }
 
+    public static Task<HttpResponseMessage> PostApiRequestAsync<TRequest>(this HttpClient client, TRequest request, CancellationToken token)
+        where TRequest : IApiRequest<TRequest>
+    {
+        return client.PostAsJsonAsync(request.GetApiUrl(), request, token);
+    }
+
+    public static bool EqualsIgnoreCase(this string s, string other)
+    {
+        return string.Equals(s, other, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static (Vuid Id, int Index) ExtractFileDescriptor(string name)
     {
+        name = Uri.UnescapeDataString(name);
         var match = Regex.Match(name, @"\[\[(?<id>\w+)-(?<index>\d+)\]\]");
         if (match.Success)
         {

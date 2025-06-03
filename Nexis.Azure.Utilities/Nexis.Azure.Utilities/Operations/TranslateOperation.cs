@@ -10,6 +10,7 @@ using System.Diagnostics.ContractsLight;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net.Http.Json;
 using System.Reflection.Metadata;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -55,6 +56,27 @@ public record class TranslateOperation(IConsole Console, CancellationToken token
 
             var fileName = Uri.EscapeDataString(Path.GetFileName(AudioFile));
             AudioFile = link.ToString().Trim().Replace("open?id=", "file/d/") + "/view?filename=" + fileName;
+
+            if (ApiMode)
+            {
+                var request = await page.GotoAndGetUrlRequest(
+                    "https://app.heygen.com/projects?create_video_modal=true&index&modal_screen=translate_new",
+                    "https://api2.heygen.com/v1/pacific/account.get");
+
+                var client = await request.AsHttpClientAsync();
+
+                var response = await client.PostApiRequestAsync(new TranslateRequest(
+                    name: fileName,
+                    google_url: AudioFile,
+                    output_languages: Languages),
+                token);
+
+                response.EnsureSuccessStatusCode();
+
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                return 0;
+            }
         }
 
         if (Legacy)
