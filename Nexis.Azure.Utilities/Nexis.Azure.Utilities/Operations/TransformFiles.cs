@@ -61,7 +61,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
     public List<string> Extensions = [".mp4", ".avi", ".mkv", ".webm", ".m4v"];
 
-    private ConcurrentDictionary<(Guid Id, LanguageCode Language), PendingTranslation> PendingTranslations = new();
+    private ConcurrentDictionary<(Vuid Id, LanguageCode Language), PendingTranslation> PendingTranslations = new();
 
     public bool RestoreState = false;
 
@@ -161,7 +161,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         var entries = files.Select(e =>
         {
             var sourceVid = e.Value.FullName;
-            var entry = new FileEntry(sourceVid, e.Key, sourceVid, sourceVid, Guid.NewGuid());
+            var entry = new FileEntry(sourceVid, e.Key, sourceVid, sourceVid, Vuid.FromFileName(sourceVid));
             return entry;
         }).ToAsyncEnumerable();
 
@@ -221,7 +221,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                         TargetFolder = entry.Target,
                         BaseName = record.FileName,
                         Language = language,
-                        Delete = true
+                        Delete = false
                     };
 
                     if (Exists(op.SubFile) && Exists(op.VideoFile))
@@ -315,7 +315,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         }
     }
 
-    private PendingTranslation AddPending(Guid id, LanguageCode language)
+    private PendingTranslation AddPending(Vuid id, LanguageCode language)
     {
         var pending = PendingTranslations.GetOrAdd((id, language), static k => new PendingTranslation(k.Id, k.Language));
 
@@ -431,7 +431,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         await task;
     }
 
-    public record PendingTranslation(Guid OperationId, LanguageCode Language)
+    public record PendingTranslation(Vuid OperationId, LanguageCode Language)
     {
         public string OutputFolder = null!;
         public string FolderName = $"{OperationId:n}.{Language}";
@@ -457,7 +457,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         public TaskCompletionSource Completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    public record FileEntry(string Origin, string RelativePath, string Source, string Target, Guid OperationId, LanguageCode? Language = default)
+    public record FileEntry(string Origin, string RelativePath, string Source, string Target, Vuid OperationId, LanguageCode? Language = default)
     {
         public int? SegmentCount;
 
@@ -465,7 +465,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                                 .Where(f => f.Contains(OperationId.ToString().Substring(0, 8))).ToArray();
     }
 
-    private record MarkerData(Guid Id, int? SegmentCount);
+    public record MarkerData(Vuid Id, int? SegmentCount);
 
     private bool Exists(string splitMarker) => File.Exists(splitMarker);
 }

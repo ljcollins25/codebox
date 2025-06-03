@@ -39,9 +39,23 @@ public record class TranslateOperation(IConsole Console, CancellationToken token
 
     public bool DryRun = false;
 
+    public bool ApiMode = true;
+
     public override async Task<int> RunAsync(IPlaywright playwright, IBrowser browser, IPage page)
     {
         //var page = await browser.NewPageAsync();
+
+        if (!string.IsNullOrEmpty(GdrivePath))
+        {
+            await ExecAsync("rclone", ["copyto", AudioFile, GdrivePath]);
+
+            var link = new StringBuilder();
+
+            await ExecAsync("rclone", ["link", GdrivePath], PipeTarget.ToStringBuilder(link));
+
+            var fileName = Uri.EscapeDataString(Path.GetFileName(AudioFile));
+            AudioFile = link.ToString().Trim().Replace("open?id=", "file/d/") + "/view?filename=" + fileName;
+        }
 
         if (Legacy)
         {
@@ -54,18 +68,6 @@ public record class TranslateOperation(IConsole Console, CancellationToken token
         else
         {
             await page.GotoAsync("https://app.heygen.com/projects?create_video_modal=true&index&modal_screen=translate_new");
-        }
-
-        if (!string.IsNullOrEmpty(GdrivePath))
-        {
-            await ExecAsync("rclone", ["copyto", AudioFile, GdrivePath]);
-
-            var link = new StringBuilder();
-
-            await ExecAsync("rclone", ["link", GdrivePath], PipeTarget.ToStringBuilder(link));
-
-            var fileName = Uri.EscapeDataString(Path.GetFileName(AudioFile));
-            AudioFile = link.ToString().Trim().Replace("open?id=", "file/d/") + "/view?filename=" + fileName;
         }
 
         if (AudioFile.StartsWith("http"))

@@ -31,7 +31,7 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
 
     public required string OutputFolder;
 
-    public Guid OperationId = Guid.NewGuid();
+    public Vuid? OperationId;
 
     public static TimeSpan DefaultSegmentDuration = TimeSpan.FromMinutes(25);
 
@@ -41,6 +41,8 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
 
     public async Task<int> RunAsync()
     {
+        OperationId ??= Vuid.FromFileName(VideoFile);
+
         var intermediateFolder = Path.Combine(OutputFolder, "extracted");
         Directory.CreateDirectory(OutputFolder);
         Directory.CreateDirectory(intermediateFolder);

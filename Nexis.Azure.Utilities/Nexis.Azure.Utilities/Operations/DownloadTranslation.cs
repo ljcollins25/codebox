@@ -10,7 +10,9 @@ using System.Diagnostics.ContractsLight;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net.Http.Json;
 using System.Reflection.Metadata;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -38,7 +40,11 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
     public bool Delete = false;
 
+    public string Name { get; set; }
+
     public bool Download = true;
+
+    public bool ApiMode = true;
 
     public string SubFile => TargetFile(FileType.srt);
     public string VideoFile => TargetFile(FileType.mp4);
@@ -49,50 +55,93 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
     {
         Directory.CreateDirectory(TargetFolder);
 
-        //var page = await browser.NewPageAsync();
-        await page.GotoAsync($"https://app.heygen.com/videos/{VideoId}?index");
+        var request = await page.GotoAndGetUrlRequest(
+            $"https://app.heygen.com/videos/{VideoId}?index",
+            $"https://api2.heygen.com/v1/pacific/collaboration/video.details?item_id={VideoId}");
 
-        await Task.Delay(1000);
-
-        if (Download)
+        //var headers = await request.AllHeadersAsync();
+        if (ApiMode)
         {
-            await page.GetByTitle("Download").ClickAsync();
+            var message = await request.AsHttpRequestAsync();
+            var client = await request.AsHttpClientAsync();
+
+            var result = await client.SendAsync(message);
+            var details = await result.Content.ReadFromJsonAsync<VideoDetails>();
+            var data = details!.data;
+
+            if (Download)
+            {
+                foreach (var type in new[] { FileType.mp4, FileType.ass })
+                {
+                    var url = type == FileType.mp4 ? data.video_url : data.caption_url;
+
+                    var response = await client.GetAsync(url);
+
+                    using (var fs = File.Create(TargetFile(type)))
+                    {
+                        await response.Content.CopyToAsync(fs, token);
+                    }
+                }
+            }
+
+            if (Delete)
+            {
+                var response = await client.PostAsJsonAsync(
+                    "https://api2.heygen.com/v1/video_translate/trash",
+                    new DeleteRequest()
+                    {
+                        items = [
+                            new() { id = VideoId }
+                        ]
+                    });
+            }
+        }
+        else
+        {
+            //var page = await browser.NewPageAsync();
 
             await Task.Delay(1000);
 
-            foreach (var type in new[] { FileType.mp4, FileType.ass })
+            if (Download)
             {
-                if (type == FileType.ass)
+                await page.GetByTitle("Download").ClickAsync();
+
+                await Task.Delay(1000);
+
+                foreach (var type in new[] { FileType.mp4, FileType.ass })
                 {
-                    await page.GetByRole(AriaRole.Button, new() { Name = "Captions" }).ClickAsync();
+                    if (type == FileType.ass)
+                    {
+                        await page.GetByRole(AriaRole.Button, new() { Name = "Captions" }).ClickAsync();
+                    }
+
+                    var chooser = await page.RunAndWaitForDownloadAsync(async () =>
+                    {
+                        await page.GetByText("Download", new() { Exact = true }).Nth(1).ClickAsync();
+                    });
+
+                    await chooser.SaveAsAsync(TargetFile(type));
                 }
-
-                var chooser = await page.RunAndWaitForDownloadAsync(async () =>
-                {
-                    await page.GetByText("Download", new() { Exact = true }).Nth(1).ClickAsync();
-                });
-
-                await chooser.SaveAsAsync(TargetFile(type));
             }
-        }
 
-        if (Delete)
-        {
+            if (Delete)
+            {
 
-            //await page.ClickAsync("[name='more-vertical']");
+                //await page.ClickAsync("[name='more-vertical']");
 
-            //await page.ClickAsync("[name='delete']");
+                //await page.ClickAsync("[name='delete']");
 
-            await page.GotoAsync("https://app.heygen.com/projects?index");
+                await page.GotoAsync("https://app.heygen.com/projects?index");
 
-            //await page.PostDataFromBrowserContextAsync(
-            //    "https://api2.heygen.com/v1/video_translate/trash",
-            //    new DeleteRequest()
-            //    {
-            //        items = [
-            //            new() { id = VideoId }
-            //        ]
-            //    });
+                //await page.PostDataFromBrowserContextAsync(
+                //    "https://api2.heygen.com/v1/video_translate/trash",
+                //    new DeleteRequest()
+                //    {
+                //        items = [
+                //            new() { id = VideoId }
+                //        ]
+                //    });
+            }
         }
 
         return 0;
@@ -102,18 +151,6 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
     {
     }
 
-    public class DeleteRequest
-    {
-        public List<Item> items { get; set; } = new();
-
-        public class Item
-        {
-            public string item_type { get; set; } = "video_translate";
-
-            public required string id { get; set; }
-        }
-    }
-
-
+    
 
 }

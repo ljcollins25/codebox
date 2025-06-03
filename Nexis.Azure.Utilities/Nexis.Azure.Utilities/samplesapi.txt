@@ -1,0 +1,126 @@
+fetch("https://api2.heygen.com/v1/heygen_project/item/move", {
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
+    "content-type": "application/json",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "traceparent": "00-00000000000000003de90e317261d184-5f6fb7470b5ba333-01",
+    "x-datadog-origin": "rum",
+    "x-datadog-parent-id": "6876916671779152691",
+    "x-datadog-sampling-priority": "1",
+    "x-datadog-trace-id": "4461112511422386564",
+    "x-language-override": "en-US",
+    "x-last-build": "1748904515933",
+    "x-path": "/videos/ba8ebe2d093f4a5fa2e30d74464c25fa",
+    "x-ver": "4.1.0",
+    "x-zid": "pkwNgWuifPwJg6jM5yX2fhUgIgUBUriB"
+  },
+  "referrerPolicy": "no-referrer",
+  "body": "{\"project_id\":\"d90fd9fe544f4109bdbc3cc167451217\",\"item_id\":\"ba8ebe2d093f4a5fa2e30d74464c25fa\",\"item_type\":\"video_translate\"}",
+  "method": "POST",
+  "mode": "cors",
+  "credentials": "include"
+});
+
+
+fetch("https://api2.heygen.com/v1/video_translate/update", {
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
+    "content-type": "application/json",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "traceparent": "00-000000000000000000377e97fe2d13ae-14bf796dfe87231d-01",
+    "x-datadog-origin": "rum",
+    "x-datadog-parent-id": "1495047114638959389",
+    "x-datadog-sampling-priority": "1",
+    "x-datadog-trace-id": "15620314988614574",
+    "x-language-override": "en-US",
+    "x-last-build": "1748920038333",
+    "x-path": "/videos/ba8ebe2d093f4a5fa2e30d74464c25fa",
+    "x-ver": "4.1.0",
+    "x-zid": "pkwNgWuifPwJg6jM5yX2fhUgIgUBUriB"
+  },
+  "referrerPolicy": "no-referrer",
+  "body": "{\"id\":\"ba8ebe2d093f4a5fa2e30d74464c25fa\",\"params\":{\"title\":\"DearHeavenS01.1700.rn\"}}",
+  "method": "POST",
+  "mode": "cors",
+  "credentials": "include"
+});
+
+fetch("https://files2.heygen.ai/video_translate/fbf18ba6230e4e5c897278c612351e92/caption.ass?Expires=1749522309&Signature=WC24Rj4FHM-wXX0Q0m6GkS5EjA9muzPZHFolk5oE-Mls9ZA-21WZq0rkUsKg9V9buWByv34UKgHwWKZjuBPJD2hyu~AuY4anyYO4UxRVUqHC2rgvNrWaaazKBVHHAbliNlV7ZjzwkzOij39E2BNlUy1mj00uW5cf29r1uh3DfyqdNp6xQd0Rv1Y2amc3xZAHFX51RIoejXRX8deA0kXlT7t~I6srY00x33Jdcirqv83Ncg6-TvuvIf2nWNisHMjUAh5rL3NQ9PA4waDGjziEcbDpmTuXpLw5-TwemdQ1VzhN3icZ8iS5Ow-bPVaNYMo04AWpRxWCSkHJQ1z-VeBhlQ__&Key-Pair-Id=K38HBHX5LX3X2H", {
+  "headers": {
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "accept-language": "en-US,en;q=0.9",
+    "if-modified-since": "Mon, 02 Jun 2025 03:32:22 GMT",
+    "if-none-match": "\"1126457f3d47825dcd616049ed51ea44\"",
+    "priority": "u=0, i",
+    "sec-ch-ua": "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-user": "?1",
+    "upgrade-insecure-requests": "1"
+  },
+  "referrerPolicy": "no-referrer",
+  "body": null,
+  "method": "GET",
+  "mode": "cors",
+  "credentials": "omit"
+});
+
+fetch("https://api2.heygen.com/v3/video_translate.create", {
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
+    "content-type": "application/json",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"137\", \"Not/A)Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "traceparent": "00-00000000000000003b1f396cc4b27f04-7aa549e76458e352-01",
+    "x-datadog-origin": "rum",
+    "x-datadog-parent-id": "8837551101954286418",
+    "x-datadog-sampling-priority": "1",
+    "x-datadog-trace-id": "4260186911835062020",
+    "x-language-override": "en-US",
+    "x-last-build": "1748920038333",
+    "x-path": "/projects",
+    "x-ver": "4.1.0",
+    "x-zid": "pkwNgWuifPwJg6jM5yX2fhUgIgUBUriB"
+  },
+  "referrerPolicy": "no-referrer",
+  "body": "{\"name\":\"https://drive.google.com/file/d/1BucT_w-R3v3wDdiNE_EPRi/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-001%5D%5D.m4a.mp4\",\"input_video_id\":\"\",\"google_url\":\"https://drive.google.com/file/d/1BucT_w-R3v3HAJO7sLKAxwDdiNE_EPRi/view?filename=%5B%5B5cc3fe3f31bc4e619360176e3e6f80a2-001%5D%5D.m4a.mp4\",\"output_languages\":[\"English (United States)\",\"Japanese\",\"Chinese (Mandarin, Simplified)\"],\"instruction\":\"\",\"enable_video_stretching\":false,\"vocabulary\":[],\"translate_audio_only\":true,\"captions\":true,\"recaptcha_token\":\"\"}",
+  "method": "POST",
+  "mode": "cors",
+  "credentials": "include"
+});
+
+{
+    "code": 100,
+    "data": {
+        "ids": [
+            "0895f8c67b014c4397f0628cd2dc8a11",
+            "3e77e52bedfc4057b0499147d61ad76a",
+            "38350c1ab7814c8d951700a5522fa193"
+        ]
+    },
+    "msg": null,
+    "message": null
+}

@@ -4,6 +4,7 @@ using System.CommandLine.Invocation;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
+using System.Text.Json;
 using Azure.Storage.Blobs.Specialized;
 using FluentAssertions;
 
@@ -47,8 +48,10 @@ public partial class CliTests : TestBase
 
     [Theory]
     [InlineData(0, null)]
+    [InlineData(45, null, 10)]
+    [InlineData(60, null, 1)]
     [InlineData(36, @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe")]
-    public async Task TestTransform(int skip, string? browserPath)
+    public async Task TestTransform(int skip, string? browserPath, int limit = 5)
     {
         BrowserOperationBase.BrowserProcessPath.Value = browserPath;
 
@@ -61,7 +64,7 @@ public partial class CliTests : TestBase
             GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
             Languages = [eng, jpn, zho],
             OutputRoot = @"Q:\mediaoutputs",
-            Limit = 5,
+            Limit = limit,
             Skip = skip
         };
 
@@ -100,10 +103,10 @@ public partial class CliTests : TestBase
     {
         var op = new DownloadTranslation(TestConsole, Token)
         {
-            VideoId = "a2568ce511694e529ba07015156a1133",
+            VideoId = "fbf18ba6230e4e5c897278c612351e92",
             TargetFolder = @"C:\mediaoutputs\test",
             Language = eng,
-            Delete = true,
+            Delete = false,
             Download = false
         };
 
@@ -113,7 +116,25 @@ public partial class CliTests : TestBase
     [Fact]
     public async Task TestNaming()
     {
+
         var name = ExtractFilenameFromContentDispositionUrl("https://resource2.heygen.ai/video_translate/033b4125bdcb4018983381d7f83f0f5b/640x360.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27https%253A%2F%2Fdrive.google.com%2Ffile%2Fd%2F10yw4foYNUqjph0YwC8_0TkjCJMB1--KX%2Fview%253Ffilename%253D%25255B%25255B6961efd570f74c7d949a54fbad803beb-000%25255D%25255D.m4a.mp4.mp4%3B");
+
+        var fd = ExtractFileDescriptor(name);
+
+        var st = $"{fd:n}";
+
+        var md = new TransformFiles.MarkerData(new("helol"), 23);
+
+        var json = JsonSerializer.Serialize(md);
+
+        var rt = JsonSerializer.Deserialize<TransformFiles.MarkerData>(json);
+    }
+
+    [Fact]
+    public async Task TestId()
+    {
+        var path = @"C:\mount\mediajpe\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01\Dear Heaven - S01E01 - Episode 1.mp4";
+        var id = GetOperationId(path);
     }
 
     [Fact]

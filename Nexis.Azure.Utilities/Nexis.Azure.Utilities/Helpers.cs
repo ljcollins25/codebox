@@ -66,6 +66,55 @@ public static class Helpers
         return enumerate();
     }
 
+    public static async Task<HttpRequestMessage> AsHttpRequestAsync(this IRequest request, string? url = null, HttpMethod? method =  null)
+    {
+        var result = new HttpRequestMessage(method ?? HttpMethod.Parse(request.Method), url ?? request.Url);
+
+        var headers = await request.AllHeadersAsync();
+        foreach (var header in headers)
+        {
+            if (header.Key.StartsWith(":")) continue;
+            result.Headers.Add(header.Key, header.Value);            
+        }
+
+        return result;
+    }
+
+    public static async Task<HttpClient> AsHttpClientAsync(this IRequest request)
+    {
+        var client = new HttpClient(new HttpClientHandler()
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.All
+        });
+
+        var headers = await request.AllHeadersAsync();
+        foreach (var header in headers)
+        {
+            if (header.Key.StartsWith(":")) continue;
+            client.DefaultRequestHeaders.Add(header.Key, header.Value);
+        }
+
+        return client;
+    }
+
+    public static Task<IRequest> GotoAndGetUrlRequest(this IPage page, string url, string requestUrl)
+    {
+        return page.RunAndWaitForRequestFinishedAsync(() => page.GotoAsync(url),
+        new()
+        {
+            Predicate = (IRequest r) =>
+            {
+                var url = r.Url;
+                if (url == requestUrl)
+                {
+                    return true;
+                }
+
+                return false;
+            }
+        });
+    }
+
     public static Task PostDataFromBrowserContextAsync<T>(this IPage page, string url, T data)
     {
         return PostJsonFromBrowserContextAsync(page, url, JsonSerializer.Serialize<T>(data));
@@ -500,6 +549,42 @@ public static class Helpers
         }
     }
 
+    public static string GetOperationId(string path)
+    {
+        var guid = Guid.NewGuid().ToString().Substring(0, 8);
+        var fileName = Path.GetFileNameWithoutExtension(path);
+
+        var name = fileName;
+
+        if (fileName.Contains(" - "))
+        {
+            var parts = fileName.Split(" - ");
+            if (parts.Length >= 3)
+            {
+                name = $"{parts[0].Trim().Truncate(20)}_{parts[1].Truncate(8)}";
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        foreach (var c in name)
+        {
+            if (char.IsAsciiLetterOrDigit(c) || c == '_')
+            {
+                sb.Append(c);
+            }
+            else if (c == '.' || c == '-')
+            {
+                sb.Append('_');
+            }
+        }
+
+        sb.Append("_");
+        sb.Append(guid);
+        return sb.ToString();
+    }
+
+    public static string Truncate(this string s, int length) => s.Length <= length ? s : s.Substring(0, length);
+
     public static string? ExtractFilenameFromContentDispositionUrl(string url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -561,12 +646,12 @@ public static class Helpers
         }
     }
 
-    public static (Guid Id, int Index) ExtractFileDescriptor(string name)
+    public static (Vuid Id, int Index) ExtractFileDescriptor(string name)
     {
         var match = Regex.Match(name, @"\[\[(?<id>\w+)-(?<index>\d+)\]\]");
         if (match.Success)
         {
-            var id = Guid.Parse(match.Groups["id"].Value);
+            var id = new Vuid(match.Groups["id"].Value);
             var index = int.Parse(match.Groups["index"].Value);
             return (id, index);
         }
