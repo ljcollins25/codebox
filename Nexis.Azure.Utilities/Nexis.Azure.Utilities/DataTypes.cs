@@ -184,7 +184,12 @@ public record VideoDataItem(
 {
     public required string name { get; init; }
 
+    [JsonConverter(typeof(JsonStringEnumConverter<LanguageCode>))]
+    public LanguageCode lang => output_language;
+
     public (Vuid Id, int Index)? displayInfo;
+
+    public bool done { get; set; }
 
     public (Vuid Id, int Index) GetInfo()
     {

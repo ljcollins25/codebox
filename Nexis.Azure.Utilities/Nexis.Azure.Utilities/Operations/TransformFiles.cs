@@ -212,10 +212,11 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
                 await Task.WhenAny(pending.Completion.Task, Task.Delay(Timeout.InfiniteTimeSpan, cts.Token)).Unwrap();
 
-                var videoIdFiles = Directory.GetFiles(pending.OutputFolder, "*.json");
-                foreach (var videoIdFile in videoIdFiles)
+                //var videoIdFiles = Directory.GetFiles(pending.OutputFolder, "*.json");
+                //foreach (var videoIdFile in videoIdFiles)
+                foreach (var record in pending.RecordsByIndex.Values)
                 {
-                    var record = TranslationRecord.ReadFromFile(videoIdFile);
+                    //var record = TranslationRecord.ReadFromFile(videoIdFile);
                     var language = record.GetLanguageCode();
                     var op = new DownloadTranslation(Console, token)
                     {
@@ -224,7 +225,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                         BaseName = record.FileName,
                         Language = language,
                         Delete = false,
-                        CompletedFolderId = "d90fd9fe544f4109bdbc3cc167451217"
+                        TargetFolderId = "c47f8b0ae3db4e58b948994021ff3100"
                     };
 
                     if (Exists(op.SubFile) && Exists(op.VideoFile))
@@ -238,10 +239,11 @@ public class TransformFiles(IConsole Console, CancellationToken token)
             endSignal: cts),
             i => RunStageAsync(Stages.output, 1, i, async (entry, token) =>
             {
+                entry.Target = entry.Target.Replace(".mp4", "") + ".ogg";
                 var op = new MergeAudio(Console, token)
                 {
                     InputFolder = entry.Source,
-                    OutputAudioFile = entry.Target.Replace(".mp4", "") + ".ogg",
+                    OutputAudioFile = entry.Target,
                 };
 
                 await op.RunAsync();
@@ -251,7 +253,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                 var op = new UploadFilesOperation(Console, token)
                 {
                     Force = true,
-                    RequiredInfixes = [ $".{entry.Language!.Value}." ],
+                    RequiredInfixes = [Path.GetFileNameWithoutExtension(entry.Target)],
                     LocalSourcePath = GetStageRoot(Stages.output),
                     ThreadCount = 1,
                     RelativePath = Path.GetDirectoryName(entry.Source)!,
@@ -295,10 +297,12 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                     
                     var record = TranslationRecord.FromVideoItem(item);
                     var targetPath = Path.Combine(pending.OutputFolder, record.FileName + ".json");
-                    if (exists.Add(targetPath) && !File.Exists(targetPath))
+                    if (exists.Add(targetPath))
                     {
-                        File.WriteAllText(targetPath, JsonSerializer.Serialize(record));
-                        pending.CompletedSegmentCount++;
+                        pending.RecordsByIndex[info.Index] = record;
+
+                        //File.WriteAllText(targetPath, JsonSerializer.Serialize(record));
+                        //pending.CompletedSegmentCount++;
                         pending.CompleteIfReady();
                     }
                 }
@@ -329,7 +333,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
                         File.WriteAllText(Path.Combine(pending.OutputFolder, record.FileName + ".json"), text);
                         File.Delete(file);
-                        pending.CompletedSegmentCount++;
+                        //pending.CompletedSegmentCount++;
+                        throw new NotImplementedException();
                         pending.CompleteIfReady();
                     }
                     catch
@@ -359,7 +364,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
             Directory.CreateDirectory(pending.OutputFolder);
 
-            pending.CompletedSegmentCount = Directory.GetFiles(pending.OutputFolder, "*.json").Length;
+            //pending.CompletedSegmentCount = Directory.GetFiles(pending.OutputFolder, "*.json").Length;
         }
 
         return pending;
@@ -393,7 +398,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                     string result = "Succeeded";
                     try
                     {
-                        Console.WriteLine($"[{stageName}] Start {entry.RelativePath}");
+                        Console.WriteLine($"[{stageName}] Start {entry.RelativePath} [{entry.Language}]");
                         var suffix = entry.Language is { } lang ? $".{lang}" : "";
                         entry = entry with
                         {
@@ -443,7 +448,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                     }
                     finally
                     {
-                        Console.WriteLine($"[{stageName}] End {entry.RelativePath}. Result = {result}");
+                        Console.WriteLine($"[{stageName}] End {entry.RelativePath} [{entry.Language}]. Result = {result}");
                     }
                 });
             }
@@ -469,8 +474,10 @@ public class TransformFiles(IConsole Console, CancellationToken token)
     {
         public string OutputFolder = null!;
         public string FolderName = $"{OperationId:n}.{Language}";
-        public int CompletedSegmentCount;
+        //public int CompletedSegmentCount;
         public FileEntry? FileEntry;
+
+        public ConcurrentDictionary<int, TranslationRecord> RecordsByIndex = new();
 
         public bool IsQueued = false;
 
@@ -480,7 +487,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
             lock (this)
             {
-                if (!IsQueued && CompletedSegmentCount == FileEntry?.SegmentCount)
+                if (!IsQueued && RecordsByIndex.Count == FileEntry?.SegmentCount)
                 {
                     IsQueued = true;
                     Completion.SetResult();
@@ -495,6 +502,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
     {
         public int? SegmentCount;
 
+        public string Target { get; set; } = Target;
+ 
         public string[] GetSplitFiles() => Directory.GetFiles(Source, "*.mp4")
                                 .Where(f => f.Contains(OperationId.ToString().Substring(0, 8))).ToArray();
     }

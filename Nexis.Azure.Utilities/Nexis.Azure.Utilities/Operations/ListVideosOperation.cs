@@ -47,6 +47,12 @@ public record class ListVideosOperation(IConsole Console, CancellationToken toke
         [VideoStatus.processing] = "14bb07cda9ff4dbfaed238fb0fbd8c65",
     };
 
+    public HashSet<string> IgnoreFolderIds = new()
+    {
+        // Downloaded folder
+        "c47f8b0ae3db4e58b948994021ff3100"
+    };
+
     public string? MarkerFolder;
 
     public bool Print = false;
@@ -107,11 +113,11 @@ public record class ListVideosOperation(IConsole Console, CancellationToken toke
             {
                 foreach (var result in resultsByStatus[status])
                 {
-                    if (result.project_id != folder)
+                    if (result.project_id != folder && !IgnoreFolderIds.Contains(result.project_id ?? ""))
                     {
                         var record = TranslationRecord.FromVideoItem(result);
                         var fileName = Uri.EscapeDataString($"{result.title}--{record.FileName}");
-                        Console.Out.WriteLine($"Moving to  ({status}){folder}/{fileName} from {result.project_id ?? "<null>"}/{result.name}");
+                        Console.Out.WriteLine($"Moving to  ({status} | {result.output_language}){folder}/{fileName} from {result.project_id ?? "<null>"}/{result.name}");
 
                         if (!DryRun)
                         {
@@ -122,14 +128,52 @@ public record class ListVideosOperation(IConsole Console, CancellationToken toke
                     }
                 }
             }
+
+            foreach (var duplicateGroup in Results.GroupBy(r => (r.name, r.output_language)).Where(g => g.Count() > 0))
+            {
+                var ordered = duplicateGroup.OrderByDescending(r => (int)r.status)
+                    .ThenByDescending(r => r.eta).ToArray();
+                foreach (var duplicate in ordered.Skip(1))
+                {
+                    Console.WriteLine($"Deleting duplicate [{duplicate.id} ({duplicate.status})] {duplicate.name} [{duplicate.output_language.ToDisplayName()}]");
+                    if (!DryRun)
+                    {
+
+                        var response = await client.PostApiRequestAsync(
+                            new DeleteRequest()
+                            {
+                                items = [
+                                    new() { id = duplicate.id }
+                                ]
+                            },
+                            token);
+
+                        response.EnsureSuccessStatusCode();
+                    }
+                    
+                }
+            }
         }
 
         if (Print)
         {
+            foreach (var group in Results.GroupBy(r => (r.GetInfo().Id, r.output_language)))
+            {
+                if (group.All(r => r.status == VideoStatus.completed))
+                {
+                    foreach (var item in group)
+                    {
+                        item.done = true;
+                    }
+                }
+            }
+
             var table = new DisplayTable();
             table.AddColumn(nameof(VideoDataItem.id));
             table.AddColumn(nameof(VideoDataItem.title));
             table.AddColumn(nameof(VideoDataItem.status));
+            table.AddColumn(nameof(VideoDataItem.done));
+            table.AddColumn(nameof(VideoDataItem.lang));
             table.AddColumn(nameof(VideoDataItem.creator_name));
             table.AddColumn(nameof(VideoDataItem.output_language));
             foreach (var item in Results.OrderBy(i => (i.displayInfo ?? i.GetInfo()).Id.Value ?? "")

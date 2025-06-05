@@ -42,7 +42,7 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
     public bool Download = true;
 
-    public string? CompletedFolderId = null;
+    public string? TargetFolderId = null;
 
     public bool ApiMode = true;
 
@@ -99,12 +99,12 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
                     },
                     token);
             }
-            else if (!string.IsNullOrEmpty(CompletedFolderId))
+            else if (!string.IsNullOrEmpty(TargetFolderId))
             {
                 var response = await client.PostApiRequestAsync(
                     new MoveRequest(
                         item_id: VideoId,
-                        project_id: CompletedFolderId
+                        project_id: TargetFolderId
                     ),
                     token);
             }

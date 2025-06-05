@@ -65,7 +65,10 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     [Theory]
     [InlineData(0, null)]
     [InlineData(45, null, 10)]
-    [InlineData(51, null, 1)]
+    [InlineData(51, null, 5)]
+    [InlineData(60, null, 2)]
+    [InlineData(62, null, 5)]
+    [InlineData(36, null)]
     [InlineData(36, @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe")]
     public async Task TestTransform(int skip, string? browserPath, int limit = 5)
     {
@@ -78,7 +81,7 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
             RelativePath = @"C:\mount\mediajpe\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01",
             CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
             GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
-            Languages = [eng, jpn, zho],
+            Languages =  skip >= 62 ? [jpn, eng] : [eng, jpn, zho],
             OutputRoot = @"Q:\mediaoutputs",
             Limit = limit,
             Skip = skip
@@ -119,10 +122,10 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     {
         var op = new DownloadTranslation(TestConsole, Token)
         {
-            VideoId = "fbf18ba6230e4e5c897278c612351e92",
+            VideoId = "182e0407ff434be4aa254d4f525a278d",
             TargetFolder = @"C:\mediaoutputs\test",
             Language = eng,
-            Delete = false,
+            Delete = true,
             Download = false
         };
 
@@ -135,8 +138,9 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
         var op = new ListVideosOperation(TestConsole, Token)
         {
             MarkerFolder = @"Q:\mediaoutputs\translate",
-            //Organize = true,
-            DryRun = false
+            Organize = true,
+            DryRun = false,
+            Print = true
         };
 
         await op.RunAsync();
