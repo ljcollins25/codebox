@@ -68,7 +68,8 @@ public record class TranslateOperation(IConsole Console, CancellationToken token
                 var response = await client.PostApiRequestAsync(new TranslateRequest(
                     name: fileName,
                     google_url: AudioFile,
-                    output_languages: Languages),
+                    output_languages: Languages,
+                    keep_the_same_format: false),
                 token);
 
                 response.EnsureSuccessStatusCode();

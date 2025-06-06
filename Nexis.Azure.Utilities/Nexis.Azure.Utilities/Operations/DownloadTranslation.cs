@@ -42,9 +42,11 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
 
     public bool Download = true;
 
-    public string? TargetFolderId = null;
+    public string? CompletedFolderId = null;
 
     public bool ApiMode = true;
+
+    public bool Prioritize = false;
 
     public string SubFile => TargetFile(FileType.srt);
     public string VideoFile => TargetFile(FileType.mp4);
@@ -99,12 +101,21 @@ public record class DownloadTranslation(IConsole Console, CancellationToken toke
                     },
                     token);
             }
-            else if (!string.IsNullOrEmpty(TargetFolderId))
+            else if (!string.IsNullOrEmpty(CompletedFolderId))
             {
                 var response = await client.PostApiRequestAsync(
                     new MoveRequest(
                         item_id: VideoId,
-                        project_id: TargetFolderId
+                        project_id: CompletedFolderId
+                    ),
+                    token);
+            }
+            else if (Prioritize)
+            {
+                var response = await client.PostApiRequestAsync(
+                    new UpdateRequest(
+                        id: VideoId,
+                        new(title: null, low_priority: false)
                     ),
                     token);
             }

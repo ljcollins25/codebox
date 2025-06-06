@@ -70,6 +70,8 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     [InlineData(62, null, 5)]
     [InlineData(36, null)]
     [InlineData(36, @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe")]
+    [InlineData(67, null, 1)]
+    [InlineData(66, @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe", 1)]
     public async Task TestTransform(int skip, string? browserPath, int limit = 5)
     {
         BrowserOperationBase.BrowserProcessPath.Value = browserPath;
@@ -122,11 +124,12 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     {
         var op = new DownloadTranslation(TestConsole, Token)
         {
-            VideoId = "182e0407ff434be4aa254d4f525a278d",
+            VideoId = "6d8f88de98424358ae4ff51a2da05a93",
             TargetFolder = @"C:\mediaoutputs\test",
             Language = eng,
-            Delete = true,
-            Download = false
+            Delete = false,
+            Download = false,
+            Prioritize = true
         };
 
         await op.RunAsync();

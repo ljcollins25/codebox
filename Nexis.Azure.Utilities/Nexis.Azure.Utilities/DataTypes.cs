@@ -40,7 +40,9 @@ public record UpdateRequest(string id, UpdateRequest.Parameters @params) : IApiR
 {
     public static string Url => "https://api2.heygen.com/v1/video_translate/update";
 
-    public record Parameters(string title);
+    public record Parameters(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? title,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? low_priority = null);
 }
 
 public record TranslateRequest(

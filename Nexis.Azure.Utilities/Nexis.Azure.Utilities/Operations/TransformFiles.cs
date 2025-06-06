@@ -225,7 +225,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                         BaseName = record.FileName,
                         Language = language,
                         Delete = false,
-                        TargetFolderId = "c47f8b0ae3db4e58b948994021ff3100"
+                        CompletedFolderId = "c47f8b0ae3db4e58b948994021ff3100"
                     };
 
                     if (Exists(op.SubFile) && Exists(op.VideoFile))
