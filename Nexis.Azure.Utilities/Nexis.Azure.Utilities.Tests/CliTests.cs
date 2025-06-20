@@ -67,7 +67,8 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     [InlineData(45, null, 10)]
     [InlineData(51, null, 5)]
     [InlineData(60, null, 2)]
-    [InlineData(62, null, 5)]
+    [InlineData(61, null, 20)]
+    [InlineData(62, null, 20)]
     [InlineData(36, null)]
     [InlineData(36, @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe")]
     [InlineData(67, null, 1)]
@@ -84,6 +85,28 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
             CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
             GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
             Languages =  skip >= 62 ? [jpn, eng] : [eng, jpn, zho],
+            OutputRoot = @"Q:\mediaoutputs",
+            Limit = limit,
+            Skip = skip
+        };
+
+        await op.RunAsync();
+    }
+
+    [Theory]
+    [InlineData(@"Media\TV Shows\Yellow Boots {tmdb-46542}\Season 01", 54, null, 1)]
+    public async Task TestTransformShows(string showPath, int skip, string? browserPath, int limit = 5)
+    {
+        BrowserOperationBase.BrowserProcessPath.Value = browserPath;
+
+        var op = new TransformFiles(TestConsole, Token)
+        {
+            UploadUri = ContainerUriJpe,
+            LocalSourcePath = @"C:\mount\mediajpe",
+            RelativePath = @$"C:\mount\mediajpe\{showPath}",
+            CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
+            GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
+            Languages = [eng, jpn, zho],
             OutputRoot = @"Q:\mediaoutputs",
             Limit = limit,
             Skip = skip

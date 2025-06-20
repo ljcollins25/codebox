@@ -11,6 +11,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection.Metadata;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Azure;
@@ -43,6 +44,9 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
     public List<string> ExcludedExtensions = [".marker"];
 
     public List<string> RequiredInfixes = [];
+
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+    public static extern int StrCmpLogicalW(string x, string y);
 
     public IDictionary<string, FileInfo> GetFiles()
     {
@@ -86,6 +90,7 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         }
 
         var files = GetFiles();
+        Contract.Assert(files.Count != 0);
 
         Url targetRoot = Uri;
         if (!string.IsNullOrEmpty(RelativePath))

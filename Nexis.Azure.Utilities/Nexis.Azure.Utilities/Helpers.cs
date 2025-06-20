@@ -67,6 +67,56 @@ public static class Helpers
         return enumerate();
     }
 
+    public static IComparer<string> VideoFileNameComparer { get; } = Comparer<string>.Create((string a, string b) =>
+    {
+        var aparts = SplitVideoFileNameParts(a).GetEnumerator();
+        var bparts = SplitVideoFileNameParts(b).GetEnumerator();
+
+        bool aMove = true;
+        bool bMove = true;
+
+        while (Out.Var(out aMove, aparts.MoveNext()) && Out.Var(out bMove, bparts.MoveNext()))
+        {
+            int result = 0;
+            if (int.TryParse(aparts.Current.Span, out var aNum) && int.TryParse(bparts.Current.Span, out var bNum))
+            {
+                result = aNum.CompareTo(bNum);
+            }
+            else
+            {
+                result = aparts.Current.Span.CompareTo(bparts.Current.Span, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (result != 0)
+            {
+                return result;
+            }
+        }
+
+        return aMove.CompareTo(bMove);
+    });
+
+    public static IEnumerable<ReadOnlyMemory<char>> SplitVideoFileNameParts(string videoFileName)
+    {
+        int start = 0;
+        bool? lastIsDigit = null;
+        for (int i = 0; i < videoFileName.Length; i++)
+        {
+            var ch = videoFileName[i];
+            bool isDigit = char.IsDigit(ch);
+            lastIsDigit ??= isDigit;
+            if (isDigit != lastIsDigit)
+            {
+                yield return videoFileName.AsMemory(start, i - start);
+                start = i;
+            }
+
+            lastIsDigit = isDigit;
+        }
+
+        yield return videoFileName.AsMemory(start, videoFileName.Length - start);
+    }
+
     public static async Task<HttpRequestMessage> AsHttpRequestAsync(this IRequest request, string? url = null, HttpMethod? method =  null)
     {
         var result = new HttpRequestMessage(method ?? HttpMethod.Parse(request.Method), url ?? request.Url);

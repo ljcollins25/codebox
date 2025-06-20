@@ -4,3 +4,4 @@ choco install azcopy10 -y
 choco install winfsp -y
 choco install ffmpeg -y
 choco install chromium -y
+choco install yt-dlp -y

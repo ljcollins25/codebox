@@ -94,7 +94,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
             .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
             .Where(f => Extensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase))
-            .OrderBy(f => f.FullName, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(f => f.DirectoryName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(f => f.Name, VideoFileNameComparer)
             .Skip(Skip)
             .Take(Limit)
             .ToImmutableSortedDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f, StringComparer.OrdinalIgnoreCase)
@@ -239,7 +240,6 @@ public class TransformFiles(IConsole Console, CancellationToken token)
             endSignal: cts),
             i => RunStageAsync(Stages.output, 1, i, async (entry, token) =>
             {
-                entry.Target = entry.Target.Replace(".mp4", "") + ".ogg";
                 var op = new MergeAudio(Console, token)
                 {
                     InputFolder = entry.Source,
@@ -247,13 +247,17 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                 };
 
                 await op.RunAsync();
+            },
+            preRun: (entry, token) =>
+            {
+                entry.Target = entry.Target.Replace(".mp4", "") + ".ogg";
             }),
             i => RunStageAsync(Stages.upload, ThreadCount, i, async (entry, token) =>
             {
                 var op = new UploadFilesOperation(Console, token)
                 {
                     Force = true,
-                    RequiredInfixes = [Path.GetFileNameWithoutExtension(entry.Target)],
+                    RequiredInfixes = [Path.GetFileNameWithoutExtension(entry.Source)],
                     LocalSourcePath = GetStageRoot(Stages.output),
                     ThreadCount = 1,
                     RelativePath = Path.GetDirectoryName(entry.Source)!,
@@ -379,7 +383,8 @@ public class TransformFiles(IConsole Console, CancellationToken token)
         Func<FileEntry, CancellationToken, ValueTask> runAsync,
         bool readMarker = true,
         CancellationTokenSource? endSignal = default,
-        bool splitByLanguage = false)
+        bool splitByLanguage = false,
+        Action<FileEntry, CancellationToken>? preRun = null)
     {
         var stageName = stage.ToString();
         bool isRunning = RunStages.Contains(stage);
@@ -415,7 +420,9 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                                 .Count();
                         }
 
-                        if (!Exists(marker))
+                        preRun?.Invoke(entry, token);
+
+                        if (!Exists(marker) || new FileInfo(marker).Length == 0)
                         {
                             if (!isRunning)
                             {
