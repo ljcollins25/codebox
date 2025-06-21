@@ -64,7 +64,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             var logPrefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
             try
             {
-                bool preventDehydrate = entry.EffectiveSize <= MinDehydrationSize;
+                bool requireHydrated = entry.EffectiveSize <= MinDehydrationSize;
                 if (readTags.TryGetValue(Strings.snapshot, out var snapshotId))
                 {
                     // Retain referenced snapshots
@@ -90,7 +90,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                     tagCondition = $"{Strings.last_access} = null";
                 }
 
-                if (state == BlobState.active && preventDehydrate)
+                if (state == BlobState.active && requireHydrated)
                 {
                     operation = "under dehydration threshold";
                     return;
@@ -109,7 +109,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                     {
                         // The rclone FS marked the file dirty (i.e. has some leftover uncommitted blocks), need to refresh
                     }
-                    else
+                    else if (!requireHydrated)
                     {
                         // File is ghosted and sufficiently recently refreshed
                         operation = "up to date";
@@ -198,7 +198,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
 
                     conditions.IfMatch = crsp.Value.ETag;
 
-                    if (preventDehydrate)
+                    if (requireHydrated)
                     {
                         operation = "hydrating file";
                         return;
