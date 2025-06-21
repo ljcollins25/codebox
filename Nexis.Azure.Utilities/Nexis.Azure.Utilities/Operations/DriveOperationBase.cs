@@ -31,7 +31,7 @@ public class DriveOperationBase(IConsole Console, CancellationToken token)
 
     public static bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
 
-    protected BlobContainerClient GetTargetContainerAndPrefix(out string? prefix)
+    public BlobContainerClient GetTargetContainerAndPrefix(out string? prefix)
     {
         var rootBlobClient = new BlobClient(Uri);
         var targetBlobContainer = rootBlobClient.GetParentBlobContainerClient();
@@ -63,17 +63,6 @@ public class DriveOperationBase(IConsole Console, CancellationToken token)
             .SetItems(source)
             .RemoveRange(source.Select(s => s.Key).Where(k => k.StartsWith(Strings.tagPrefix)))
             .SetItem(Strings.state, state.ToString());
-    }
-
-    public IEnumerable<BlobItem> FilterDirectories(IEnumerable<BlobItem> blobs)
-    {
-        foreach (var blob in blobs)
-        {
-            if (!blob.Metadata().ContainsKey(Strings.dir_metadata))
-            {
-                yield return blob;
-            }
-        }
     }
 
     private static Regex regex = new Regex(@"\[\[(?<displayName>[^\]]+)\]\].*");

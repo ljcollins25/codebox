@@ -25,6 +25,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
 {
     public int RefreshBatches = 5;
 
+    public long? MinDehydrationSize;
+
     //public bool Force;
 
     // Set to zero to delete ephemeral snapshots immediately
@@ -55,13 +57,14 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             var readTags = blob.Tags().ToImmutableDictionary();
             Exception? ex = null;
             var path = blob.Name;
+            var entry = BlobDataEntry.From(blob);
 
             string operation = "";
             BlobState state = GetBlobState(blob);
             var logPrefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
             try
             {
-
+                bool preventDehydrate = entry.EffectiveSize <= MinDehydrationSize;
                 if (readTags.TryGetValue(Strings.snapshot, out var snapshotId))
                 {
                     // Retain referenced snapshots
@@ -87,7 +90,12 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                     tagCondition = $"{Strings.last_access} = null";
                 }
 
-                if (state == BlobState.active && (blob.Properties.ContentLength == 0 || blob.Properties.LastModified > Expiry))
+                if (state == BlobState.active && preventDehydrate)
+                {
+                    operation = "under dehydration threshold";
+                    return;
+                }
+                else if (state == BlobState.active && (blob.Properties.ContentLength == 0 || blob.Properties.LastModified > Expiry))
                 {
                     // Blob is committed and has zero length or was modified recently
                     // Leave active for now
@@ -112,6 +120,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                 var blobClient = targetBlobContainer.GetBlockBlobClient(path);
                 var fileSize = blob.Properties.ContentLength!.Value;
 
+                // NOTE: We don't use <= here because MinDehydrationSize may be null in which case we can
+                // always dehydrate
                 operation = state == BlobState.active
                     ? "dehydrating file"
                     : "refreshing file";
@@ -187,6 +197,12 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                         cancellationToken: token);
 
                     conditions.IfMatch = crsp.Value.ETag;
+
+                    if (preventDehydrate)
+                    {
+                        operation = "hydrating file";
+                        return;
+                    }
                 }
 
                 bool isEmphemeralSnapshot = false;

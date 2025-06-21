@@ -147,7 +147,21 @@ public class Program
                 },
                 r => r.RunAsync()),
 
-            // Add DehydrateOperation command
+            CliModel.Bind<DeleteFilesOperation>(
+                new Command("rmdir", "Dehydrate Azure Files to Azure Blob Storage."),
+                m =>
+                {
+                    var result = new DeleteFilesOperation(m.Console, cts.Token)
+                    {
+                        Uri = m.Option(c => ref c.Uri, name: "uri", description: "Container sas uri", required: true, aliases: ["container-uri"]),
+                    };
+
+                    m.Option(c => ref c.DryRun, name: "dry-run",
+                        description: "Indicates to only run a dry run of the delete", defaultValue: true);
+                    return result;
+                },
+                r => r.RunAsync()),
+
             CliModel.Bind<DehydrateOperation>(
                 new Command("dehydrate", "Dehydrate Azure Files to Azure Blob Storage."),
                 m =>
@@ -166,6 +180,8 @@ public class Program
                     //m.Option(c => ref c.Force, name: "force", description: "Force ghosting files which are up to date.", defaultValue: false);
                     m.Option(c => ref c.RefreshBatches, name: "refresh-batches",
                         description: "Number of refresh batches", defaultValue: 5);
+                    m.Option(c => ref c.MinDehydrationSize, name: "min-dehydrate-size",
+                        description: "Minimum size of files which are dehydrated");
                     return result;
                 },
                 r => r.RunAsync()),

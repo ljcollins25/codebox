@@ -5,8 +5,11 @@ using System.CommandLine.IO;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Text.Json;
+using Azure.Storage.Blobs.Models;
+using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Specialized;
 using FluentAssertions;
+using Newtonsoft.Json.Linq;
 using Xunit.Abstractions;
 
 namespace Nexis.Azure.Utilities.Tests;
@@ -57,6 +60,39 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
             Languages = [zho],
             ApiMode = false,
             DryRun = true
+        };
+
+        await op.RunAsync();
+    }
+
+    [Fact]
+    public async Task PrintBlobs()
+    {
+        var token = Token;
+        var op = new DriveOperationBase(TestConsole, Token)
+        {
+            Uri = ContainerUriJpe
+        };
+
+        BlobContainerClient targetBlobContainer = op.GetTargetContainerAndPrefix(out var prefix);
+
+        var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
+            .OrderBy(b => b.Name)
+            .ToListAsync();
+
+        var entries = FilterDirectories(targetBlobs).Select(b => BlobDataEntry.From(b)).ToList();
+
+
+        File.WriteAllLines(@"C:\mount\mediajpe.jsonl", entries.Select(e => JsonSerializer.Serialize(e)));
+    }
+
+    [Fact]
+    public async Task DeleteBlobs()
+    {
+        var token = Token;
+        var op = new DeleteFilesOperation(TestConsole, Token)
+        {
+            Uri = ContainerUriJpe.Combine("MediaSource/Backup"),
         };
 
         await op.RunAsync();
