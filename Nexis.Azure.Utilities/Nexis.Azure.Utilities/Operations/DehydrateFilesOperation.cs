@@ -66,6 +66,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             string operation = "";
             BlobState state = GetBlobState(blob);
             var logPrefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
+            string? result = "Skipped";
             try
             {
                 bool requireHydrated = entry.EffectiveSize <= MinDehydrationSize;
@@ -121,6 +122,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                     }
                 }
 
+                result = null;
                 var blobClient = targetBlobContainer.GetBlockBlobClient(path);
                 var fileSize = blob.Properties.ContentLength!.Value;
 
@@ -300,7 +302,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             {
                 var finishedValue = Interlocked.Increment(ref finished);
                 var percent = GetPercentage(finishedValue, targetBlobs.Count);
-                var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
+                result ??= ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
                 Console.WriteLine($"{logPrefix}: [{percent}%] Completed {operation} in {watch.Elapsed}. Result = {result}");
                 LogPipelineProgress(percent, $"{finishedValue}/{targetBlobs.Count}");
             }
