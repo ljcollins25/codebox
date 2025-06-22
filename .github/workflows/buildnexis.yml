@@ -8,6 +8,10 @@ on:
   push:
     branches:
       - main
+      
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-release:
@@ -17,11 +21,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Publish project
-        run: dotnet publish Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release -o publish
+      - name: Publish project (Nexis.Azure.Utilities | Windows)
+        run: |
+          dotnet publish Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release -o publish
 
-      - name: Publish project
-        run: dotnet publish AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
+      - name: Publish project (Nexis.Azure.Utilities | Linux)
+        run: |
+          dotnet publish Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release -r linux-x64 -o publish
+
+      - name: Publish project (AzureDevops.Pipeline.Utilities | Windows)
+        run: |
+          dotnet publish AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
+
+      - name: Publish project (AzureDevops.Pipeline.Utilities | Linux)
+        run: |
+          dotnet publish AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -r linux-x64 -c Release -o publish
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -30,5 +44,7 @@ jobs:
           tag_name: latest
           prerelease: true
           files: |
+            publish/nexutils
             publish/nexutils.exe
+            publish/azputils
             publish/azputils.exe

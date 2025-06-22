@@ -84,6 +84,17 @@ public static class Helpers
         return (int)Math.Max(0, Math.Min(result, 100));
     }
 
+    public static IEnumerable<BlobItem> FilterDirectories(IEnumerable<BlobItem> blobs)
+    {
+        foreach (var blob in blobs)
+        {
+            if (!blob.Metadata().ContainsKey(Strings.dir_metadata))
+            {
+                yield return blob;
+            }
+        }
+    }
+
     public static IAsyncEnumerable<T> AsyncEnum<T>(Func<IAsyncEnumerable<T>> enumerate)
     {
         return enumerate();
