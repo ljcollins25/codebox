@@ -298,10 +298,11 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             }
             finally
             {
-                var percent = GetPercentage(Interlocked.Increment(ref finished), targetBlobs.Count);
+                var finishedValue = Interlocked.Increment(ref finished);
+                var percent = GetPercentage(finishedValue, targetBlobs.Count);
                 var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
                 Console.WriteLine($"{logPrefix}: [{percent}%] Completed {operation} in {watch.Elapsed}. Result = {result}");
-                LogPipelineProgress(percent);
+                LogPipelineProgress(percent, $"{finishedValue}/{targetBlobs.Count}");
             }
         });
 

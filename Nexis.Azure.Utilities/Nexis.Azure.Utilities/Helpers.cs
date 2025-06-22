@@ -66,7 +66,7 @@ public static class Helpers
 
     private static int _lastProgress = -1;
 
-    public static void LogPipelineProgress(int progress, string message = "")
+    public static void LogPipelineProgress(int progress, object message = "")
     {
         if (IsAdoBuild)
         {
