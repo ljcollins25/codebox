@@ -49,7 +49,11 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
 
         var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
 
-        await Helpers.ForEachAsync(!SingleThreaded, FilterDirectories(targetBlobs), token, async (blob, token) =>
+        targetBlobs = FilterDirectories(targetBlobs).ToList();
+
+        int finished = 0;
+
+        await Helpers.ForEachAsync(!SingleThreaded, targetBlobs, token, async (blob, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
             var readTags = blob.Tags().ToImmutableDictionary();
@@ -278,8 +282,10 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             }
             finally
             {
+                var percent = GetPercentage(Interlocked.Increment(ref finished), targetBlobs.Count);
                 var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
-                Console.WriteLine($"{logPrefix}: Completed {operation} in {watch.Elapsed}. Result = {result}");
+                Console.WriteLine($"{logPrefix}: [{percent}%] Completed {operation} in {watch.Elapsed}. Result = {result}");
+                LogPipelineProgress(percent);
             }
         });
 

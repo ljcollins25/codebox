@@ -1,6 +1,6 @@
 param (
     [string]$Playlist = "WL",
-    [string]$TargetPath = "Q:\media\youtube"
+    [string]$TargetPath = "C:\mount\youtube"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,4 +23,4 @@ if (Test-Path $playlistsFile) {
     }
 }
 
-yt-dlp --cookies-from-browser chromium --flat-playlist -J "https://www.youtube.com/playlist?list=$PlaylistId" > "$TargetPath\$Playlist.json"
+yt-dlp --cookies "$TargetPath\cookies.txt" --flat-playlist -J "https://www.youtube.com/playlist?list=$PlaylistId" > "$TargetPath\$Playlist.json"

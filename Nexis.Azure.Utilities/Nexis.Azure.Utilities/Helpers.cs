@@ -32,6 +32,8 @@ public static class Helpers
     public static readonly Regex VariableSeparatorPattern = new Regex(@"[\._\-]");
     public static readonly Regex VariablePattern = new Regex(@"\$\(([\w\._\-]+)\)");
 
+    public static bool IsAdoBuild = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BUILD_BUILDID"));
+
     internal static class Strings
     {
         public const string tagPrefix = "ghostd_";
@@ -60,6 +62,26 @@ public static class Helpers
         var result = await cmd.ExecuteAsync();
 
         return result.ExitCode;
+    }
+
+    private static int _lastProgress = -1;
+
+    public static void LogPipelineProgress(int progress, string message = "")
+    {
+        if (IsAdoBuild)
+        {
+            int lastProgress = _lastProgress;
+            if (Interlocked.CompareExchange(ref _lastProgress, progress, lastProgress) == lastProgress)
+            {
+                Console.WriteLine($"##vso[task.setprogress value={progress};]{message}");
+            }
+        }
+    }
+
+    public static int GetPercentage(long numerator, long denominator)
+    {
+        var result = (numerator * 100) / denominator;
+        return (int)Math.Max(0, Math.Min(result, 100));
     }
 
     public static IAsyncEnumerable<T> AsyncEnum<T>(Func<IAsyncEnumerable<T>> enumerate)

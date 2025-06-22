@@ -62,6 +62,18 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
         await op.RunAsync();
     }
 
+
+    [Fact]
+    public async Task GetCookies()
+    {
+        var op = new GetYoutubeCookies(TestConsole, Token)
+        {
+            TargetFile = @"C:\mount\youtube\cookies.txt"
+        };
+
+        await op.RunAsync();
+    }
+
     [Theory]
     [InlineData(0, null)]
     [InlineData(45, null, 10)]
@@ -95,6 +107,7 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
 
     [Theory]
     [InlineData(@"Media\TV Shows\Yellow Boots {tmdb-46542}\Season 01", 54, null, 1)]
+    [InlineData(@"Media\TV Shows\Yellow Boots {tmdb-46542}\Season 01", 74, null, 15)]
     public async Task TestTransformShows(string showPath, int skip, string? browserPath, int limit = 5)
     {
         BrowserOperationBase.BrowserProcessPath.Value = browserPath;
@@ -106,7 +119,7 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
             RelativePath = @$"C:\mount\mediajpe\{showPath}",
             CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
             GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
-            Languages = [eng, jpn, zho],
+            Languages = [jpn, zho],
             OutputRoot = @"Q:\mediaoutputs",
             Limit = limit,
             Skip = skip
