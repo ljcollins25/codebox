@@ -36,12 +36,13 @@
     <PackageReference Include="Azure.Storage.Blobs" Version="12.23.0" />
     <PackageReference Include="Azure.Storage.Files.Shares" Version="12.22.0" />
     <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-    <PackageReference Include="CliWrap" Version="3.8.2" />
+    <PackageReference Include="CliWrap" Version="3.9.0" />
     <PackageReference Include="DotNext.IO" Version="5.21.0"/>
     <PackageReference Include="libse" Version="4.0.12" />
     <PackageReference Include="YoutubeDLSharp" Version="1.1.2" />
     <PackageReference Include="Microsoft.Playwright" Version="1.52.0" />
     <PackageReference Include="RuntimeContracts" Version="0.5.0"/>
+    <PackageReference Include="YamlDotNet" Version="16.3.0"/>
   </ItemGroup>
 
   <ItemGroup>

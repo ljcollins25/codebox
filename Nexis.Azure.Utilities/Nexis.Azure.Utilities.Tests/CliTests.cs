@@ -11,6 +11,7 @@ using Azure.Storage.Blobs.Specialized;
 using FluentAssertions;
 using Newtonsoft.Json.Linq;
 using Xunit.Abstractions;
+using YamlDotNet.Serialization;
 
 namespace Nexis.Azure.Utilities.Tests;
 
@@ -66,6 +67,33 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     }
 
     [Fact]
+    public async Task TranslatePlaylist()
+    {
+        //var titles = string.Join("\n", )
+    }
+
+    [Fact]
+    public async Task ConvertPlaylist()
+    {
+        var path = @"C:\mount\youtube\Drama.json";
+        var text = "{}" ?? File.ReadAllText(path);
+        var files = YoutubePlaylist.ReadFromVideoData(text);
+        File.WriteAllLines(Path.ChangeExtension(path, ".jsonl"), files.Select(e => JsonSerializer.Serialize(e)));
+        File.WriteAllText(Path.ChangeExtension(path, ".yaml"), new Serializer().Serialize(files));
+
+        File.WriteAllLines(Path.ChangeExtension(path, "titles.txt"), files.Select(f => f.Title));
+
+        var titles = files.Take(20).Select(f => f.Title).ToArray();
+
+        var url = "https://hooks.zapier.com/hooks/catch/15677350/uoxtvz4/";
+
+        var client = new HttpClient();
+        client.DefaultRequestHeaders.Add("target-path", $"test.json");
+        var response = await client.PostAsync(url, new StringContent(string.Join("\n", titles)));
+        var content = await response.Content.ReadAsStringAsync();
+    }
+
+    [Fact]
     public async Task GetCookies()
     {
         var op = new GetYoutubeCookies(TestConsole, Token)
@@ -109,6 +137,35 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
         await op.RunAsync();
     }
 
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0,1, "https://youtu.be/3CgorMd6gOU?si=ZxEafA8zSRA6bmCh")]
+    [InlineData(0, 12)]
+    [InlineData(0, 200, "Drama")]
+    [InlineData(0, 50, "Favs")]
+    [InlineData(0, 50, "WatchLater")]
+    [InlineData(0, 100, "WatchLater")]
+    public async Task TestYoutubeFlow(int skip = 0, int limit = 10_000, string source = "https://www.youtube.com/watch?v=KxXHrgSIApw")
+    {
+
+        var op = new YoutubeDownloadFlow(TestConsole, Token)
+        {
+            UploadUri = ContainerUriJpe.Combine("Media/Youtube"),
+            CookiesFilePath = @"C:\mount\youtube\cookies.txt",
+            Sources = [source],
+            PlaylistMapPath = @"Q:\src\codebox\scripts\playlists.json",
+            GdrivePath = $"gdrive:translatedtitles/",
+            OutputRoot = @"Q:\media\youtube",
+            Limit = limit,
+            Skip = skip,
+            RefreshPlaylists = true
+        };
+
+        await op.RunAsync();
+    }
+
+
     [Theory]
     [InlineData(0, null)]
     [InlineData(45, null, 10)]
@@ -131,7 +188,7 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
             RelativePath = @"C:\mount\mediajpe\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01",
             CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
             GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
-            Languages =  skip >= 62 ? [jpn, eng] : [eng, jpn, zho],
+            Languages = skip >= 62 ? [jpn, eng] : [eng, jpn, zho],
             OutputRoot = @"Q:\mediaoutputs",
             Limit = limit,
             Skip = skip
@@ -161,6 +218,23 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
         };
 
         await op.RunAsync();
+    }
+
+    [Fact]
+    public void AlterDirectoryTimestamps()
+    {
+        var path = @"C:\mount\mediajpe\Media\Youtube";
+        var files = new DirectoryInfo(path).GetFiles("*", SearchOption.AllDirectories);
+
+        foreach (var group in files.GroupBy(f => f.DirectoryName))
+        {
+            var directory = group.First().Directory;
+            var lastWriteTime = group.Select(f => f.LastWriteTimeUtc).Max();
+            if (directory!.LastWriteTimeUtc != lastWriteTime)
+            {
+                directory.LastWriteTimeUtc = lastWriteTime;
+            }
+        }
     }
 
 
@@ -248,7 +322,7 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     [Fact]
     public async Task TestId()
     {
-        
+
         var path = @"C:\mount\mediajpe\Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01\Dear Heaven - S01E01 - Episode 1.mp4";
         var id = GetOperationId(path);
     }

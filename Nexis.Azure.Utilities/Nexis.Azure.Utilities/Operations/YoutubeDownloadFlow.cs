@@ -35,15 +35,15 @@ namespace Nexis.Azure.Utilities;
 
 public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
 {
-    public required string LocalSourcePath;
+    public required List<string> Sources;
+
+    public required string CookiesFilePath;
+
+    public string? PlaylistMapPath;
 
     public required string OutputRoot;
 
-    public required string CompletedTranslationFolder;
-
-    public required string RelativePath;
-
-    public string? GdrivePath;
+    public required string GdrivePath;
 
     public Uri? UploadUri;
 
@@ -51,69 +51,31 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
 
     public int ThreadCount = SingleThreaded ? 1 : 4;
 
-    public int Limit = int.MaxValue;
+    public int? Limit;
 
     public int Skip = 0;
 
     public int StageCapacity = 5;
 
-    public required List<LanguageCode> Languages { get; set; } = [eng, jpn, kor, zho];
-
-    public List<string> Extensions = [".mp4", ".avi", ".mkv", ".webm", ".m4v"];
-
-    private ConcurrentDictionary<(Vuid Id, LanguageCode Language), PendingTranslation> PendingTranslations = new();
+    public bool RefreshPlaylists = false;
 
     public bool RestoreState = false;
 
-    public bool ApiMode = true;
+    public List<string> Tags = [];
 
     public string ShutdownFilePath => Path.Combine(OutputRoot, "gracefulshutdown.txt");
 
-    public IDictionary<string, FileInfo> GetFiles()
-    {
-        LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
-        var rootPath = File.Exists(LocalSourcePath) ? Path.GetDirectoryName(LocalSourcePath) : LocalSourcePath;
-        rootPath = rootPath!.TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
-
-        var relativePath = RelativePath;
-        if (!string.IsNullOrEmpty(RelativePath) && File.Exists(LocalSourcePath))
-        {
-            relativePath = Path.GetDirectoryName(relativePath) ?? string.Empty;
-        }
-
-        string getPath(string path)
-        {
-            if (!string.IsNullOrEmpty(relativePath))
-            {
-                path = Path.Combine(relativePath, path).Replace('\\', '/');
-            }
-
-            return path;
-        }
-
-        var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
-            .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
-            .Where(f => Extensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase))
-            .OrderBy(f => f.DirectoryName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(f => f.Name, VideoFileNameComparer)
-            .Skip(Skip)
-            .Take(Limit)
-            .ToImmutableSortedDictionary(f => getPath(f.FullName.Substring(rootPath.Length).Replace('\\', '/')), f => f, StringComparer.OrdinalIgnoreCase)
-            .ToBuilder()
-            ;
-
-        return files;
-    }
-
     public List<Stages> RunStages = Enum.GetValues<Stages>().ToList();
+    public List<Stages> ExcludeStages = [];
 
     public enum Stages
     {
-        split,
-        translate,
+        cookies,
+        getmetadata,
+        process,
         download,
-        output,
-        upload
+        upload,
+        cleanup
     }
 
     public async Task RunPipeline(
@@ -148,230 +110,124 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
 
     public async Task<int> RunAsync()
     {
-        if (!string.IsNullOrEmpty(RelativePath) && RelativePath.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
+        RunStages.RemoveAll(s => ExcludeStages.Contains(s));
+        var entries = Sources.Select(source =>
         {
-            // If RelativePath is a full path, we need to remove the LocalSourcePath prefix
-            RelativePath = RelativePath.Substring(LocalSourcePath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
+            var uri = new Uri(source, UriKind.RelativeOrAbsolute);
+            var name = uri.IsAbsoluteUri ? (uri.Query.AsNonEmptyOrNull() ?? source) : source;
+            name = name.TrimStart('?');
+            var entry = new FileEntry(Origin: source, RelativePath: name, Source: name, Target: name);
+            return entry;
+        }).ToAsyncEnumerable();
 
-        var files = GetFiles();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
 
         if (UploadUri == null)
         {
             RunStages.Remove(Stages.upload);
         }
 
-        var entries = files.Select(e =>
-        {
-            var sourceVid = e.Value.FullName;
-            var entry = new FileEntry(sourceVid, e.Key, sourceVid, sourceVid, Vuid.FromFileName(sourceVid));
-            return entry;
-        }).ToAsyncEnumerable();
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var translationCompletions = WaitForTranslationsAsync(cts);
-
+        bool isRun = false;
         await RunPipeline(
             entries,
-            i => RunStageAsync(Stages.split, ThreadCount, i, async (entry, token) =>
+            i => RunStageAsync(Stages.getmetadata, 1, i, async (entry, token) =>
             {
-                var splitter = new SplitAudio(Console, token)
+                if (isRun) return;
+                isRun = true;
+                var op = new GetYoutubeCookies(Console, token)
                 {
-                    VideoFile = entry.Origin,
-                    OutputFolder = entry.Target,
-                    OperationId = entry.OperationId
-                };
-
-                await splitter.RunAsync();
-            }),
-            i => RunStageAsync(Stages.translate, 1, i, async (entry, token) =>
-            {
-                var videoWrappedAudioFiles = entry.GetSplitFiles();
-                entry.SegmentCount = videoWrappedAudioFiles.Length;
-                int index = 0;
-                foreach (var audioFile in videoWrappedAudioFiles)
-                {
-                    var op = new TranslateOperation(Console, token)
-                    {
-                        AudioFile = audioFile,
-                        GdrivePath = GdrivePath?.UriCombine($"{entry.OperationId:n}-{index++}{Path.GetExtension(audioFile)}"),
-                        Languages = Languages,
-                    };
-
-                    await op.RunAsync();
-                }
-            }),
-            i => i.SelectMany(f => Languages.Select(l => f with { Language = l }).ToAsyncEnumerable()),
-
-            i => RunStageAsync(Stages.download, ThreadCount * Languages.Count, i, async (entry, token) =>
-            {
-                // Wait for translations to complete
-                Contract.Assert(entry.SegmentCount.HasValue);
-                var pending = AddPending(entry.OperationId, entry.Language!.Value);
-                pending.FileEntry = entry;
-                pending.CompleteIfReady();
-
-                await Task.WhenAny(pending.Completion.Task, Task.Delay(Timeout.InfiniteTimeSpan, cts.Token)).Unwrap();
-
-                //var videoIdFiles = Directory.GetFiles(pending.OutputFolder, "*.json");
-                //foreach (var videoIdFile in videoIdFiles)
-                foreach (var record in pending.RecordsByIndex.Values)
-                {
-                    //var record = TranslationRecord.ReadFromFile(videoIdFile);
-                    var language = record.GetLanguageCode();
-                    var op = new DownloadTranslation(Console, token)
-                    {
-                        VideoId = record.event_data.video_translate_id,
-                        TargetFolder = entry.Target,
-                        BaseName = record.FileName,
-                        Language = language,
-                        Delete = false,
-                        CompletedFolderId = "c47f8b0ae3db4e58b948994021ff3100"
-                    };
-
-                    if (Exists(op.SubFile) && Exists(op.VideoFile))
-                    {
-                        continue;
-                    }
-
-                    await op.RunAsync();
-                }
-            },
-            endSignal: cts),
-            i => RunStageAsync(Stages.output, 1, i, async (entry, token) =>
-            {
-                var op = new MergeAudio(Console, token)
-                {
-                    InputFolder = entry.Source,
-                    OutputAudioFile = entry.Target,
+                    TargetFile = CookiesFilePath
                 };
 
                 await op.RunAsync();
             },
-            preRun: (entry, token) =>
+            force: true),
+            i => RunStageAsync(Stages.getmetadata, ThreadCount, i, async (entry, token) =>
             {
-                entry.Target = entry.Target.Replace(".mp4", "") + ".ogg";
+                var dl = new DownloadPlaylist(Console, token)
+                {
+                    Limit = Limit,
+                    SkipIfExists = !RefreshPlaylists,
+                    CookiesFilePath = CookiesFilePath,
+                    PlaylistIdUrlOrName = entry.Origin,
+                    PlaylistMapPath = PlaylistMapPath,
+                    WriteProcessed = true,
+                    TargetFilePath = entry.Target += ".metadata.yaml"
+                };
+
+                await dl.RunAsync();
+            },
+            force: true
+            ),
+            i => RunStageAsync(Stages.process, 1, i, async (entry, token) =>
+            {
+                var dl = new ProcessPlaylist(Console, token)
+                {
+                    SourceFilePath = entry.Source,
+                    Limit = Limit,
+                    GDrivePath = GdrivePath,
+                    TargetFilePath = Path.Combine(GetStageRoot(Stages.process), "videos.yml"),
+                };
+
+                await dl.RunAsync();
+
+                entry.Results = dl.SourcePlaylist.Values.Select(f =>
+                {
+                    return entry with
+                    {
+                        File = f,
+                        RelativePath = $"{f.ShortTitle} {{yt-{f.Id}}}"
+                    };
+                }).ToArray();
+            },
+            force: true
+            ),
+            i => RunStageAsync(Stages.download, ThreadCount, i.Skip(Skip).Take(Limit ?? int.MaxValue), async (entry, token) =>
+            {
+                var op = new DownloadYoutubeVideo(Console, token)
+                {
+                    Id = entry.File.Id,
+                    Title = entry.File.TranslatedTitle ?? entry.File.ShortTitle ?? entry.File.Title,
+                    CookiesFilePath = CookiesFilePath,
+                    TargetFileBase = Path.Combine(entry.Target, entry.File.ShortTitle!)
+                };
+
+                await op.RunAsync();
             }),
             i => RunStageAsync(Stages.upload, ThreadCount, i, async (entry, token) =>
             {
+                //foreach (var tag in Tas)
+                //{
+                //    File.WriteAllBytes(Path.Combine(entry.Source, tag + ".tag"), Array.Empty<byte>());
+                //}
+
                 var op = new UploadFilesOperation(Console, token)
                 {
                     Force = true,
-                    RequiredInfixes = [Path.GetFileNameWithoutExtension(entry.Source)],
-                    LocalSourcePath = GetStageRoot(Stages.output),
+                    LocalSourcePath = entry.Source,
                     ThreadCount = 1,
-                    RelativePath = Path.GetDirectoryName(entry.Source)!,
+                    IncludeDirectory = true,
                     Uri = UploadUri!,
                     ExcludedExtensions = [".marker"],
                     UpdateTimestamps = true
                 };
 
                 await op.RunAsync();
-            }));
-
-
-        await translationCompletions;
+            },
+            preRun: (entry, token) =>
+            {
+                entry.Target = entry.Source;
+            }),
+            i => RunStageAsync(Stages.cleanup, ThreadCount, i, async (entry, token) =>
+            {
+                if (Directory.Exists(entry.Source))
+                {
+                    Directory.Delete(entry.Source, recursive: true);
+                }
+            })
+            );
 
         return 0;
-    }
-
-    private async Task WaitForTranslationsAsync(CancellationTokenSource cts)
-    {
-        HashSet<string> failures = new();
-        HashSet<string> exists = new();
-
-        while (!cts.Token.IsCancellationRequested)
-        {
-            if (ApiMode)
-            {
-                var list = new ListVideosOperation(Console, cts.Token)
-                {
-                    Print = false
-                };
-
-                await list.RunAsync();
-
-                foreach (var item in list.Results.Where(r => r.status == VideoStatus.completed))
-                {
-                    var info = item.GetInfo();
-                    if (info.Index < 0) continue;
-
-                    var pending = AddPending(info.Id, item.output_language);
-                    if (pending.FileEntry == null) continue;
-                    
-                    var record = TranslationRecord.FromVideoItem(item);
-                    var targetPath = Path.Combine(pending.OutputFolder, record.FileName + ".json");
-                    if (exists.Add(targetPath))
-                    {
-                        pending.RecordsByIndex[info.Index] = record;
-
-                        //File.WriteAllText(targetPath, JsonSerializer.Serialize(record));
-                        //pending.CompletedSegmentCount++;
-                        pending.CompleteIfReady();
-                    }
-                }
-            }
-            else
-            {
-                var files = Directory.Exists(CompletedTranslationFolder)
-                    ? Directory.GetFiles(CompletedTranslationFolder, "*.json")
-                    : [];
-                foreach (var file in files)
-                {
-                    try
-                    {
-                        if (failures.Contains(file)) continue;
-
-                        var text = File.ReadAllText(file);
-
-                        var record = TranslationRecord.Parse(text);
-                        if (record.event_type.Contains("fail"))
-                        {
-                            failures.Add(file);
-                            continue;
-                        }
-
-                        var info = ExtractFileDescriptor(record.FileName);
-                        var language = record.GetLanguageCode();
-                        var pending = AddPending(info.Id, language);
-
-                        File.WriteAllText(Path.Combine(pending.OutputFolder, record.FileName + ".json"), text);
-                        File.Delete(file);
-                        //pending.CompletedSegmentCount++;
-                        throw new NotImplementedException();
-                        pending.CompleteIfReady();
-                    }
-                    catch
-                    {
-
-                    }
-                }
-            }
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(300), cts.Token);
-            }
-            catch
-            {
-            }
-        }
-    }
-
-    private PendingTranslation AddPending(Vuid id, LanguageCode language)
-    {
-        var pending = PendingTranslations.GetOrAdd((id, language), static k => new PendingTranslation(k.Id, k.Language));
-
-        if (pending.OutputFolder == null)
-        {
-            pending.OutputFolder ??= Path.Combine(OutputRoot, "completions", pending.FolderName);
-
-            Directory.CreateDirectory(pending.OutputFolder);
-
-            //pending.CompletedSegmentCount = Directory.GetFiles(pending.OutputFolder, "*.json").Length;
-        }
-
-        return pending;
     }
 
     private string GetStageRoot(Stages stage) => Path.Combine(OutputRoot, stage.ToString());
@@ -384,7 +240,8 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
         bool readMarker = true,
         CancellationTokenSource? endSignal = default,
         bool splitByLanguage = false,
-        Action<FileEntry, CancellationToken>? preRun = null)
+        Action<FileEntry, CancellationToken>? preRun = null,
+        bool force = false)
     {
         var stageName = stage.ToString();
         bool isRunning = RunStages.Contains(stage);
@@ -398,31 +255,23 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
             {
                 await Task.Yield();
 
-                await ForEachAsync(parallelism, items, token, async (entry, token) =>
+                await ForEachAsync(parallelism, items.DistinctBy(f => f.RelativePath).SelectManyAwait(async i => (i.Results ?? [i]).ToAsyncEnumerable()), token, async (entry, token) =>
                 {
                     string result = "Succeeded";
                     try
                     {
-                        Console.WriteLine($"[{stageName}] Start {entry.RelativePath} [{entry.Language}]");
-                        var suffix = entry.Language is { } lang ? $".{lang}" : "";
+                        Console.WriteLine($"[{stageName}] Start {entry.RelativePath}");
                         entry = entry with
                         {
                             Source = entry.Target,
-                            Target = Path.GetFullPath(Path.Combine(root, entry.RelativePath + suffix))
+                            Target = Path.GetFullPath(Path.Combine(root, entry.RelativePath))
                         };
                         var marker = entry.Target + ".marker";
                         CreateDirectoryForFile(marker);
-                        if (stage == Stages.translate && RestoreState)
-                        {
-                            var id = entry.OperationId.ToString().Substring(0, 8);
-                            entry.SegmentCount = Directory.GetFiles(entry.Source, "*.mp4")
-                                .Where(f => f.Contains(id))
-                                .Count();
-                        }
 
                         preRun?.Invoke(entry, token);
 
-                        if (!Exists(marker) || new FileInfo(marker).Length == 0)
+                        if (force || !Exists(marker) || new FileInfo(marker).Length == 0)
                         {
                             if (!isRunning)
                             {
@@ -431,18 +280,20 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
                             }
 
                             await runAsync.Invoke(entry, token);
-                            File.WriteAllText(marker, JsonSerializer.Serialize(
-                                new MarkerData(entry.OperationId, entry.SegmentCount)));
+
+                            if (!force)
+                            {
+                                File.WriteAllText(marker, JsonSerializer.Serialize(
+                                    new MarkerData()));
+                            }
                         }
                         else if (readMarker)
                         {
                             var markerData = JsonSerializer.Deserialize<MarkerData>(Out.Var(out var mt, File.ReadAllText(marker)));
-                            entry = entry with { OperationId = markerData!.Id, SegmentCount = entry.SegmentCount ?? markerData.SegmentCount };
                             result = "Up to date";
 
                             if (RestoreState)
                             {
-                                markerData = markerData with { SegmentCount = entry.SegmentCount };
                                 File.WriteAllText(marker, JsonSerializer.Serialize(markerData));
                             }
                         }
@@ -455,7 +306,7 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
                     }
                     finally
                     {
-                        Console.WriteLine($"[{stageName}] End {entry.RelativePath} [{entry.Language}]. Result = {result}");
+                        Console.WriteLine($"[{stageName}] End {entry.RelativePath}. Result = {result}");
                     }
                 });
             }
@@ -477,45 +328,20 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
         await task;
     }
 
-    public record PendingTranslation(Vuid OperationId, LanguageCode Language)
-    {
-        public string OutputFolder = null!;
-        public string FolderName = $"{OperationId:n}.{Language}";
-        //public int CompletedSegmentCount;
-        public FileEntry? FileEntry;
-
-        public ConcurrentDictionary<int, TranslationRecord> RecordsByIndex = new();
-
-        public bool IsQueued = false;
-
-        public void CompleteIfReady()
-        {
-            if (IsQueued) return;
-
-            lock (this)
-            {
-                if (!IsQueued && RecordsByIndex.Count == FileEntry?.SegmentCount)
-                {
-                    IsQueued = true;
-                    Completion.SetResult();
-                }
-            }
-        }
-
-        public TaskCompletionSource Completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-
-    public record FileEntry(string Origin, string RelativePath, string Source, string Target, Vuid OperationId, LanguageCode? Language = default)
+    public record FileEntry(string Origin, string RelativePath, string Source, string Target)
     {
         public int? SegmentCount;
 
         public string Target { get; set; } = Target;
- 
-        public string[] GetSplitFiles() => Directory.GetFiles(Source, "*.mp4")
-                                .Where(f => f.Contains(OperationId.ToString().Substring(0, 8))).ToArray();
+
+        public YoutubeFile File = default!;
+        public FileEntry[]? Results = null;
     }
 
-    public record MarkerData(Vuid Id, int? SegmentCount);
+    public record MarkerData()
+    {
+        public Timestamp Timestamp { get; set; } = Timestamp.Now;
+    }
 
     private bool Exists(string splitMarker) => File.Exists(splitMarker);
 }

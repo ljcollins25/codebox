@@ -45,6 +45,8 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public List<string> RequiredInfixes = [];
 
+    public bool IncludeDirectory = false;
+
     [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
     public static extern int StrCmpLogicalW(string x, string y);
 
@@ -52,7 +54,6 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
     {
         LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
         var rootPath = File.Exists(LocalSourcePath) ? Path.GetDirectoryName(LocalSourcePath) : LocalSourcePath;
-        rootPath = rootPath!.TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
 
         var relativePath = RelativePath;
         if (!string.IsNullOrEmpty(RelativePath) && File.Exists(LocalSourcePath))
@@ -70,7 +71,15 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
             return path;
         }
 
-        var files = new DirectoryInfo(rootPath).EnumerateFiles("*", SearchOption.AllDirectories)
+        var searchPath = rootPath;
+        if (IncludeDirectory)
+        {
+            rootPath = Path.GetDirectoryName(rootPath);
+        }
+
+        rootPath = rootPath!.TrimEnd('/', '\\') + Path.DirectorySeparatorChar;
+
+        var files = new DirectoryInfo(searchPath).EnumerateFiles("*", SearchOption.AllDirectories)
             .Where(f => f.FullName.StartsWith(LocalSourcePath, StringComparison.OrdinalIgnoreCase))
             .Where(f => !ExcludedExtensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase))
             .Where(f => RequiredInfixes.All(i => f.Name.Contains(i, StringComparison.OrdinalIgnoreCase)))
@@ -101,6 +110,11 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
         }
 
         BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
+
+        if (string.IsNullOrEmpty(RelativePath))
+        {
+            files = files.ToDictionary(f => prefix + f.Key, f => f.Value, StringComparer.OrdinalIgnoreCase);
+        }
 
         var targetBlobs = !Force
             ? FilterDirectories(await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)

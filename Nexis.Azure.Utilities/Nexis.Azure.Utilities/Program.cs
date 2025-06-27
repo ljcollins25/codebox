@@ -146,6 +146,28 @@ public class Program
                     return r;
                 },
                 r => r.RunAsync()),
+            CliModel.Bind<YoutubeDownloadFlow>(
+                new Command("youtube", "Downloader for youtube playlist or videos."),
+                m =>
+                {
+                    var r = new YoutubeDownloadFlow(m.Console, cts.Token)
+                    {
+                        UploadUri = m.Option(c => ref c.UploadUri, name: "uri", description: "Container sas directory uri", required: true, aliases: ["upload-uri"]),
+                        CookiesFilePath = m.Option(c => ref c.CookiesFilePath, "cookies", "The path to the cookies file", required: true),
+                        Sources = m.Option(c => ref c.Sources, "source", "A source (playlist or video url)", required: true, aliases: ["s"]),
+                        OutputRoot = m.Option(c => ref c.OutputRoot, "output", "The local path to output data", required: true, aliases: ["o"]),
+                        GdrivePath = m.Option(c => ref c.GdrivePath, "gdrive-path", "The gdrive path to where translated files go", required: true, defaultValue: $"gdrive:translatedtitles/"),
+                    };
+
+                    m.Option(c => ref c.RefreshPlaylists, name: "refresh-playlists", description: "Force download of playlists");
+                    m.Option(c => ref c.PlaylistMapPath, name: "playlist-map", description: "The playlist map path");
+                    m.Option(c => ref c.ExcludeStages, name: "exclude-stages", description: "Stages to exclude");
+                    m.Option(c => ref c.Limit, name: "limit", description: "The limit of number of files to download");
+                    m.Option(c => ref c.Skip, name: "skip", description: "The number of files in sequence to skip");
+
+                    return r;
+                },
+                r => r.RunAsync()),
 
             CliModel.Bind<DeleteFilesOperation>(
                 new Command("rmdir", "Dehydrate Azure Files to Azure Blob Storage."),

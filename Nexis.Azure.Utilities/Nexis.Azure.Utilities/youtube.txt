@@ -1,0 +1,17 @@
+Download playlists
+Drama => Drama.pl.json
+WatchLater => WatchLater.pl.json
+
+*.pl.json => Videos.source.yaml
+
+// Translate & Summarize
+(Videos.target.yaml - Videos.source.yaml) => Videos.summary.yaml
+
+Videos.target.yaml |= Videos.summary.yaml
+
+// Download videos
+Videos.target.yaml
+=> {ShortTitle}.mp4
+=> {ShortTitle}.en.srt
+=> {ShortTitle}.jpg
+

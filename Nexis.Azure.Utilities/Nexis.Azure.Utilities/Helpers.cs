@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
 using System.Net.Http.Json;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -24,6 +25,24 @@ namespace Nexis.Azure.Utilities;
 
 public static class Helpers
 {
+    private static readonly YamlDotNet.Serialization.Serializer YamlSerializer = new();
+    private static readonly YamlDotNet.Serialization.Deserializer YamlDeserializer = new();
+
+    public static string YamlSerialize<T>(T value)
+    {
+        return YamlSerializer.Serialize(value);
+    }
+
+    public static T YamlDeserialize<T>(string  yaml)
+    {
+        return YamlDeserializer.Deserialize<T>(yaml);
+    }
+
+    public static Dictionary<int, T> ToIndexMap<T>(this IEnumerable<T> items)
+    {
+        return items.Select((item, index) => (item, index)).ToDictionary(t => t.index, t => t.item);
+    }
+
     public static ImmutableDictionary<string, string> EmptyStringMap = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
 
     public static IDictionary<string, string> Tags(this BlobItem b) => b.Tags ?? EmptyStringMap;
@@ -48,25 +67,166 @@ public static class Helpers
         public const string mtime_metadata = "mtime";
     }
 
-    public static async Task<int> ExecAsync(string processName, string[] args, PipeTarget? target = null)
+    public class PipeTargetValue(PipeTarget? pipeTarget = null, TextWriter? textWriter = null, FileInfo? fileInfo = null, StringBuilder? sb = null)
     {
+        public PipeTarget? Target { get; } = pipeTarget
+            ?? textWriter?.FluidSelect(t => PipeTarget.ToDelegate(line => t.WriteLine(line ?? string.Empty)))
+            ?? sb?.FluidSelect(t => PipeTarget.ToStringBuilder(t))
+            ?? fileInfo?.FluidSelect(t => PipeTarget.ToFile(fileInfo.FullName));
+
+        public static PipeTargetValue operator &(PipeTargetValue left, PipeTargetValue right)
+        {
+            if (left.Target == null)
+            {
+                return right;
+            }
+            else if (right.Target == null)
+            {
+                return left;
+            }
+            else
+            {
+                return PipeTarget.Merge(left!, right!);
+            }
+        }
+
+        public static PipeTargetValue operator |(PipeTargetValue left, PipeTargetValue right)
+        {
+            return left & right;
+        }
+
+        public static implicit operator PipeTargetValue(PipeTarget pipeTarget) => new(pipeTarget: pipeTarget);
+        public static implicit operator PipeTargetValue(TextWriter textWriter) => new(textWriter: textWriter);
+        public static implicit operator PipeTargetValue(FileInfo fileInfo) => new(fileInfo: fileInfo);
+        public static implicit operator PipeTargetValue(StringBuilder sb) => new(sb: sb);
+
+        public static implicit operator PipeTarget?(PipeTargetValue value) => value.Target;
+
+    }
+
+    public static async IAsyncEnumerable<T> DistinctBy<T, TKey>(this IAsyncEnumerable<T> items, Func<T, TKey> getKey, IEqualityComparer<TKey> comparer = null!)
+    {
+        comparer ??= EqualityComparer<TKey>.Default;
+
+        HashSet<TKey> set = new(comparer);
+
+        await foreach (var item in items)
+        {
+            var key = getKey(item);
+            if (!set.Add(key)) continue;
+            yield return item;
+        }
+    }
+
+    public static IEnumerable<string> SplitLines(this string s)
+    {
+        var r = new StringReader(s);
+        while (Out.Var(out var line, r.ReadLine()) != null)
+        {
+            yield return line!;
+        }
+    }
+
+    public static async Task<int> RunProcessAsync(string processName, string[] args, PipeTargetValue? target = null)
+    {
+        var psi = new ProcessStartInfo(processName, args);
+        var process = Process.Start(psi);
+        int exitCode = -1;
+        if (process != null)
+        {
+            await process.WaitForExitAsync();
+
+            exitCode = process.ExitCode;
+        }
+
+        if (exitCode != 0)
+        {
+            throw new InvalidOperationException($"Non-zero exit code {exitCode}");
+        }
+        return exitCode;
+
+    }
+
+    public static async Task<int> ExecAsync(string processName, string[] args, PipeTargetValue? target = null, PipeTargetValue? error = null, bool isCliWrap = false, bool useCmd = false)
+    {
+        if (useCmd)
+        {
+            args = ["/C", processName, ..args];
+            processName = "cmd";
+        }
+
+        //error ??= target;
         var cmd = Cli.Wrap(processName)
             .WithArguments(args)
             .WithValidation(CommandResultValidation.ZeroExitCode);
 
-        if (target != null)
+        if (target?.Target is { } outTarget)
         {
-            cmd = cmd.WithStandardOutputPipe(target);
+            cmd = cmd.WithStandardOutputPipe(outTarget);
         }
 
-        var result = await cmd.ExecuteAsync();
+        if (error?.Target is { } errorTarget)
+        {
+            cmd = cmd.WithStandardErrorPipe(errorTarget);
+        }
 
-        return result.ExitCode;
+        if (!isCliWrap)
+        {
+            var psi = new ProcessStartInfo(processName, args);
+
+            if (cmd.StandardOutputPipe != null)
+            {
+                psi.RedirectStandardOutput = true;
+            }
+
+            if (cmd.StandardErrorPipe != null)
+            {
+                psi.RedirectStandardError = true;
+            }
+
+            var process = Process.Start(psi);
+
+            int exitCode = -1;
+            List<Task> t = new();
+            if (process != null)
+            {
+
+                if (cmd.StandardOutputPipe != null)
+                {
+                    //process.BeginOutputReadLine();
+                    t.Add(cmd.StandardOutputPipe.CopyFromAsync(process.StandardOutput.BaseStream));
+                }
+
+                if (cmd.StandardErrorPipe != null)
+                {
+                    //process.BeginErrorReadLine();
+                    t.Add(cmd.StandardErrorPipe.CopyFromAsync(process.StandardError.BaseStream));
+                }
+
+                await process.WaitForExitAsync();
+                await Task.WhenAll(t);
+
+                exitCode = process.ExitCode;
+            }
+
+            if (exitCode != 0)
+            {
+                throw new CliWrap.Exceptions.CommandExecutionException(cmd, exitCode, "Non-zero exit code");
+            }
+            return exitCode;
+        }
+        else
+        {
+
+            var result = await cmd.ExecuteAsync();
+
+            return result.ExitCode;
+        }
     }
 
     private static int _lastProgress = -1;
 
-    public static void LogPipelineProgress(int progress, object message = "")
+    public static void LogPipelineProgress(int progress, string message = "")
     {
         if (IsAdoBuild)
         {
@@ -74,6 +234,7 @@ public static class Helpers
             if (Interlocked.CompareExchange(ref _lastProgress, progress, lastProgress) == lastProgress)
             {
                 Console.WriteLine($"##vso[task.setprogress value={progress};]{message}");
+                Console.WriteLine($"Progress: {progress}% ({message})");
             }
         }
     }
