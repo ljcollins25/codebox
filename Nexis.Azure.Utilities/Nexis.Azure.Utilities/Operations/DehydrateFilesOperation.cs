@@ -51,11 +51,7 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
 
         var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
 
-        targetBlobs = FilterDirectories(targetBlobs).ToList();
-
-        int finished = 0;
-
-        await Helpers.ForEachAsync(!SingleThreaded, targetBlobs, token, async (blob, token) =>
+        await Helpers.ForEachAsync(!SingleThreaded, FilterDirectories(targetBlobs), token, async (blob, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
             var readTags = blob.Tags().ToImmutableDictionary();
@@ -66,7 +62,6 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             string operation = "";
             BlobState state = GetBlobState(blob);
             var logPrefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
-            string? result = "Skipped";
             try
             {
                 bool requireHydrated = entry.EffectiveSize <= MinDehydrationSize;
@@ -77,23 +72,6 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                 }
 
                 Console.WriteLine($"{logPrefix}: (Snapshot={snapshotId})");
-
-
-                string tagCondition;
-                if (readTags.TryGetValue(Strings.last_access, out var lastTouch))
-                {
-                    if (Timestamp.Parse(lastTouch) > Expiry)
-                    {
-                        operation = "recently touched";
-                        return;
-                    }
-
-                    tagCondition = $"{Strings.last_access} = '{lastTouch}'";
-                }
-                else
-                {
-                    tagCondition = $"{Strings.last_access} = null";
-                }
 
                 if (state == BlobState.active && requireHydrated)
                 {
@@ -122,7 +100,6 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                     }
                 }
 
-                result = null;
                 var blobClient = targetBlobContainer.GetBlockBlobClient(path);
                 var fileSize = blob.Properties.ContentLength!.Value;
 
@@ -131,6 +108,22 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                 operation = state == BlobState.active
                     ? "dehydrating file"
                     : "refreshing file";
+
+                string tagCondition;
+                if (readTags.TryGetValue(Strings.last_access, out var lastTouch))
+                {
+                    if (Timestamp.Parse(lastTouch) > Expiry)
+                    {
+                        operation = "recently touched";
+                        return;
+                    }
+
+                    tagCondition = $"{Strings.last_access} = '{lastTouch}'";
+                }
+                else
+                {
+                    tagCondition = $"{Strings.last_access} = null";
+                }
 
                 // Create snapshot
                 var conditions = new BlobRequestConditions()
@@ -300,11 +293,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             }
             finally
             {
-                var finishedValue = Interlocked.Increment(ref finished);
-                var percent = GetPercentage(finishedValue, targetBlobs.Count);
-                result ??= ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
-                Console.WriteLine($"{logPrefix}: [{percent}%] Completed {operation} in {watch.Elapsed}. Result = {result}");
-                LogPipelineProgress(percent, $"{finishedValue}/{targetBlobs.Count}");
+                var result = ex == null ? "Success" : $"Failure\n\n{ex}\n\n";
+                Console.WriteLine($"{logPrefix}: Completed {operation} in {watch.Elapsed}. Result = {result}");
             }
         });
 

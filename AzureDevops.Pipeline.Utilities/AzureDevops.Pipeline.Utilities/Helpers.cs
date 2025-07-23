@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.VisualStudio.Services.Commerce;
 
@@ -296,5 +297,35 @@ public static class Helpers
                 yield return word;
             }
         }
+    }
+
+    public static bool IsAzAccessToken(string jwt)
+    {
+        string[] parts = jwt.Split('.');
+        if (parts.Length != 3)
+        {
+            return false;
+        }
+
+        string payloadBase64 = parts[1];
+        string payloadJson = DecodeBase64Url(payloadBase64);
+
+        return payloadJson.Contains("\"appid\"");
+    }
+
+    static string DecodeBase64Url(string input)
+    {
+        string padded = input
+            .Replace('-', '+')
+            .Replace('_', '/');
+
+        switch (padded.Length % 4)
+        {
+            case 2: padded += "=="; break;
+            case 3: padded += "="; break;
+        }
+
+        byte[] bytes = Convert.FromBase64String(padded);
+        return Encoding.UTF8.GetString(bytes);
     }
 }

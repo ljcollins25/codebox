@@ -8,6 +8,8 @@ namespace AzureDevops.Pipeline.Utilities.Tests;
 
 public class UnitTests
 {
+    public IConsole TestConsole = new SystemConsole();
+
     private Dictionary<string, string> replacements => new()
     {
         ["`"] = "",
@@ -202,6 +204,18 @@ extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(
     }
 
     [Fact]
+    public async Task TestYamlPreview()
+    {
+        var preview = new PreviewYaml(TestConsole)
+        {
+            AdoToken = TestSecrets.AdoToken,
+            TaskUrl = TestSecrets.TaskUrl
+        };
+
+        await preview.RunAsync();
+    }
+
+    [Fact]
     public async Task TestOperation()
     {
         var taskUrl = TestSecrets.TaskUrl;
@@ -212,7 +226,7 @@ extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(
             TaskUrl = taskUrl.Replace("$(taskId)", "78b71963-2023-5666-3648-28ff644d1619")
         };
 
-        await taskOperation.InitilializeAsync();
+        await taskOperation.InitializeAsync();
 
         var records = await taskOperation.RefreshTimelineRecordsAsync();
 
@@ -229,7 +243,7 @@ extract-log --taskUrl "$(AZPUTILS_OUT_TASK_URL)" --start-line "-100" --token "$(
                 Patterns = new() { @"(ProxyInitialIndex.*\s+(?<ProxyInitialIndex>\d+),)|" }
             };
 
-            await extract.InitilializeAsync();
+            await extract.InitializeAsync();
 
             var values = await extract.GetValuesAsync();
 

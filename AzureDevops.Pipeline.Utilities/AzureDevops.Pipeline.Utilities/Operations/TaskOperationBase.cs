@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
 using Microsoft.VisualStudio.Services.Common;
+using Microsoft.VisualStudio.Services.OAuth;
 using Microsoft.VisualStudio.Services.WebApi;
 
 #nullable disable
@@ -32,6 +33,7 @@ public abstract class TaskOperationBase(IConsole Console)
     protected TaskAgentHttpClient agentClient;
     public HttpClient HttpClient { get; protected set; }
     protected Build build;
+    protected DefinitionReference definition;
 
     protected Dictionary<Guid, TimelineRecord> RecordsById;
 
@@ -64,6 +66,11 @@ public abstract class TaskOperationBase(IConsole Console)
             token = Encoding.UTF8.GetString(bytes);
         }
 
+        if (Helpers.IsAzAccessToken(token))
+        {
+            //return ":" + token;
+        }
+
         return token;
     }
 
@@ -90,15 +97,27 @@ public abstract class TaskOperationBase(IConsole Console)
         adoBuildUri = BuildUri.ParseBuildUri(TaskUrl);
         taskInfo = adoBuildUri.DeserializeFromParameters<TaskInfo>();
 
+        VssCredentials credential = Helpers.IsAzAccessToken(AdoToken)
+            ? new VssOAuthAccessTokenCredential(AdoToken)
+            : new VssBasicCredential(string.Empty, AdoToken);
         connection = new VssConnection(adoBuildUri.OrganizationUri,
             new VssHttpMessageHandler(new VssBasicCredential(AdoToken, string.Empty), VssClientHttpRequestSettings.Default),
+            //new VssHttpMessageHandler(credential, VssClientHttpRequestSettings.Default),
             delegatingHandlers: new [] { new InterceptingHandler() });
         HttpClient = new GenericClient(connection).HttpClient;
         client = connection.GetClient<BuildHttpClient>();
         taskClient = connection.GetClient<TaskHttpClient>();
         agentClient = connection.GetClient<TaskAgentHttpClient>();
 
-        build = await client.GetBuildAsync(adoBuildUri.Project, adoBuildUri.BuildId);
+        if (adoBuildUri.BuildId >= 0)
+        {
+            build = await client.GetBuildAsync(adoBuildUri.Project, adoBuildUri.BuildId);
+            definition = build.Definition;
+        }
+        else
+        {
+            definition =  await client.GetDefinitionAsync(adoBuildUri.Project, adoBuildUri.DefinitionId);
+        }
 
         if (Debug)
         {

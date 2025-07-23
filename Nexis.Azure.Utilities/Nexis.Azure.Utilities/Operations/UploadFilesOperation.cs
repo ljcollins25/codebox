@@ -47,9 +47,6 @@ public class UploadFilesOperation(IConsole Console, CancellationToken token) : D
 
     public bool IncludeDirectory = false;
 
-    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
-    public static extern int StrCmpLogicalW(string x, string y);
-
     public IDictionary<string, FileInfo> GetFiles()
     {
         LocalSourcePath = Path.GetFullPath(Path.Combine(LocalSourcePath, RelativePath ?? string.Empty));
