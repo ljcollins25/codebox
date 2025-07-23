@@ -130,7 +130,7 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
         bool isRun = false;
         await RunPipeline(
             entries,
-            i => RunStageAsync(Stages.getmetadata, 1, i, async (entry, token) =>
+            i => RunStageAsync(Stages.cookies, 1, i, async (entry, token) =>
             {
                 if (isRun) return;
                 isRun = true;

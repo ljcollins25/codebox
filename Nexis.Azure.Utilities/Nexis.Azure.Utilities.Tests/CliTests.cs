@@ -144,8 +144,10 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     [InlineData(0, 12)]
     [InlineData(0, 200, "Drama")]
     [InlineData(0, 50, "Favs")]
+    [InlineData(0, 20, "WatchLater")]
     [InlineData(0, 50, "WatchLater")]
     [InlineData(0, 100, "WatchLater")]
+    [InlineData(0, 20, "Travel")]
     public async Task TestYoutubeFlow(int skip = 0, int limit = 10_000, string source = "https://www.youtube.com/watch?v=KxXHrgSIApw")
     {
 

@@ -23,6 +23,8 @@ public record class ProcessPlaylist(IConsole Console, CancellationToken token)
     public string Url = "https://hooks.zapier.com/hooks/catch/15677350/uoxtvz4/";
     public IDictionary<string, YoutubeFile> SourcePlaylist = null!;
 
+    public bool FailFast;
+
     public async Task<int> RunAsync()
     {
         //Url = "https://hook.us2.make.com/d8b12eyj19j24gtrzqkjgh3hgikubpa2";
@@ -38,7 +40,9 @@ public record class ProcessPlaylist(IConsole Console, CancellationToken token)
 
         int count = 0;
 
-        foreach (var files in SourcePlaylist.Values.ExceptBy(targetPlaylist.Keys, y => y.Id).Chunk(8))
+        var newFiles = SourcePlaylist.Values.ExceptBy(targetPlaylist.Keys, y => y.Id).ToArray();
+
+        foreach (var files in newFiles.Chunk(8))
         {
             using var client = new HttpClient();
             var drivePath = GDrivePath + $"{Path.GetFileName(SourceFilePath)}.{Timestamp.Now}.yaml";
@@ -60,19 +64,25 @@ public record class ProcessPlaylist(IConsole Console, CancellationToken token)
                 {
                     sb.Clear();
                     await ExecAsync("rclone", ["cat", drivePath], sb);
+                    sb.Replace("\n- ", "\n- $");
                     sb.Replace("-$", "- $");
                     sb.Replace(": ", "꞉ ");//.Replace("#", "＃");
                     result = YamlDeserialize<ProcessResult>(sb.ToString())!;
                     await ExecAsync("rclone", ["delete", drivePath]);
                     break;
                 }
-                catch (Exception ex) when (i != iterations)
+                catch (Exception ex) when (i != iterations || !FailFast)
                 {
+                    
                 }
             }
 
-            sb.Replace("- ", "-  ");
+            if (result == null)
+            {
+                continue;
+            }
 
+            sb.Replace("- ", "-  ");
 
             for (int i = 0; i < files.Length; i++)
             {
