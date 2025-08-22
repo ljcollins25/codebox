@@ -112,7 +112,7 @@ public class ReserveOperation(IConsole Console) : TaskOperationBase(Console)
                     $"AZP_URL={adoBuildUri.OrganizationUri}",
                     $"AZP_TOKEN={AdoToken}",
                     $"AZP_JOB_INDEX={reservationIndex}",
-                    $"AZP_AGENT_NAME=ghagent-{adoBuildUri.BuildId}-m{reservationIndex}-r{Environment.GetEnvironmentVariable("GITHUB_RUN_ID")}");
+                    $"AZP_AGENT_NAME=agent-{adoBuildUri.BuildId}-m{reservationIndex}-r{Environment.GetEnvironmentVariable("GITHUB_RUN_ID")}");
             }
 
             return isReserved ? reservationIndex : -reservationIndex;
