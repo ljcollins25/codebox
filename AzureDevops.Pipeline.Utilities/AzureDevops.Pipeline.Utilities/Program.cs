@@ -129,8 +129,11 @@ public class Program
                 new Command("runagent"),
                 m =>
                 {
-                    var result = new RunAgentOperation()
+                    var result = new RunAgentOperation(m.Console)
                     {
+                        TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+                            defaultValue: Env.TaskUri,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
                         AdoToken = m.Option(c => ref c.AdoToken, name: "token",
                             defaultValue: Env.Token,
                             description: "The access token (e.g. $(System.AccessToken) )", required: true),
@@ -144,11 +147,11 @@ public class Program
                         AgentPoolName = m.Option(c => ref c.AgentPoolName, name: "pool",
                             description: "The agent pool name", required: true),
 
-                        OrganizationUrl = m.Option(c => ref c.OrganizationUrl, name: "organization-url",
-                            description: "The agent pool organization url", required: true),
-
                         AdditionalArgs = additionalArgs?.Arguments
                     };
+
+                    m.Option(c => ref c.OrganizationUrl, name: "organization-url",
+                            description: "The agent pool organization url");
 
                     m.Option(c => ref c.AgentName, name: "name",
                             description: "The agent name");
