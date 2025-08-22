@@ -37,6 +37,14 @@ jobs:
         run: |
           dotnet publish AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -r linux-x64 -c Release -o publish
 
+      - name: Pack project (Nexis.Azure.Utilities)
+        run: |
+          dotnet pack Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release -o publish
+
+      - name: Pack project (AzureDevops.Pipeline.Utilities)
+        run: |
+          dotnet pack AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -48,3 +56,4 @@ jobs:
             publish/nexutils.exe
             publish/azputils
             publish/azputils.exe
+            publish/*.nupkg
