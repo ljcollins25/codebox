@@ -30,6 +30,7 @@ jobs:
         $timestamp = Get-Date -Format "yyyyMMdd.${{ github.run_number }}"
         $versionSuffix = "${timestamp}+$(git rev-parse --short HEAD)"
 
+        echo "Url: /repos/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         gh api `
           --method PATCH `
           -H "Accept: application/vnd.github+json" `
