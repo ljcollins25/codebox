@@ -32,41 +32,19 @@ public class RunTaskCommandOperation(IConsole Console, CancellationTokenSource a
     {
         Console.WriteLine($"Setting TaskId variable to {taskInfo.TaskId}.");
 
-        var records = await taskClient.UpdateTimelineRecordsAsync(
-            scopeIdentifier: build.Project.Id,
-            planType: taskInfo.HubName,
-            planId: taskInfo.PlanId,
-            timelineId: taskInfo.TimelineId,
-            new[]
+        var record = await UpdateTimelineRecordAsync(
+            new()
             {
-                new TimelineRecord()
-                {
-                    Id = taskInfo.TaskId,
-                    Variables =
+                Id = taskInfo.TaskId,
+                Variables =
                     {
                         ["TaskId"] = taskInfo.TaskId.ToString()
                     }
-                }
             });
-
-        var record = records[0];
-
-        async Task setTaskResult(TaskResult result)
-        {
-            if (record.Result == null)
-            {
-                Console.WriteLine($"Setting result to {result}");
-                await RaisePlanEventAsync(GetTaskCompletedEvent(result));
-            }
-            else
-            {
-                Console.WriteLine($"Skipping due to exit attempted result: {result}, actual result: {record.Result}");
-            }
-        }
 
         try
         {
-            await setTaskResult(TaskResult.Succeeded);
+            await SetTaskResult(TaskResult.Succeeded, record, Console);
 
             while (!IsCompleted(build) && !agentCancellation.IsCancellationRequested)
             {
@@ -87,7 +65,7 @@ public class RunTaskCommandOperation(IConsole Console, CancellationTokenSource a
         {
             if (ex is OperationCanceledException || ex is TaskCanceledException)
             {
-                await setTaskResult(TaskResult.Canceled);
+                await SetTaskResult(TaskResult.Canceled, record, Console);
             }
         }
     }

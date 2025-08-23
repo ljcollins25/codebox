@@ -31,19 +31,8 @@ public class ReserveOperation(IConsole Console) : TaskOperationBase(Console)
                 return JobCount;
             }
 
-            var updatedRecord = await taskClient.UpdateTimelineRecordsAsync(
-                        scopeIdentifier: build.Project.Id,
-                        planType: taskInfo.HubName,
-                        planId: taskInfo.PlanId,
-                        timelineId: taskInfo.TimelineId,
-                        [
-                            new TimelineRecord()
-                            {
-                                Id = taskInfo.TaskId
-                            }
-                        ]);
+            var record = await UpdateTimelineRecordAsync(new() { Id = taskInfo.TaskId });
 
-            var record = updatedRecord[0];
 
             var entry = new ReservationEntry(AgentName ?? Environment.MachineName, Guid.NewGuid());
 
@@ -54,11 +43,7 @@ public class ReserveOperation(IConsole Console) : TaskOperationBase(Console)
             // which breaks consistency
             await Task.Delay(TimeSpan.FromSeconds(PollSeconds));
 
-            var logLines = await taskClient.GetLogAsync(
-                scopeIdentifier: build.Project.Id,
-                hubName: taskInfo.HubName,
-                planId: taskInfo.PlanId,
-                logId: record.Log.Id);
+            var logLines = await GetLogLinesAsync(record);
 
             using var writer = new StringWriter();
             writer.WriteLine();

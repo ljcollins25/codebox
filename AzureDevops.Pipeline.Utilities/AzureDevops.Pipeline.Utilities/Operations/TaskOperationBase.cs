@@ -215,7 +215,7 @@ public abstract class TaskOperationBase(IConsole Console)
             eventData: eventData);
     }
 
-    public Task<List<TimelineRecord>> UpdateTimelineRecordsAsync(IEnumerable<TimelineRecord> records)
+    public Task<List<TimelineRecord>> UpdateTimelineRecordsAsync(params IEnumerable<TimelineRecord> records)
     {
         return taskClient.UpdateTimelineRecordsAsync(
             scopeIdentifier: build.Project.Id,
@@ -260,8 +260,21 @@ public abstract class TaskOperationBase(IConsole Console)
 
     public async Task<TimelineRecord> UpdateTimelineRecordAsync(TimelineRecord record)
     {
-        var result = await UpdateTimelineRecordsAsync([record]);
+        var result = await UpdateTimelineRecordsAsync(record);
         return result[0];
+    }
+
+    public async Task SetTaskResult(TaskResult result, TimelineRecord? record = null, IConsole? console = null)
+    {
+        if (record?.Result == null || record?.State == TimelineRecordState.InProgress)
+        {
+            console?.WriteLine($"Setting result to {result}");
+            await RaisePlanEventAsync(GetTaskCompletedEvent(result));
+        }
+        else
+        {
+            console?.WriteLine($"Skipping due to exit attempted result: {result}, actual result: {record.Result}");
+        }
     }
 
     public Task<PropertiesCollection> GetBuildProperties() =>

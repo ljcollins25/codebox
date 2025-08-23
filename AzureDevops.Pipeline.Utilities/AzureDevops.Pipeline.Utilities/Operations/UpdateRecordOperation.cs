@@ -41,6 +41,13 @@ public class UpdateRecordOperation(IConsole Console) : TaskOperationBase(Console
                 .Where(k => k.StartsWith(VariableInputPrefix, StringComparison.OrdinalIgnoreCase)));
         }
 
+        var updatedVariables = Variables
+                    .Select(name =>
+                        (name, value: Environment.GetEnvironmentVariable(VariableInputPrefix + name).AsNonEmptyOrNull()
+                        ?? Helpers.GetEnvironmentVariable(name)))
+                    .Where(e => e.value.IsNonEmpty())
+                    .ToDictionary(e => VariableOutputPrefix + e.name, e => new VariableValue(e.value, isSecret: secrets.Contains(e.name)));
+
         var record = await UpdateTimelineRecordAsync(new()
         {
             Id = Id ?? taskInfo.TaskId,
@@ -50,16 +57,16 @@ public class UpdateRecordOperation(IConsole Console) : TaskOperationBase(Console
             PercentComplete = PercentComplete,
             Variables =
             {
-                Variables
-                    .Select(name =>
-                        (name, value: Environment.GetEnvironmentVariable(VariableInputPrefix + name).AsNonEmptyOrNull()
-                        ?? Helpers.GetEnvironmentVariable(name)))
-                    .Where(e => e.value.IsNonEmpty())
-                    .ToDictionary(e => VariableOutputPrefix + e.name, e => new VariableValue(e.value, isSecret: secrets.Contains(e.name)))
+                updatedVariables
             }
         });
 
-        Console.WriteLine($"Updated {record.RecordType} record {record.Id}: Name='{record.Name}'");
+        if (Result is not null)
+        {
+            await SetTaskResult(Result.Value, record);
+        }
+
+        Console.WriteLine($"Updated {record.RecordType} record {record.Id}: Name='{record.Name}'. Variables: [{string.Join(", ", updatedVariables.Select(s => s.Key))}]");
 
         return 0;
     }
