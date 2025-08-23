@@ -2,6 +2,7 @@ name: Build and Release
 
 permissions:
   contents: write
+  actions: write
 
 on:
   workflow_dispatch:
@@ -21,6 +22,24 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Set up versioning
+      shell: pwsh
+      run: |
+        $timestamp = Get-Date -Format "yyyyMMdd.${{ github.run_number }}"
+        $versionSuffix = "${timestamp}+$(git rev-parse --short HEAD)"
+
+        gh api `
+          --method PATCH `
+          -H "Accept: application/vnd.github+json" `
+          /repos/OWNER/REPO/actions/runs/${{ github.run_number }} `
+          -f name="$versionSuffix"
+
+        echo "VersionSuffix=$versionSuffix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+        $publishRoot = Join-Path -Path $PWD -ChildPath "publish"
+
+        echo "PackageVersionlessOutputPath=$publishRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
     - name: Publish project (Nexis.Azure.Utilities | Windows)
       run: |
         dotnet publish Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release -o publish
@@ -39,11 +58,11 @@ jobs:
 
     - name: Pack project (AzureDevops.Pipeline.Utilities)
       run: |
-        dotnet pack AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
+        dotnet pack AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release
 
     - name: Pack project (Nexis.Azure.Utilities)
       run: |
-        dotnet pack AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release -o publish
+        dotnet pack Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
@@ -57,9 +76,3 @@ jobs:
           publish/azputils
           publish/azputils.exe
           publish/*.nupkg
-
-    - name: Upload Files
-      uses: actions/upload-artifact@v4
-      with:
-        name: artifacts
-        path: publish

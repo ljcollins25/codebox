@@ -1,0 +1,11 @@
+<Project>
+  <Target Name="CopyNugetToExplicitFilePath" Condition="'$(IsPackable)' == 'true' AND ('$(PackageVersionlessOutputPath)' != '' OR '$(ExplicitPackageOutputFileName)' != '')" AfterTargets="GenerateNuspec">
+    <PropertyGroup>
+      <ExplicitPackageOutputFileName
+        Condition="'$(PackageVersionlessOutputPath)' != '' AND '$(ExplicitPackageOutputFileName)' == ''"
+        >$(PackageVersionlessOutputPath)/$(PackageId).0.0.0.nupkg</ExplicitPackageOutputFileName>
+    </PropertyGroup>
+
+    <Copy SourceFiles="$(PackageOutputAbsolutePath)\$(PackageId).$(PackageVersion).nupkg" DestinationFiles="$(ExplicitPackageOutputFileName)" />
+  </Target>
+</Project>

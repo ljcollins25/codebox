@@ -24,9 +24,9 @@
     <RepositoryUrl>https://github.com/ljcollins25/codebox</RepositoryUrl>
     <PackageProjectUrl>https://github.com/ljcollins25/codebox/tree/main/AzureDevops.Pipeline.Utilities</PackageProjectUrl>
     <ToolCommandName>$(AssemblyName)</ToolCommandName>
-    <CurrentDateTime>$([System.DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss"))</CurrentDateTime>
+    <!--<CurrentDateTime>$([System.DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss"))</CurrentDateTime>-->
     <Authors>ljcollins25</Authors>
-    <Version>1.0.0-Dev-$(CurrentDateTime)</Version>
+    <Version>1.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
