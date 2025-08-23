@@ -24,6 +24,8 @@ jobs:
 
     - name: Set up versioning
       shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         $timestamp = Get-Date -Format "yyyyMMdd.${{ github.run_number }}"
         $versionSuffix = "${timestamp}+$(git rev-parse --short HEAD)"
