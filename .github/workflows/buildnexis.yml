@@ -1,5 +1,5 @@
 name: Build and Release
-run-name: R#${{ github.run_number }} (${{ github.event.repository.updated_at }})
+run-name: R#${{ github.run_number }} (${{ github.event.repository.updated_at }}) [${{ github.event.head_commit.message }}]
 
 permissions:
   contents: write
