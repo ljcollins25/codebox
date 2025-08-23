@@ -67,6 +67,8 @@ jobs:
         name: latest
         tag_name: latest
         prerelease: true
+        body: |
+          Release version suffix: ${{ env.VersionSuffix }}
         files: |
           publish/nexutils
           publish/nexutils.exe
