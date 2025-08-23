@@ -55,11 +55,11 @@ jobs:
 
     - name: Pack project (AzureDevops.Pipeline.Utilities)
       run: |
-        dotnet pack AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release
+        dotnet pack AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities/AzureDevops.Pipeline.Utilities.csproj -c Release /p:VersionSuffix=${{ env.VersionSuffix }}
 
     - name: Pack project (Nexis.Azure.Utilities)
       run: |
-        dotnet pack Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release
+        dotnet pack Nexis.Azure.Utilities/Nexis.Azure.Utilities.csproj -c Release /p:VersionSuffix=${{ env.VersionSuffix }}
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
