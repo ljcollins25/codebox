@@ -38,14 +38,12 @@ public class UnitTests
     }
 
     [Fact]
-    public async Task TestExtract()
+    public async Task TestUpdateVars()
     {
+        Environment.SetEnvironmentVariable("PoolName", "TestPool");
+        Environment.SetEnvironmentVariable("PoolName2", "TestPool");
         await TestCommand($"""
-copy-log --complete false --parent-job-name "c3624090-5333-6a86-a523-4f35ed29e114" --name "$(TARGET_LOG_TASKNAME)" --token "{TestSecrets.ProdAdoToken}"
-""");
-
-        await TestCommand($"""
-extract-log --taskUrl "{TestSecrets.ProdTaskUrl}" --start-line "-100" --token "{TestSecrets.ProdAdoToken}" --patterns "Downloaded(?:.*)in(?:.*)(?<DownloadSpeed>~\d+.*/s)" "ProxyInitialIndex[^\d]+(?<ProxyInitialIndex>\d+)"
+update-record --taskUrl "{TestSecrets.ProdTaskUrl}" --token "{TestSecrets.ProdAdoToken}" --variables PoolName --secrets PoolName2 --result Succeeded 
 """);
 
     }
