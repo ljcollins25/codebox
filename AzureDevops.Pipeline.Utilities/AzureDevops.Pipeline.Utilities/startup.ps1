@@ -100,6 +100,7 @@ Set-Location $AgentBinDir
 $agentName = $(if (Test-Path Env:AZP_AGENT_NAME) { ${Env:AZP_AGENT_NAME} } else { hostname })
 $poolName = $(if (Test-Path Env:AZP_POOL) { ${Env:AZP_POOL} } else { 'Default' })
 $agentWorkingDir = $(if (Test-Path Env:AZP_WORK) { ${Env:AZP_WORK} } else { '_work' })
+$azputils = $(if (Test-Path Env:AZP_EXE_PATH) { ${Env:AZP_EXE_PATH} } else { Join-Path $PSScriptRoot azputils })
 
 try
 {
@@ -138,7 +139,6 @@ try
 
   $taskUrl = $Env:AZP_TASK_URL
   $synchronizeArgs = $Env:AZP_SYNC_ARGS
-  $azputils = Join-Path $PSScriptRoot azputils
 
   # Clear environment variables before running
   [Functions]::ClearEnvironmentVars($Env:VSO_AGENT_IGNORE);

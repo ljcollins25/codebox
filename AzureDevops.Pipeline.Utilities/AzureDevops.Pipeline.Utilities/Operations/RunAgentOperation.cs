@@ -39,6 +39,8 @@ public class RunAgentOperation(IConsole Console) : TaskOperationBase(Console)
         if (Clean.HasFlag(CleanMode.Agent) && Directory.Exists(AgentDirectory)) Directory.Delete(AgentDirectory, true);
         if (Clean.HasFlag(CleanMode.Work) && Directory.Exists(WorkDirectory)) Directory.Delete(WorkDirectory, true);
 
+        var currentExePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+
         var envMap = new Dictionary<string, string?>()
         {
             ["AZP_URL"] = (OrganizationUrl ?? adoBuildUri.OrganizationUri).ToString(),
@@ -50,6 +52,7 @@ public class RunAgentOperation(IConsole Console) : TaskOperationBase(Console)
             ["AZP_AGENT_NAME"] = AgentName,
             ["AZP_PACKAGE_URL"] = AgentPackageUrl,
             ["AZP_CUSTOM_PACKAGE_PATH"] = AgentPackagePath,
+            ["AZP_EXE_PATH"] = currentExePath
         };
 
         foreach (var (name, value) in envMap)
