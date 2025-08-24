@@ -165,10 +165,6 @@ public class Program
                     m.Option(c => ref c.Clean, name: "clean",
                             description: "Whether to clean the agent directory");
 
-                    m.Option(c => ref c.TaskUrl, name: "taskUrl",
-                            defaultValue: Env.TaskUri!,
-                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )");
-
                     return result;
                 },
                 r => r.RunAsync()),
