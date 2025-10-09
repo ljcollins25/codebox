@@ -165,20 +165,20 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
                 {
                     SourceFilePath = entry.Source,
                     Limit = Limit,
-                    GDrivePath = GdrivePath,
+                    //GDrivePath = GdrivePath,
                     TargetFilePath = Path.Combine(GetStageRoot(Stages.process), "videos.yml"),
                 };
 
                 await dl.RunAsync();
 
-                entry.Results = dl.SourcePlaylist.Values.Select(f =>
+                entry.Results = dl.ProcessAsync().Select(f =>
                 {
                     return entry with
                     {
                         File = f,
                         RelativePath = $"{f.ShortTitle} {{yt-{f.Id}}}"
                     };
-                }).ToArray();
+                });//.ToArray().ToAsyncEnumerable();
             },
             force: true
             ),
@@ -255,7 +255,7 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
             {
                 await Task.Yield();
 
-                await ForEachAsync(parallelism, items.DistinctBy(f => f.RelativePath).SelectManyAwait(async i => (i.Results ?? [i]).ToAsyncEnumerable()), token, async (entry, token) =>
+                await ForEachAsync(parallelism, items.DistinctBy(f => f.RelativePath).SelectMany(i => i.Results), token, async (entry, token) =>
                 {
                     string result = "Succeeded";
                     try
@@ -264,7 +264,8 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
                         entry = entry with
                         {
                             Source = entry.Target,
-                            Target = Path.GetFullPath(Path.Combine(root, entry.RelativePath))
+                            Target = Path.GetFullPath(Path.Combine(root, entry.RelativePath)),
+                            Results = null!
                         };
                         var marker = entry.Target + ".marker";
                         CreateDirectoryForFile(marker);
@@ -335,7 +336,8 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
         public string Target { get; set; } = Target;
 
         public YoutubeFile File = default!;
-        public FileEntry[]? Results = null;
+
+        public IAsyncEnumerable<FileEntry> Results { get => field ?? new[] { this }.ToAsyncEnumerable(); set; } = null!;
     }
 
     public record MarkerData()

@@ -45,7 +45,17 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
 
         var intermediateFolder = Path.Combine(OutputFolder, "extracted");
         Directory.CreateDirectory(OutputFolder);
+        
+        if (Directory.Exists(intermediateFolder)) Directory.Delete(intermediateFolder, true);
         Directory.CreateDirectory(intermediateFolder);
+        var intermediateVideoFile = VideoFile;
+        //intermediateVideoFile = Path.Combine(intermediateFolder, Path.GetFileName(VideoFile));
+        //File.Copy(VideoFile, intermediateVideoFile);
+        //using var videoFs = new FileStream(intermediateVideoFile, FileMode.Create, FileAccess.ReadWrite, FileShare.Read, 1 << 12, FileOptions.DeleteOnClose);
+        //using (var sourceVideoFs = File.Open(VideoFile, FileMode.Open))
+        //{
+        //    sourceVideoFs.CopyTo(videoFs, 1 << 20);
+        //}
 
         var audioExt = Path.GetExtension(VideoFile).Equals(".mp4", StringComparison.OrdinalIgnoreCase)
             ? "m4a"
@@ -57,13 +67,15 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
         var duration = ((int)SegmentDuration.TotalSeconds).ToString();
         var result = await ExecAsync("ffmpeg",
         [
-            "-i", VideoFile,
+            "-y", "-nostdin",
+            "-i", intermediateVideoFile,
             "-f", "segment",
             "-segment_time", duration,
             "-vn",
             "-c:a", "copy",
             tempAudioPattern
-        ]);
+        ],
+        isCliWrap: true);
 
         var audioFiles = Directory.GetFiles(intermediateFolder)
             .Where(f => f.Contains(opId));
@@ -84,7 +96,8 @@ public record class SplitAudio(IConsole Console, CancellationToken token)
                 "-crf", "30",
                 "-c:a", "copy",
                 videoWrappedAudioFile
-            ]);
+            ],
+            isCliWrap: true);
         }
 
         return 0;

@@ -16,8 +16,10 @@ using Azure.Core;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
+using Azure.Storage.Files.DataLake;
 using Azure.Storage.Files.Shares;
 using Azure.Storage.Files.Shares.Models;
+using Nikse.SubtitleEdit.Core.Common;
 
 namespace Nexis.Azure.Utilities;
 
@@ -26,6 +28,10 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
     public int RefreshBatches = 5;
 
     public long? MinDehydrationSize;
+
+    public Uri? DirectoryUri;
+
+    public bool DryRun;
 
     //public bool Force;
 
@@ -39,9 +45,34 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
     // Set to zero to force staging of active blobs
     public required DateTimeOffset Expiry = ParsePastDateTimeOffset("1h");
 
+    public record Stats
+    {
+        public long TotalSize;
+
+        public long TotalPageSize;
+
+        public long TotalFileSize;
+
+        public int BlobCount;
+    }
+
     public async Task<int> RunAsync()
     {
+        var stats = new Stats();
         BlobContainerClient targetBlobContainer = GetTargetContainerAndPrefix(out var prefix);
+
+        var fileContainer = GetTargetContainerAndPrefix(out var filePrefix, DirectoryUri).FluidSelect(c => DirectoryUri == null ? null : c);
+
+        if (targetBlobContainer.AccountName.EqualsIgnoreCase(fileContainer?.AccountName) &&
+            targetBlobContainer.Name.EqualsIgnoreCase(fileContainer?.Name))
+        {
+            throw new Exception("Cannot use same container for meta size blobs");
+        }
+
+        var targetFiles = await fileContainer?.FluidSelect(c => c.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
+            .ToDictionaryAsync(b => new BlobRelativePath(b.Name, prefix), b => BlobDataEntry.From(b)));
+
+        targetFiles ??= new Dictionary<BlobRelativePath, BlobDataEntry>();
 
         var targetBlobs = await targetBlobContainer.GetBlobsAsync(BlobTraits.Metadata | BlobTraits.Tags, prefix: prefix, cancellationToken: token)
             .OrderBy(b => b.Name).ToListAsync();
@@ -51,19 +82,36 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
 
         var refreshExpiry = (DateTimeOffset.UtcNow - RefreshInterval).ToTimeStamp();
 
+        using var progress = Helpers.ReportProgressAsync(TimeSpan.FromSeconds(5), () =>
+        {
+            Console.WriteLine($"Stats: {stats}");
+        });
+
         await Helpers.ForEachAsync(!SingleThreaded, FilterDirectories(targetBlobs), token, async (blob, token) =>
         {
             Stopwatch watch = Stopwatch.StartNew();
             var readTags = blob.Tags().ToImmutableDictionary();
             Exception? ex = null;
             var path = blob.Name;
+            BlobRelativePath relativePath = new(path, prefix);
             var entry = BlobDataEntry.From(blob);
+            BlobDataEntry fileEntry = default;
+            bool hasFile = false;
+
+            if (fileContainer != null)
+            {
+                hasFile = targetFiles.TryGetValue(relativePath, out fileEntry);
+            }
 
             string operation = "";
             BlobState state = GetBlobState(blob);
             var logPrefix = $"[{state.ToString().PadRight(15, ' ')}] {GetName(path)}";
             try
             {
+                Interlocked.Increment(ref stats.BlobCount);
+                Interlocked.Add(ref stats.TotalSize, entry.EffectiveSize);
+                Interlocked.Add(ref stats.TotalFileSize, fileEntry.EffectiveSize);
+                Interlocked.Add(ref stats.TotalPageSize, entry.EffectivePageSize);
                 bool requireHydrated = entry.EffectiveSize <= MinDehydrationSize;
                 if (readTags.TryGetValue(Strings.snapshot, out var snapshotId))
                 {
@@ -71,7 +119,26 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                     snapshotPolicy[snapshotId] = DateTime.MaxValue;
                 }
 
-                Console.WriteLine($"{logPrefix}: (Snapshot={snapshotId})");
+                Console.WriteLine($"{logPrefix}: (Size={entry.EffectiveSize}, FileSize={fileEntry.EffectiveSize}, Snapshot={snapshotId})");
+
+                //if (pageContainer != null && !targetPages.TryGetValue(blob.Name, )
+                //{
+                //    await 
+                //}
+
+                if (fileContainer != null)
+                {
+                    var filePath = relativePath.GetFullName(filePrefix);
+                    var file = fileContainer.GetPageBlobClient(filePath);
+
+                    if (!hasFile || (entry.EffectiveSize != 0 && fileEntry.EffectivePageSize != entry.EffectivePageSize))
+                    {
+                        await file.CreateAsync(entry.EffectivePageSize, new PageBlobCreateOptions()
+                        {
+                            Metadata = entry.Metadata
+                        });
+                    }
+                }
 
                 if (state == BlobState.active && requireHydrated)
                 {
@@ -123,6 +190,12 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                 else
                 {
                     tagCondition = $"{Strings.last_access} = null";
+                }
+
+                if (DryRun)
+                {
+                    operation = "dry run";
+                    return;
                 }
 
                 // Create snapshot
@@ -298,7 +371,10 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
             }
         });
 
-        await DeleteOldSnapshotsAsync(targetBlobContainer, prefix, snapshotPolicy);
+        if (!DryRun)
+        {
+            await DeleteOldSnapshotsAsync(targetBlobContainer, prefix, snapshotPolicy);
+        }
 
         return 0;
     }

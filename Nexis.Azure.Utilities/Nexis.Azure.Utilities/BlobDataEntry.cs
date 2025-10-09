@@ -6,6 +6,40 @@ using Azure.Storage.Blobs.Models;
 
 namespace Nexis.Azure.Utilities;
 
+public record struct BlobRelativePath(string Name, Uncomparable<string?> Prefix)
+{
+    public BlobRelativePath(string path, string? prefix)
+        : this(path.Substring(prefix?.Length ?? 0).TrimStart('/'), Prefix: new(prefix))
+    {
+    }
+
+    public string GetFullName(string? prefix) => string.IsNullOrEmpty(prefix) ? Name : string.Concat(prefix, Name);
+
+    public string FullName => GetFullName(Prefix);
+}
+
+public record struct Uncomparable<T>(T Value) : IEquatable<Uncomparable<T>>, IComparable<Uncomparable<T>>
+{
+    public int CompareTo(Uncomparable<T> other)
+    {
+        return 0;
+    }
+
+    public bool Equals(Uncomparable<T> other)
+    {
+        return true;
+    }
+
+    public override int GetHashCode()
+    {
+        return 0;
+    }
+
+    public static implicit operator T(Uncomparable<T> u) => u.Value;
+
+    //public static implicit operator Uncomparable<T>(T value) => new(value);
+}
+
 /// <summary>
 /// Accesses metadata about a semaphore or proxy peer entry in a strongly-typed manner
 /// </summary>
@@ -15,6 +49,9 @@ public record struct BlobDataEntry(IDictionary<string, string> Metadata, BlobDat
 {
     [JsonIgnore]
     public long EffectiveSize { get => GetValueOrDefault(Strings.size, Data.Size); set => SetValue(value); }
+
+    public long EffectivePageSize => EffectiveSize.RoundUpToMultiple(512);
+
 
     [JsonIgnore]
     public Timestamp? Snapshot { get => GetValueOrDefault(Strings.snapshot); set => SetValue(value); }
@@ -29,7 +66,7 @@ public record struct BlobDataEntry(IDictionary<string, string> Metadata, BlobDat
 
     public MetadataValue GetValueOrDefault([CallerMemberName] string key = null!, MetadataValue defaultValue = default)
     {
-        if (Metadata.TryGetValue(key, out var stringValue))
+        if (Metadata?.TryGetValue(key, out var stringValue) == true)
         {
             return stringValue;
         }

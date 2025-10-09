@@ -49,7 +49,7 @@ public record TranslateRequest(
     string name,
     string google_url,
     [property: JsonConverter(typeof(ListConverter<LanguageCode, LanguageOptionJsonConverter>))]
-    List<LanguageCode> output_languages,
+    IReadOnlyList<LanguageCode> output_languages,
     string input_video_id = "",
     string instruction = "",
     string recaptcha_token = "",
@@ -101,19 +101,19 @@ public record struct Vuid(string Value) : IFormattable
 //    }
 //}
 
-public class ListConverter<T, TConverter> : JsonConverter<List<T>>
+public class ListConverter<T, TConverter> : JsonConverter<IReadOnlyList<T>>
     where TConverter : JsonConverter<T>, new()
 {
     private readonly TConverter _itemConverter = new();
 
-    public override List<T>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override IReadOnlyList<T>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         options = new(options);
         options.Converters.Add(_itemConverter);
         return JsonSerializer.Deserialize<List<T>>(ref reader, options);
     }
 
-    public override void Write(Utf8JsonWriter writer, List<T> value, JsonSerializerOptions options)
+    public override void Write(Utf8JsonWriter writer, IReadOnlyList<T> value, JsonSerializerOptions options)
     {
         options = new(options);
         options.Converters.Add(_itemConverter);

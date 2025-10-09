@@ -195,6 +195,8 @@ public class Program
                             defaultValue: "1h", required: true)),
                     };
 
+                    m.Option(c => ref c.DirectoryUri, name: "directory-uri", description: "Directory sas uri to create meta-size page blobs");
+
                     m.ParsedOption(c => ref c.EphemeralSnapshotDeleteDelay, ParseTimeSpan, v => m.Option(c => ref v.Text, name: "stage-delete-delay",
                         description: "Time to wait before deleting staging snapshots", defaultValue: "5m"));
                     m.ParsedOption(c => ref c.RefreshInterval, ParseTimeSpan, v => m.Option(c => ref v.Text, name: "refresh-interval",

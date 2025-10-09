@@ -1,11 +1,12 @@
 ﻿namespace Nexis.Azure.Utilities;
 
+[Flags]
 public enum LanguageCode
 {
-    eng,
-    jpn,
-    kor,
-    zho,
+    eng = 1 << 0,
+    jpn = 1 << 1,
+    kor = 1 << 2,
+    zho = 1 << 3,
 }
 
 public enum FileType

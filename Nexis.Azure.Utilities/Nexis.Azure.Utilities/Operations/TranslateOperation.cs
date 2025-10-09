@@ -32,7 +32,7 @@ public record class TranslateOperation(IConsole Console, CancellationToken token
 {
     public bool Legacy = false;
 
-    public required List<LanguageCode> Languages { get; set; } = [eng, jpn, kor, zho];
+    public required IReadOnlyList<LanguageCode> Languages { get; set; } = [eng, jpn, kor, zho];
 
     public required string AudioFile;
 

@@ -57,7 +57,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
 
     public int StageCapacity = 5;
 
-    public required List<LanguageCode> Languages { get; set; } = [eng, jpn, kor, zho];
+    public required IReadOnlyList<LanguageCode> Languages { get; set; } = [eng, jpn, kor, zho];
 
     public List<string> Extensions = [".mp4", ".avi", ".mkv", ".webm", ".m4v"];
 
@@ -189,6 +189,9 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                 var videoWrappedAudioFiles = entry.GetSplitFiles();
                 entry.SegmentCount = videoWrappedAudioFiles.Length;
                 int index = 0;
+
+                var languages = Languages;
+
                 foreach (var audioFile in videoWrappedAudioFiles)
                 {
                     var op = new TranslateOperation(Console, token)
@@ -430,6 +433,7 @@ public class TransformFiles(IConsole Console, CancellationToken token)
                                 return;
                             }
 
+                            Console.WriteLine($"[{stageName}] Running {entry.RelativePath} [{entry.Language}]");
                             await runAsync.Invoke(entry, token);
                             File.WriteAllText(marker, JsonSerializer.Serialize(
                                 new MarkerData(entry.OperationId, entry.SegmentCount)));
@@ -508,6 +512,10 @@ public class TransformFiles(IConsole Console, CancellationToken token)
     public record FileEntry(string Origin, string RelativePath, string Source, string Target, Vuid OperationId, LanguageCode? Language = default)
     {
         public int? SegmentCount;
+
+        public string[]? OverrideLanguages;
+
+        public bool ForceRun { get; set; }
 
         public string Target { get; set; } = Target;
  

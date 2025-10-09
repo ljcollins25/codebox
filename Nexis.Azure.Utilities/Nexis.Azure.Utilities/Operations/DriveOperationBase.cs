@@ -31,9 +31,9 @@ public class DriveOperationBase(IConsole Console, CancellationToken token)
 
     public static bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;
 
-    public BlobContainerClient GetTargetContainerAndPrefix(out string? prefix)
+    public BlobContainerClient GetTargetContainerAndPrefix(out string? prefix, Uri? explicitUri = null)
     {
-        var rootBlobClient = new BlobClient(Uri);
+        var rootBlobClient = new BlobClient(explicitUri ?? Uri);
         var targetBlobContainer = rootBlobClient.GetParentBlobContainerClient();
         var suffix = "/";
         if (rootBlobClient.Name.TrimEnd('/') != "" && rootBlobClient.Exists(cancellationToken: token))

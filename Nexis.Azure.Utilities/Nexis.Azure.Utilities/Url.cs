@@ -26,6 +26,11 @@ public readonly struct Url(Uri uri, string uriString)
 
     public Url Combine(string relativeUri)
     {
+        if (string.IsNullOrEmpty(relativeUri))
+        {
+            return this;
+        }
+
         UriBuilder builder = this;
         builder.Path = builder.Path.UriCombine(relativeUri);
         return new Uri(builder.ToString());

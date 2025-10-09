@@ -21,6 +21,7 @@ public abstract partial class TestBase
     public virtual Url ContainerUriWus2 { get; }
     public virtual Url ContainerUriWus { get; }
     public virtual Url ContainerUriJpe { get; }
+    public virtual Url ContainerUriJpe_Files { get; }
 
     public IConsole TestConsole { get; }
 
@@ -61,6 +62,23 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
             Languages = [zho],
             ApiMode = false,
             DryRun = true
+        };
+
+        await op.RunAsync();
+    }
+
+    [Fact]
+    public async Task TestDehydrate()
+    {
+        var suffix = "Media/Anime/As a Reincarnated Aristocrat, I'll Use My Appraisal Skill to Rise in the World {tmdb-237150}/";
+        var op = new DehydrateOperation(TestConsole, Token)
+        {
+            DryRun = true,
+            DirectoryUri = ContainerUriJpe_Files,//.Combine(suffix),
+            Uri = ContainerUriJpe,//.Combine(suffix),
+            MinDehydrationSize = 2_000_000,
+            RefreshInterval = ParseTimeSpan("3d"),
+            Expiry = ParsePastDateTimeOffset("20m"),
         };
 
         await op.RunAsync();
@@ -144,9 +162,10 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     [InlineData(0, 12)]
     [InlineData(0, 200, "Drama")]
     [InlineData(0, 50, "Favs")]
-    [InlineData(0, 20, "WatchLater")]
+    [InlineData(0, 200, "WatchLater")]
     [InlineData(0, 50, "WatchLater")]
     [InlineData(0, 100, "WatchLater")]
+    [InlineData(0, 1, "WatchLater")]
     [InlineData(0, 20, "Travel")]
     public async Task TestYoutubeFlow(int skip = 0, int limit = 10_000, string source = "https://www.youtube.com/watch?v=KxXHrgSIApw")
     {
@@ -200,20 +219,24 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     }
 
     [Theory]
+    [InlineData(@"Media\TV Shows\The Double {tmdb-236033}\Season 01", 10, null, 2, jpn | kor)]
     [InlineData(@"Media\TV Shows\Yellow Boots {tmdb-46542}\Season 01", 54, null, 1)]
     [InlineData(@"Media\TV Shows\Yellow Boots {tmdb-46542}\Season 01", 74, null, 15)]
-    public async Task TestTransformShows(string showPath, int skip, string? browserPath, int limit = 5)
+    [InlineData(@"Media\TV Shows\Dear Heaven {tvdb-282733}\Season 01", 54, null, 16)]
+    public async Task TestTransformShows(string showPath, int skip, string? browserPath, int limit = 5, LanguageCode languageFlags = jpn | zho)
     {
         BrowserOperationBase.BrowserProcessPath.Value = browserPath;
 
+        var languages = Enum.GetValues<LanguageCode>().Where(l => languageFlags.HasFlag(l)).ToArray();
         var op = new TransformFiles(TestConsole, Token)
         {
             UploadUri = ContainerUriJpe,
             LocalSourcePath = @"C:\mount\mediajpe",
             RelativePath = @$"C:\mount\mediajpe\{showPath}",
-            CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
+            //CompletedTranslationFolder = @"C:\mount\mediawus\translations\completed",
+            CompletedTranslationFolder = @">&=IGNORED",
             GdrivePath = $"gdrive:heygen/staging/{Environment.MachineName}/",
-            Languages = [jpn, zho],
+            Languages = languages,
             OutputRoot = @"Q:\mediaoutputs",
             Limit = limit,
             Skip = skip
@@ -294,6 +317,25 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
         };
 
         await op.RunAsync();
+    }
+
+    [Fact]
+    public async Task TestSummary()
+    {
+        var client = new HttpClient();
+
+        var result = await client.PostTextAsync(SummarizeUrl, """
+            - $ From Scorned to FEARED! 🌹 I Married the Paralyzed Prince ♿️ Tamed His Kids, Crushed My Rivals...
+            - $ The four handsome men in front of me are all my brothers. #Revenge #Shortplay #HotShortplay
+            - $ [Full Ending] She was a dazzlingly talented and beautiful consort, but in reality, she was a "black lotus" kept by her enemy. That night, the rebellious prince willingly bowed to her, and from then on, they joined hands in revenge and rebirth, bestowing upon her a lifetime of honor and favor! #Costume Romance #RebirthRevenge #Spreading Wings
+            - $ [Full Ending] Accidentally reborn as an abandoned consort in the cold palace, she prepared to tread cautiously within the palace, but unexpectedly, the current Queen Mother turned out to be her best friend! Help her gain the emperor's favor and win his heart. She was rescued from the cold palace by the duplicitous and arrogant emperor and became the most favored empress in the six harems! #Costume Romance #Time Travel
+            - $ General’s daughter, familyless and blind, met a ruthless prince. She gambled her marriage!
+            - $ Falsely accused and poisoned, she’s cast out—saved by the crown prince, she rises as his queen.
+            - $ Ignored for three years, consort forced out—she remarried a mighty lord, crushed her ex-husband to regret!
+            - $ Loved him for three years, only to be abandoned! Leave in despair, yet was doted on by the crown prince.
+            """);
+
+        output.WriteLine(result);
     }
 
     [Fact]

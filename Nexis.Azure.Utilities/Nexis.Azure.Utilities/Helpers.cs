@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.CommandLine;
 using System.CommandLine.Parsing;
@@ -9,16 +10,22 @@ using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
 using System.Net.Http.Json;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
 using System.Web;
 using Azure;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.Shares.Models;
 using CliWrap;
 using Microsoft.Playwright;
+using Newtonsoft.Json.Linq;
+using Nikse.SubtitleEdit.Core.SubtitleFormats;
+using YamlDotNet.Core.Tokens;
 using Command = System.CommandLine.Command;
 
 namespace Nexis.Azure.Utilities;
@@ -27,6 +34,118 @@ public static class Helpers
 {
     private static readonly YamlDotNet.Serialization.Serializer YamlSerializer = new();
     private static readonly YamlDotNet.Serialization.Deserializer YamlDeserializer = new();
+
+    public static async IAsyncEnumerable<T[]> ChunkAsync<T>(this IAsyncEnumerable<T> items, int chunkSize)
+    {
+        var list = new List<T>();
+
+        await foreach (var item in items)
+        {
+            list.Add(item);
+            if (list.Count >= chunkSize)
+            {
+                yield return list.ToArray();
+                list.Clear();
+            }
+        }
+
+        if (list.Count != 0)
+        {
+            yield return list.ToArray();
+        }
+    }
+
+    public static async Task<string> PostTextAsync(this HttpClient client, string uri, string text)
+    {
+        var response = await client.PostAsync(uri, new StringContent(text));
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    public static async IAsyncEnumerable<T> SplitMergeAsync<T>(this IAsyncEnumerable<T> items,
+        Func<T, bool> predicate,
+        Func<IAsyncEnumerable<T>, IAsyncEnumerable<T>>? handleTrueItems = null,
+        Func<IAsyncEnumerable<T>, IAsyncEnumerable<T>>? handleFalseItems = null,
+        ChannelBounds bounds = default)
+    {
+        Task handleAsync(Func<IAsyncEnumerable<T>, IAsyncEnumerable<T>>? handler, out Channel<T> inChannel, out Channel<T> outChannel)
+        {
+            inChannel = bounds.CreateChannel<T>();
+            outChannel = bounds.CreateChannel<T>();
+
+            handler ??= i => i;
+
+            async Task runAsync(Channel<T> inChannel, Channel<T> outChannel)
+            {
+                await foreach (var item in handler(inChannel.Reader.ReadAllAsync()))
+                {
+                    await outChannel.Writer.WriteAsync(item);
+                }
+
+                outChannel.Writer.Complete();
+            }
+
+            return runAsync(inChannel, outChannel);
+        }
+
+        var handleTrueTask = handleAsync(handleTrueItems, out var trueInChannel, out var trueOutChannel);
+        var handleFalseTask = handleAsync(handleFalseItems, out var falseInChannel, out var falseOutChannel);
+
+        async IAsyncEnumerable<bool> enumerateResults()
+        {
+            await foreach (var item in items)
+            {
+                var result = predicate(item);
+                if (result)
+                {
+                    await trueInChannel.Writer.WriteAsync(item);
+                }
+                else
+                {
+                    await falseInChannel.Writer.WriteAsync(item);
+                }
+
+                yield return result;
+            }
+
+            trueInChannel.Writer.Complete();
+            falseInChannel.Writer.Complete();
+        }
+
+        var results = enumerateResults();
+        Queue<bool> queuedResults = new();
+
+        await foreach (var result in results)
+        {
+            queuedResults.Enqueue(result);
+
+            while (queuedResults.TryPeek(out var queuedResult))
+            {
+                var channel = queuedResult ? trueOutChannel : falseOutChannel;
+                if (channel.Reader.TryRead(out var item))
+                {
+                    queuedResults.Dequeue();
+                    yield return item;
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+
+        while (queuedResults.TryDequeue(out var queuedResult))
+        {
+            var channel = queuedResult ? trueOutChannel : falseOutChannel;
+            var item = await channel.Reader.ReadAsync();
+            yield return item;
+        }
+    }
+
+    public static ConcurrentDictionary<TKey, TValue> ToConcurrent<TKey, TValue>(this IEnumerable<KeyValuePair<TKey, TValue>> entries, IEqualityComparer<TKey>? comparer = null)
+    {
+        return new ConcurrentDictionary<TKey, TValue>(entries, comparer);
+    }
 
     public static string YamlSerialize<T>(T value)
     {
@@ -155,6 +274,7 @@ public static class Helpers
             processName = "cmd";
         }
 
+        isCliWrap |= processName == "ffmpeg";
         //error ??= target;
         var cmd = Cli.Wrap(processName)
             .WithArguments(args)
@@ -169,6 +289,8 @@ public static class Helpers
         {
             cmd = cmd.WithStandardErrorPipe(errorTarget);
         }
+
+        Console.WriteLine(cmd);
 
         if (!isCliWrap)
         {
@@ -581,6 +703,11 @@ public static class Helpers
         return selector(c);
     }
 
+    public static ValueTaskAwaiter<T> GetAwaiter<T>(this ValueTask<T>? task)
+    {
+        return task?.GetAwaiter() ?? ValueTask.FromResult(default(T)).GetAwaiter()!;
+    }
+
     public static ValueTask<T> AsValueTask<T>(this Task<T> task) => new(task);
 
     public static async IAsyncEnumerable<T> AsAsyncEnumerable<T>(this Task<IReadOnlyList<T>> listTask)
@@ -712,6 +839,26 @@ public static class Helpers
         }
     }
 
+    public record struct ChannelBounds(int? Capacity)
+    {
+        public static implicit operator ChannelBounds(int? capacity)
+        {
+            return new(capacity);
+        }
+
+        public static implicit operator ChannelBounds(Parallelism parallelism)
+        {
+            var maxParallel = parallelism.Options?.MaxDegreeOfParallelism ?? 1;
+            if (maxParallel == -1) maxParallel = Environment.ProcessorCount;
+            return maxParallel * 2;
+        }
+
+        public Channel<T> CreateChannel<T>()
+        {
+            return Capacity == null ? Channel.CreateUnbounded<T>() : Channel.CreateBounded<T>(new BoundedChannelOptions(Capacity.Value));
+        }
+    }
+
     public static async Task ForEachAsync<TSource>(Parallelism parallel, IEnumerable<TSource> source, CancellationToken token, Func<TSource, CancellationToken, ValueTask> body)
     {
         if (parallel.Options is { } options)
@@ -740,6 +887,62 @@ public static class Helpers
             await foreach (var item in source)
             {
                 await body(item, token);
+            }
+        }
+    }
+
+    public static ValueTaskAwaiter GetAwaiter(this ValueTask? task)
+    {
+        return (task ?? ValueTask.CompletedTask).GetAwaiter();
+    }
+
+    public static async IAsyncEnumerable<T> WrapAsync<T>(this IAsyncEnumerable<T> source, Func<ValueTask>? beforeAsync = null, Func<ValueTask>? afterAsync = null)
+    {
+        await beforeAsync?.Invoke();
+
+        await foreach (var item in source)
+        {
+            yield return item;
+        }
+
+        await afterAsync?.Invoke();
+    }
+
+    public static IAsyncEnumerable<T> CreateSecondaryEnumerable<T>(this IAsyncEnumerable<T> items, out IAsyncEnumerable<T> secondary, ChannelBounds bounds = default)
+    {
+        var channel = bounds.CreateChannel<T>();
+
+        secondary = channel.Reader.ReadAllAsync();
+        return items.WrapAsync(afterAsync: async () =>
+        {
+            channel.Writer.Complete();
+        }).SelectAwait(async item =>
+        {
+            await channel.Writer.WriteAsync(item);
+            return item;
+        });
+    }
+
+    public static async IAsyncEnumerable<TResult> ParallelSelectAsync<T, TResult>(this IAsyncEnumerable<T> source, Parallelism parallel, CancellationToken token, Func<T, CancellationToken, Task<TResult>> body)
+    {
+        if (parallel.Options is { } options)
+        {
+            options.CancellationToken = token;
+            var tasks = source.Select(i => body(i, token)).CreateSecondaryEnumerable(out var resultTasks, parallel);
+            await Parallel.ForEachAsync(tasks, options, async (resultTask, token) => await resultTask);
+
+            await foreach (var resultTask in resultTasks)
+            {
+                var result = await resultTask;
+                yield return result;
+            }
+        }
+        else
+        {
+            await foreach (var item in source)
+            {
+                var result = await body(item, token);
+                yield return result;
             }
         }
     }
@@ -834,8 +1037,13 @@ public static class Helpers
             sb.Append("_");
             sb.Append(guid);
         }
-
         return sb.ToString();
+    }
+
+    public static long RoundUpToMultiple(this long value, long multiple)
+    {
+        if (multiple == 0) return value; // or throw, depending on semantics
+        return ((value + multiple - 1) / multiple) * multiple;
     }
 
     public static string Truncate(this string s, int length) => s.Length <= length ? s : s.Substring(0, length);
@@ -907,7 +1115,7 @@ public static class Helpers
         return client.PostAsJsonAsync(request.GetApiUrl(), request, token);
     }
 
-    public static bool EqualsIgnoreCase(this string s, string other)
+    public static bool EqualsIgnoreCase(this string s, string? other)
     {
         return string.Equals(s, other, StringComparison.OrdinalIgnoreCase);
     }
@@ -924,6 +1132,38 @@ public static class Helpers
         }
 
         throw new FormatException(name);
+    }
+
+    public static IDisposable ReportProgressAsync(TimeSpan period, Action action)
+    {
+        CancellationTokenSource cts = new CancellationTokenSource();
+
+        async void runAsync()
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(period, cts.Token);
+                }
+                catch
+                {
+                    break;
+                }
+                finally
+                {
+                    action();
+                }
+            }
+        }
+
+        runAsync();
+
+        return new DisposeAction(() =>
+        {
+            cts.Cancel();
+            cts.Dispose();
+        });
     }
 
     /// <summary>
