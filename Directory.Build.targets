@@ -8,4 +8,15 @@
 
     <Copy SourceFiles="$(PackageOutputAbsolutePath)\$(PackageId).$(PackageVersion).nupkg" DestinationFiles="$(ExplicitPackageOutputFileName)" />
   </Target>
+
+  <Target Name="_ComputeNETCoreBuildOutputFiles_Additional" 
+          AfterTargets="_ComputeNETCoreBuildOutputFiles">
+    <ItemGroup Condition="'$(AppHostIntermediatePath)' != '' AND '$(ToolCommandName)' != ''">
+      <_ToolAppHostFile 
+      Include="@(None->WithMetadataValue('Identity','$(AppHostIntermediatePath)')->WithoutMetadataValue('Link', '$(ToolCommandName)$(_NativeExecutableExtension)'))" 
+        Link="$(ToolCommandName)$(_NativeExecutableExtension)" />
+
+      <None Include="@(_ToolAppHostFile)" />
+    </ItemGroup>
+  </Target>
 </Project>
