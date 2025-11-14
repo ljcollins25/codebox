@@ -1,11 +1,14 @@
 ﻿using System;
-using System.Linq;
+using System.Collections;
+using System.Collections.ObjectModel;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Reflection.Metadata;
+using System.Runtime.CompilerServices;
 using Azure.Storage.Sas;
 using Microsoft.Azure.Pipelines.WebApi;
 
@@ -20,8 +23,45 @@ public class Program
         return RunAsync(args);
     }
 
-    public record struct Args(params string[] Arguments)
+    public class ArgList : Collection<string>
     {
+        public ArgList() { }
+
+        public ArgList(params string[] args)
+        {
+            Add(args);
+        }
+
+        public ArgList(IEnumerable<string> args)
+        {
+            Add(args);
+        }
+
+        public void Add(IEnumerable<string> args)
+        {
+            foreach (var arg in args)
+            {
+                Add(arg);
+            }
+        }
+
+        //public override string ToString()
+        //{
+        //    return string.Join(" ", this.Select(s => s.QuoteIfNeeded()));
+        //}
+
+        protected override void InsertItem(int index, string item)
+        {
+            if (string.IsNullOrEmpty(item)) return;
+            base.InsertItem(index, item);
+        }
+    }
+
+    [CollectionBuilder(typeof(Args), nameof(Create))]
+    public record struct Args(params string[] Arguments) : IEnumerable<string>
+    {
+        public static Args Create(ReadOnlySpan<string> items) => new(items.ToArray());
+
         public bool UseExceptionHandler { get; set; } = true;
 
         public static implicit operator Args(string[] args) => new(args);
@@ -29,6 +69,16 @@ public class Program
         public static implicit operator string[](Args args) => args.Arguments;
 
         public SubProcessRunner? ToRunner(CancellationToken token) => Arguments.Length == 0 ? null : SubProcessRunner.FromRemainingArgs(Arguments, token);
+
+        public IEnumerator<string> GetEnumerator()
+        {
+            return Arguments.AsEnumerable().GetEnumerator();
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
     }
 
     public static async Task<int> RunAsync(Args args)
@@ -112,7 +162,7 @@ public class Program
 
         public Uri? UriArg;
 
-        public required List<string> Args;
+        public required ArgList Args;
 
         public async Task<int> RunAsync()
         {
@@ -248,6 +298,30 @@ public class Program
             //    },
             //    r => r.RunAsync()),
 
+             CliModel.Bind<DeletePipelineRun>(
+                new Command("delete-run", "Display info."),
+                m =>
+                {
+                    var result = new DeletePipelineRun(m.Console)
+                    {
+                        TaskUrl = m.Option(c => ref c.TaskUrl, name: "taskUrl", required: true,
+                            defaultValue: Env.TaskUri,
+                            description: $"annotated build task uri (e.g. {TaskUriTemplate} )"),
+                        AdoToken = m.Option(c => ref c.AdoToken, name: "token",
+                            defaultValue: Env.Token,
+                            description: "The access token (e.g. $(System.AccessToken) )", required: true),
+                        RunId = m.Option(c => ref c.RunId, name: "run",
+                            description: "The run id", required: true),
+                    };
+
+                    m.Option(c => ref c.Debug, name: "debug");
+                    m.Option(c => ref c.Project, name: "project",
+                        description: "The project containing the pipeline run");
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
              CliModel.Bind<InfoTaskOperation>(
                 new Command("info", "Display info."),
                 m =>
@@ -332,7 +406,7 @@ public class Program
                             name: "recordId",
                             defaultValue: Env.PhaseId,
                             description: "The phase id (e.g. $(System.PhaseId))",
-                            aliases: new[] { "phaseId" });
+                            aliases: ["phaseId", "p"]);
 
                     m.Option(c => ref c.Timeout,
                             name: "timeout",

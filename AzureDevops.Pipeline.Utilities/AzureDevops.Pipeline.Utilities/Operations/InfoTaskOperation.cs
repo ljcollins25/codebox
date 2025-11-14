@@ -6,18 +6,17 @@ using Microsoft.TeamFoundation.DistributedTask.WebApi;
 
 namespace AzureDevops.Pipeline.Utilities;
 
-public class InfoTaskOperation(IConsole Console) : TaskOperationBase(Console)
+public class DeletePipelineRun(IConsole Console) : TaskOperationBase(Console)
 {
-    public bool Load;
+    public required int RunId;
+
+    public string? Project = null;
 
     protected override async Task<int> RunCoreAsync()
     {
-        Helpers.GetSetPipelineVariableText("AZPUTILS_OUT_TASK_URL", TaskUrl, emit: true, log: true);
+        Project ??= this.adoBuildUri.Project;
 
-        await RefreshTimelineRecordsAsync();
-
-        var record = RecordsById.Values.First(r => r.Name?.Contains("(Download") == true);
-        //var record = GetAncestorsAndSelf(taskInfo.TaskId).FirstOrDefault(r => r.RecordType == "Phase");
+        await client.DeleteBuildAsync(Project, RunId);
         
         return 0;
     }

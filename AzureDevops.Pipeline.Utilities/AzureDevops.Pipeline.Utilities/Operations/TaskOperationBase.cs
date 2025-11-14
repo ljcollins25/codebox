@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Azure.Pipelines.WebApi;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
 using Microsoft.VisualStudio.Services.Common;
@@ -40,7 +41,6 @@ public abstract class TaskOperationBase(IConsole Console)
     public async Task<int> RunAsync()
     {
         await InitializeAsync();
-
         return await RunCoreAsync();
     }
 
@@ -90,7 +90,7 @@ public abstract class TaskOperationBase(IConsole Console)
         }
     }
 
-    public async Task InitializeAsync()
+    public virtual async Task InitializeAsync()
     {
         AdoToken = FromDebugString(AdoToken);
 

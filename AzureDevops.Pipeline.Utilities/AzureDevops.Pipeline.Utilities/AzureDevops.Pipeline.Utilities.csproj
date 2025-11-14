@@ -5,8 +5,8 @@
     <AssemblyName>azputils</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType>embedded</DebugType>
-    <LangVersion>latest</LangVersion>
-    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <TargetFrameworks>net8.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PublishSingleFile>true</PublishSingleFile>
