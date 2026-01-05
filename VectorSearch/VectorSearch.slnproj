@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.Build.Traversal/3.3.0">
+  <ItemGroup>
+    <ProjectReference Include="VectorSearch/VectorSearch.csproj" />
+    <ProjectReference Include="VectorSearch.Tests/VectorSearch.Tests.csproj" />
+  </ItemGroup>
+</Project>
