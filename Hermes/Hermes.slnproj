@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.Build.Traversal/3.3.0">
+  <ItemGroup Label="files" >
+    <!-- <SolutionFile Include="[FilePath]" Folder="[SolutionExplorerFolder]" /> -->
+  </ItemGroup>
+  <ItemGroup Label="projects" >
+    <ProjectReference Include="Hermes.Core\Hermes.Core.csproj" Folder="" />
+    <ProjectReference Include="Hermes.Verbs\Hermes.Verbs.csproj" Folder="" />
+    <ProjectReference Include="Hermes.Cli\Hermes.Cli.csproj" Folder="" />
+    <ProjectReference Include="Hermes.Server\Hermes.Server.csproj" Folder="" />
+    <ProjectReference Include="Hermes.Tests\Hermes.Tests.csproj" Folder="" />
+  </ItemGroup>
+</Project>

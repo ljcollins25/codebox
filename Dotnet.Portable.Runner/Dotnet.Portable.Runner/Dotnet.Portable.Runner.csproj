@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!--<PackageReference Include="Microsoft.NET.HostModel" Version="3.1.16" />-->
+    <PackageReference Include="Microsoft.NET.HostModel" Version="3.1.16" />
 
     <!--<SdkDllReference Include="$(RuntimeIdentifierGraphPath)/../dotnet.dll" />-->
     <!--<Reference Include="@(SdkDllReference->'%(FullPath)')"/>-->
