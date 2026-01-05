@@ -10,18 +10,18 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        var rootCommand = new RootCommand("Hermes VeRB Executor CLI");
+        var rootCommand = new RootCommand("Hermes Verb Executor CLI");
 
-        var executeCommand = new Command("execute", "Execute a VeRB from input");
+        var executeCommand = new Command("execute", "Execute a Verb from input");
         var inputOption = new Option<FileInfo?>(
             aliases: ["--input", "-i"],
-            description: "Input file containing VeRB envelope (YAML or JSON). If not specified, reads from stdin.");
+            description: "Input file containing Verb envelope (YAML or JSON). If not specified, reads from stdin.");
         var outputOption = new Option<FileInfo?>(
             aliases: ["--output", "-o"],
             description: "Output file for result (JSON). If not specified, writes to stdout.");
         var interactiveOption = new Option<bool>(
             aliases: ["--interactive"],
-            description: "Run in interactive mode, processing multiple VeRBs.");
+            description: "Run in interactive mode, processing multiple Verbs.");
         var outputDirOption = new Option<DirectoryInfo>(
             aliases: ["--output-dir", "-d"],
             getDefaultValue: () => new DirectoryInfo(Path.Combine(Path.GetTempPath(), "hermes")),
@@ -34,11 +34,11 @@ public class Program
 
         executeCommand.SetHandler(ExecuteHandler, inputOption, outputOption, interactiveOption, outputDirOption);
 
-        var listCommand = new Command("list", "List all registered VeRBs");
+        var listCommand = new Command("list", "List all registered Verbs");
         listCommand.SetHandler(ListHandler);
 
-        var schemaCommand = new Command("schema", "Get schema for a VeRB");
-        var verbArgument = new Argument<string>("verb", "The VeRB name to get schema for");
+        var schemaCommand = new Command("schema", "Get schema for a Verb");
+        var verbArgument = new Argument<string>("verb", "The Verb name to get schema for");
         schemaCommand.AddArgument(verbArgument);
         schemaCommand.SetHandler(SchemaHandler, verbArgument);
 
@@ -104,7 +104,7 @@ public class Program
 
     private static void RunInteractive(HermesVerbExecutor executor, FileInfo? output)
     {
-        Console.Error.WriteLine("Hermes Interactive Mode. Enter VeRB envelopes (YAML/JSON), followed by an empty line to execute.");
+        Console.Error.WriteLine("Hermes Interactive Mode. Enter Verb envelopes (YAML/JSON), followed by an empty line to execute.");
         Console.Error.WriteLine("Type 'exit' or Ctrl+C to quit.");
 
         while (true)
@@ -191,12 +191,12 @@ public class Program
 
         if (registration == null)
         {
-            Console.Error.WriteLine($"Unknown VeRB: {verb}");
+            Console.Error.WriteLine($"Unknown Verb: {verb}");
             Environment.ExitCode = 1;
             return;
         }
 
-        Console.WriteLine($"// VeRB: {verb}");
+        Console.WriteLine($"// Verb: {verb}");
         Console.WriteLine();
         Console.WriteLine("// Arguments:");
         Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ArgumentType, SerializerOptions));
