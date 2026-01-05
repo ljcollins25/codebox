@@ -56,7 +56,7 @@ public class IHCITreeTests
         var map = tree.GetVectorNodeMap();
         // Query the tree
 
-        var results = tree.Query(query, k, Out.Var(out var visited, new Dictionary<IHCITree.LeafNode, float>()));
+        var results = tree.Query(query, k, routingWidth: 2, seenLeaves: Out.Var(out var visited, new Dictionary<IHCITree.LeafNode, float>()));
 
         // Compute brute-force results for comparison
         var bruteForce = new List<(int Id, float Distance)>();

@@ -121,42 +121,53 @@ public sealed class IHCITree
     /// <summary>
     /// Queries for the top-K nearest neighbors to the given query vector.
     /// </summary>
-    public (VectorId Id, float Distance)[] Query(ReadOnlySpan<float> query, int k, Dictionary<LeafNode, float>? seenLeaves = null)
+    /// <param name="query">The query vector.</param>
+    /// <param name="k">Number of nearest neighbors to return.</param>
+    /// <param name="routingWidth">Number of candidate nodes to maintain at each routing level during descent (default 2). Higher values explore more regions but increase cost.</param>
+    /// <param name="seenLeaves">Optional dictionary to track visited leaves and their distances.</param>
+    public (VectorId Id, float Distance)[] Query(ReadOnlySpan<float> query, int k, int routingWidth = 2, Dictionary<LeafNode, float>? seenLeaves = null)
     {
         if (k <= 0) throw new ArgumentOutOfRangeException(nameof(k));
+        if (routingWidth < 1) throw new ArgumentOutOfRangeException(nameof(routingWidth));
         if (query.Length != _store.Dimensions) throw new ArgumentException("Query dimension mismatch", nameof(query));
 
         // Bounded top-k as a max-heap by distance
         var best = new BoundedMaxK(k);
 
-        // Visit leaf and its neighbors
-        // 1) descend single best path with pruning against current best worst
-        LeafNode leaf = DescendToLeafForQuery(_root, query, best, visited: seenLeaves);
+        // Multi-candidate descent: find multiple candidate leaves
+        var candidateLeaves = DescendToLeavesForQuery(_root, query, routingWidth, best);
 
-        // 2) scan that leaf
-        ScanLeafVectors(leaf, query, best);
+        // Visited set for neighbor expansion
+        var visitedLeaves = new HashSet<LeafNode>(capacity: candidateLeaves.Count + LeafNeighborCount * candidateLeaves.Count);
 
-        // 3) expand to leaf neighbors
-        if (LeafNeighborCount > 0)
+        // Process each candidate leaf
+        foreach (var leaf in candidateLeaves)
         {
-            var visitedLeaves = new HashSet<Node>(capacity: LeafNeighborCount * 4);
-            visitedLeaves.Add(leaf);
+            if (!visitedLeaves.Add(leaf)) continue;
 
-            foreach (var neighbor in leaf.Neighbors.Span)
+            // Scan this leaf's vectors
+            ScanLeafVectors(leaf, query, best);
+            seenLeaves?[leaf] = leaf.Center.Length > 0 ? _metric.Distance(query, leaf.Center) : 0;
+
+            // Expand to leaf neighbors
+            if (LeafNeighborCount > 0)
             {
-                if (neighbor is null) continue;
-                if (!visitedLeaves.Add(neighbor)) continue;
-
-                // Prune by sphere lower bound if we have a worst already
-                if (best.HasWorst)
+                foreach (var neighborNode in leaf.Neighbors.Span)
                 {
-                    float lb = LowerBoundDistanceToSphere(query, neighbor.Center, neighbor.Radius, new(out var distance));
-                    seenLeaves?[neighbor] = distance;
-                    if (lb > best.WorstDistance)
-                        continue;
-                }
+                    if (neighborNode is not LeafNode neighbor) continue;
+                    if (!visitedLeaves.Add(neighbor)) continue;
 
-                ScanLeafVectors((LeafNode)neighbor, query, best);
+                    // Prune by sphere lower bound if we have a worst already
+                    if (best.HasWorst && neighbor.Center.Length > 0)
+                    {
+                        float lb = LowerBoundDistanceToSphere(query, neighbor.Center, neighbor.Radius, new(out var distance));
+                        seenLeaves?[neighbor] = distance;
+                        if (lb > best.WorstDistance)
+                            continue;
+                    }
+
+                    ScanLeafVectors(neighbor, query, best);
+                }
             }
         }
 
@@ -632,84 +643,177 @@ public sealed class IHCITree
         return (LeafNode)node;
     }
 
-    private LeafNode DescendToLeafForQuery(Node node, ReadOnlySpan<float> query, BoundedMaxK best, Dictionary<LeafNode, float>? visited = null)
+    /// <summary>
+    /// Multi-candidate descent: maintains a bounded set of best candidates at each routing level,
+    /// then returns multiple candidate leaves for search.
+    /// </summary>
+    private List<LeafNode> DescendToLeavesForQuery(Node root, ReadOnlySpan<float> query, int routingWidth, BoundedMaxK best)
     {
-        // First, descend through the tree hierarchy
-        while (!node.IsLeaf)
+        // If root is a leaf, just return it
+        if (root.IsLeaf)
+            return [((LeafNode)root)];
+
+        // Current level candidates: (distance to center, node)
+        var currentLevel = new List<(float Distance, Node Node)>(routingWidth * 2);
+        var nextLevel = new List<(float Distance, Node Node)>(routingWidth * 2);
+
+        currentLevel.Add((0f, root));
+
+        // Descend through routing levels
+        while (currentLevel.Count > 0)
         {
-            var rn = (RoutingNode)node;
+            nextLevel.Clear();
 
-            int bestIdx = -1;
-            float bestDist = float.PositiveInfinity;
-
-            for (int i = 0; i < rn.ChildCount; i++)
+            foreach (var (_, node) in currentLevel)
             {
-                var c = rn.Children[i];
-
-                if (best.HasWorst && c.Center.Length != 0)
+                if (node.IsLeaf)
                 {
-                    float lb = LowerBoundDistanceToSphere(query, c.Center, c.Radius);
-                    if (lb > best.WorstDistance)
-                        continue;
-                }
-
-                if (c.Center.Length == 0)
-                {
-                    if (bestIdx < 0) bestIdx = i;
+                    // This shouldn't happen in normal traversal, but handle it
+                    nextLevel.Add((0f, node));
                     continue;
                 }
 
-                float d = _metric.Distance(query, c.Center);
-                if (d < bestDist)
+                var rn = (RoutingNode)node;
+
+                // Evaluate all children of this routing node
+                for (int i = 0; i < rn.ChildCount; i++)
                 {
-                    bestDist = d;
-                    bestIdx = i;
+                    var child = rn.Children[i];
+
+                    // Compute lower bound distance for pruning
+                    float centerDist;
+                    if (child.Center.Length == 0)
+                    {
+                        centerDist = 0;
+                    }
+                    else
+                    {
+                        centerDist = _metric.Distance(query, child.Center);
+
+                        // Prune by sphere lower bound if we have a worst result
+                        if (best.HasWorst)
+                        {
+                            float lb = centerDist - child.Radius;
+                            if (lb > 0 && lb > best.WorstDistance)
+                                continue;
+                        }
+                    }
+
+                    // Add to next level candidates
+                    nextLevel.Add((centerDist, child));
                 }
             }
 
-            if (bestIdx < 0)
+            // If all candidates at next level are leaves, we're done
+            if (nextLevel.Count == 0)
+                break;
+
+            // Sort by distance and keep only top routingWidth candidates
+            nextLevel.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+
+            // Check if we've reached leaf level
+            bool allLeaves = true;
+            foreach (var (_, n) in nextLevel)
             {
-                node = rn.Children[0];
+                if (!n.IsLeaf)
+                {
+                    allLeaves = false;
+                    break;
+                }
             }
-            else
+
+            if (allLeaves)
             {
-                node = rn.Children[bestIdx];
+                // Collect leaf candidates (up to routingWidth^depth but bounded)
+                var result = new List<LeafNode>(Math.Min(nextLevel.Count, routingWidth * 4));
+                int maxLeaves = routingWidth * 4; // Allow more leaves since we want multi-start search
+                for (int i = 0; i < nextLevel.Count && result.Count < maxLeaves; i++)
+                {
+                    var leaf = (LeafNode)nextLevel[i].Node;
+
+                    // Final pruning check
+                    if (best.HasWorst && leaf.Center.Length > 0)
+                    {
+                        float lb = nextLevel[i].Distance - leaf.Radius;
+                        if (lb > 0 && lb > best.WorstDistance)
+                            continue;
+                    }
+
+                    result.Add(leaf);
+                }
+
+                // Apply neighbor graph traversal to find better starting leaves
+                if (LeafNeighborCount > 0 && result.Count > 0)
+                {
+                    var improved = ImproveLeavesByNeighborTraversal(result, query);
+                    return improved;
+                }
+
+                return result;
+            }
+
+            // Swap and limit to routingWidth
+            (currentLevel, nextLevel) = (nextLevel, currentLevel);
+            if (currentLevel.Count > routingWidth)
+            {
+                currentLevel.RemoveRange(routingWidth, currentLevel.Count - routingWidth);
             }
         }
 
-        var leaf = (LeafNode)node;
+        // Fallback: if we somehow get here with no leaves, return first leaf found
+        return [FindFirstLeaf(root)];
+    }
 
-        // Traverse neighbor graph to find a better leaf
-        if (LeafNeighborCount > 0 && leaf.Center.Length > 0)
+    /// <summary>
+    /// Traverses neighbor graph to potentially find better starting leaves.
+    /// </summary>
+    private List<LeafNode> ImproveLeavesByNeighborTraversal(List<LeafNode> startLeaves, ReadOnlySpan<float> query)
+    {
+        var result = new HashSet<LeafNode>(startLeaves);
+        var visited = new HashSet<LeafNode>(startLeaves);
+
+        // For each starting leaf, do a greedy neighbor walk
+        foreach (var startLeaf in startLeaves)
         {
-            visited ??= new Dictionary<LeafNode, float>();
-            float bestLeafDist = _metric.Distance(query, leaf.Center);
-            visited[leaf] = bestLeafDist;
+            var current = startLeaf;
+            if (current.Center.Length == 0) continue;
+
+            float currentDist = _metric.Distance(query, current.Center);
 
             bool improved = true;
             while (improved)
             {
                 improved = false;
 
-                foreach (var neighborNode in leaf.Neighbors.Span)
+                foreach (var neighborNode in current.Neighbors.Span)
                 {
                     if (neighborNode is not LeafNode neighbor) continue;
-                    if (visited.ContainsKey(neighbor)) continue;
                     if (neighbor.Center.Length == 0) continue;
+                    if (!visited.Add(neighbor)) continue;
 
                     float neighborDist = _metric.Distance(query, neighbor.Center);
-                    visited[neighbor] = neighborDist;
-                    if (neighborDist < bestLeafDist)
+                    if (neighborDist < currentDist)
                     {
-                        bestLeafDist = neighborDist;
-                        leaf = neighbor;
+                        currentDist = neighborDist;
+                        current = neighbor;
                         improved = true;
                     }
                 }
             }
+
+            result.Add(current);
         }
 
-        return leaf;
+        return [.. result];
+    }
+
+    private static LeafNode FindFirstLeaf(Node node)
+    {
+        while (!node.IsLeaf)
+        {
+            node = ((RoutingNode)node).Children[0];
+        }
+        return (LeafNode)node;
     }
 
     private float LowerBoundDistanceToSphere(ReadOnlySpan<float> point, ReadOnlySpan<float> center, float radius, Out<float> distance = default)
