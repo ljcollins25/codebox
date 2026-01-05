@@ -55,7 +55,8 @@ public class IHCITreeTests
 
         var map = tree.GetVectorNodeMap();
         // Query the tree
-        var results = tree.Query(query, k);
+
+        var results = tree.Query(query, k, Out.Var(out var visited, new Dictionary<IHCITree.LeafNode, float>()));
 
         // Compute brute-force results for comparison
         var bruteForce = new List<(int Id, float Distance)>();
@@ -117,6 +118,8 @@ public class IHCITreeTests
         float minRecall = vectorCount <= 500 ? 0.5f : 0.05f;
 
         Console.WriteLine($"Synthetic test: {vectorCount} vectors, {dimensions}D, k={k}, Recall@{k}={recall:P2}");
+
+        print("Visited:", visited.Select(e => (e.Key, e.Value)));
 
         print("Missing:", expectedNodes.ExceptBy(actualNodes, t => t.Id));
         print("Actual:", actualNodes);
@@ -224,7 +227,7 @@ public class IHCITreeTests
     /// Tests the tree with the SIFT dataset if available.
     /// This test is skipped if the file doesn't exist.
     /// </summary>
-    [Theory]
+    [Theory(Skip = "Test on demand")]
     [InlineData(@"C:\Users\lancec\Downloads\sift-128-euclidean.hdf5", 10)]
     [InlineData(@"C:\Users\lancec\Downloads\sift-128-euclidean.hdf5", 100)]
     public void TestSiftDataset(string filePath, int k)

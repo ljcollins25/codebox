@@ -121,7 +121,7 @@ public sealed class IHCITree
     /// <summary>
     /// Queries for the top-K nearest neighbors to the given query vector.
     /// </summary>
-    public (VectorId Id, float Distance)[] Query(ReadOnlySpan<float> query, int k)
+    public (VectorId Id, float Distance)[] Query(ReadOnlySpan<float> query, int k, Dictionary<LeafNode, float>? seenLeaves = null)
     {
         if (k <= 0) throw new ArgumentOutOfRangeException(nameof(k));
         if (query.Length != _store.Dimensions) throw new ArgumentException("Query dimension mismatch", nameof(query));
@@ -131,7 +131,7 @@ public sealed class IHCITree
 
         // Visit leaf and its neighbors
         // 1) descend single best path with pruning against current best worst
-        LeafNode leaf = DescendToLeafForQuery(_root, query, best);
+        LeafNode leaf = DescendToLeafForQuery(_root, query, best, visited: seenLeaves);
 
         // 2) scan that leaf
         ScanLeafVectors(leaf, query, best);
@@ -150,7 +150,8 @@ public sealed class IHCITree
                 // Prune by sphere lower bound if we have a worst already
                 if (best.HasWorst)
                 {
-                    float lb = LowerBoundDistanceToSphere(query, neighbor.Center, neighbor.Radius);
+                    float lb = LowerBoundDistanceToSphere(query, neighbor.Center, neighbor.Radius, new(out var distance));
+                    seenLeaves?[neighbor] = distance;
                     if (lb > best.WorstDistance)
                         continue;
                 }
@@ -260,7 +261,7 @@ public sealed class IHCITree
         private int _count;
 
         // Leaf neighbors (directed)
-        public StructArrayBuilder<Node?> Neighbors;
+        public StructArrayBuilder<LeafNode?> Neighbors;
         public StructArrayBuilder<float> NeighborDistances;
 
         public bool IsDisposed;
@@ -367,23 +368,67 @@ public sealed class IHCITree
                 rightVectors[i] = _vectors[rightChildIndices[i]];
             rightLeaf.ClearAndTakeFrom(rightVectors);
 
-            // TODO: Update neighbors to replace current node with split nodes
-            // Inherit neighbors
-            var insertIndex = NeighborDistances.SortedInsert(maxCapacity: tree.LeafNeighborCount, distance);
-            if (insertIndex >= 0)
-            {
-                Neighbors.BoundedInsert(insertIndex, leftLeaf, maxCapacity: tree.LeafNeighborCount);
-            }
-
+            // Initialize new leaves' neighbors from source node's neighbors (excluding self)
+            // and add each other as neighbors
             leftLeaf.Neighbors.AddRange(Neighbors.Span);
-            rightLeaf.Neighbors.AddRange(Neighbors.Span);
+            leftLeaf.NeighborDistances.AddRange(NeighborDistances.Span);
 
-            if (insertIndex >= 0)
+            rightLeaf.Neighbors.AddRange(Neighbors.Span);
+            rightLeaf.NeighborDistances.AddRange(NeighborDistances.Span);
+
+            // Add each other as neighbors (sorted by distance)
+            leftLeaf.NeighborDistances.SortedInsertWithMirror(
+                ref leftLeaf.Neighbors,
+                tree.LeafNeighborCount,
+                distance,
+                rightLeaf);
+
+            rightLeaf.NeighborDistances.SortedInsertWithMirror(
+                ref rightLeaf.Neighbors,
+                tree.LeafNeighborCount,
+                distance,
+                leftLeaf);
+
+            // Update all old neighbors: remove source node (this), add the two new leaves
+            for (int i = 0; i < Neighbors.Count; i++)
             {
-                leftLeaf.Neighbors[insertIndex] = rightLeaf;
+                if (Neighbors[i] is not LeafNode neighbor) continue;
+
+                float neighborDist = NeighborDistances[i];
+
+                // Remove the source node from neighbor's lists
+                int sourceIndex = neighbor.FindNeighborIndex(this);
+                if (sourceIndex >= 0)
+                {
+                    neighbor.Neighbors.RemoveAt(sourceIndex);
+                    neighbor.NeighborDistances.RemoveAt(sourceIndex);
+                }
+
+                // Add the two new leaves to this neighbor (maintaining bounded count)
+                neighbor.NeighborDistances.SortedInsertWithMirror(
+                    ref neighbor.Neighbors,
+                    tree.LeafNeighborCount,
+                    neighborDist,
+                    leftLeaf);
+
+                neighbor.NeighborDistances.SortedInsertWithMirror(
+                    ref neighbor.Neighbors,
+                    tree.LeafNeighborCount,
+                    neighborDist,
+                    rightLeaf);
             }
 
             return (leftLeaf, rightLeaf);
+        }
+
+        public int FindNeighborIndex(Node node)
+        {
+            for (int i = 0; i < Neighbors.Count; i++)
+            {
+                if (ReferenceEquals(Neighbors[i], node))
+                    return i;
+            }
+            return -1;
         }
 
         public override void ForEachVector<TData>(IHCITree tree, TData data, Action<int, ReadOnlySpan<float>, TData> handle)
@@ -587,7 +632,7 @@ public sealed class IHCITree
         return (LeafNode)node;
     }
 
-    private LeafNode DescendToLeafForQuery(Node node, ReadOnlySpan<float> query, BoundedMaxK best)
+    private LeafNode DescendToLeafForQuery(Node node, ReadOnlySpan<float> query, BoundedMaxK best, Dictionary<LeafNode, float>? visited = null)
     {
         // First, descend through the tree hierarchy
         while (!node.IsLeaf)
@@ -637,11 +682,9 @@ public sealed class IHCITree
         // Traverse neighbor graph to find a better leaf
         if (LeafNeighborCount > 0 && leaf.Center.Length > 0)
         {
+            visited ??= new Dictionary<LeafNode, float>();
             float bestLeafDist = _metric.Distance(query, leaf.Center);
-            var visited = new Dictionary<LeafNode, float>()
-            {
-                [leaf] = bestLeafDist
-            };
+            visited[leaf] = bestLeafDist;
 
             bool improved = true;
             while (improved)
@@ -669,9 +712,10 @@ public sealed class IHCITree
         return leaf;
     }
 
-    private float LowerBoundDistanceToSphere(ReadOnlySpan<float> point, ReadOnlySpan<float> center, float radius)
+    private float LowerBoundDistanceToSphere(ReadOnlySpan<float> point, ReadOnlySpan<float> center, float radius, Out<float> distance = default)
     {
         float d = _metric.Distance(point, center);
+        distance.Value = d;
         float lb = d - radius;
         return lb <= 0 ? 0 : lb;
     }

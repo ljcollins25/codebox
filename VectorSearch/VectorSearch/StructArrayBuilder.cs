@@ -90,6 +90,26 @@ public struct StructArrayBuilder<T>
             });
     }
 
+    /// <summary>
+    /// Performs a sorted insert on this builder (as the key/distance array) and mirrors
+    /// the insertion into a companion builder (as the value array).
+    /// Returns the insertion index, or -1 if not inserted.
+    /// </summary>
+    public int SortedInsertWithMirror<TMirror>(
+        ref StructArrayBuilder<TMirror> mirror,
+        int maxCapacity,
+        T item,
+        TMirror mirrorItem,
+        IComparer<T>? comparer = null)
+    {
+        int insertIndex = SortedInsert(maxCapacity, item, comparer);
+        if (insertIndex >= 0)
+        {
+            mirror.BoundedInsert(insertIndex, mirrorItem, maxCapacity);
+        }
+        return insertIndex;
+    }
+
     public void BoundedInsert(int index, T item, int maxCapacity)
     {
         // Note that insertions at the end are legal.
@@ -112,15 +132,15 @@ public struct StructArrayBuilder<T>
 
     public void RemoveAt(int index)
     {
-        CheckRange(index - 1);
+        CheckRange(index);
 
-        if (index < _count)
+        if (index < _count - 1)
         {
-            Array.Copy(_array, index + 1, _array, index, _count - index);
+            Array.Copy(_array, index + 1, _array, index, _count - index - 1);
         }
         if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
         {
-            _array[_count] = default!;
+            _array[_count - 1] = default!;
         }
         _count--;
     }
