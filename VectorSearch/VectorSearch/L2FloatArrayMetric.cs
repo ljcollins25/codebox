@@ -1,5 +1,6 @@
 #nullable enable
 using System.Numerics;
+using System.Numerics.Tensors;
 
 namespace VectorSearch;
 
@@ -25,6 +26,7 @@ public sealed class L2FloatArrayMetric : IMetricModel
     /// </summary>
     public float Distance(in ReadOnlySpan<float> a, in ReadOnlySpan<float> b)
     {
+        // TODO: Precompute norm of vectors?
         float sum = 0f;
         int i = 0;
         int simdWidth = Vector<float>.Count;

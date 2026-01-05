@@ -27,12 +27,12 @@ public ref struct SortedTopK<T, TCompare>
     /// Inserts item if it belongs in the top-K.
     /// Returns true if kept.
     /// </summary>
-    public bool Add(in T item)
+    public int Add(in T item)
     {
         // Hot-path cutoff
         if (_count == _buffer.Length &&
             !_cmp.IsBetter(item, _buffer[_count - 1]))
-            return false;
+            return -1;
 
         // Binary search insertion point
         int lo = 0, hi = _count;
@@ -54,7 +54,7 @@ public ref struct SortedTopK<T, TCompare>
         if (_count < _buffer.Length)
             _count++;
 
-        return true;
+        return lo;
     }
 
     public ReadOnlySpan<T> Items => _buffer.Slice(0, _count);

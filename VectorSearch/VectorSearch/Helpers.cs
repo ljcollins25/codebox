@@ -2,8 +2,19 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using static VectorSearch.Helpers;
 
 namespace VectorSearch;
+
+public ref struct Ref<T>
+{
+    public ref T Value;
+
+    public unsafe Ref(ref T value)
+    {
+        Value = ref value;
+    }
+}
 
 /// <summary>
 /// Type marker for generic operations.
@@ -32,11 +43,14 @@ public ref struct RefTuple<T1, T2>(T1 item1, T2 item2)
 }
 
 /// <summary>
-/// Reference wrapper for passing by reference into lambdas.
+/// Func-like interface for ref struct compatibility.
 /// </summary>
-public ref struct Ref<T>(ref T value)
+public interface IFuncInvoke<TArg1, TArg2, TResult>
+    where TArg1 : allows ref struct
+    where TArg2 : allows ref struct
+    where TResult : allows ref struct
 {
-    public ref T Value = ref value;
+    TResult Invoke(TArg1 arg1, TArg2 arg2);
 }
 
 /// <summary>
@@ -44,6 +58,16 @@ public ref struct Ref<T>(ref T value)
 /// </summary>
 public static class Helpers
 {
+    public static (T1, T2, T3) SelectWith<T1, T2, T3>(this (T1, T2) t, Func<(T1, T2), T3> select)
+    {
+        return (t.Item1, t.Item2, select(t));
+    }
+
+    public static IEnumerable<TSource> ExceptBy<TSource, TKey>(this IEnumerable<TSource> first, IEnumerable<TSource> second, Func<TSource, TKey> keySelector)
+    {
+        return first.ExceptBy(second.Select(keySelector), keySelector);
+    }
+
     public static T Invoke<T>(Func<T> func) => func();
 
     public static T Plus<T>(this T value) where T : INumber<T> => value + T.One;
@@ -109,6 +133,66 @@ public static class Helpers
     public static Exception NotImplemented() => throw new NotImplementedException();
 
     public static float Squared(this float f) => f * f;
+
+    public delegate void ExpandSpan<T, TData>(ref Span<T> span, int requiredSize, TData data)
+        where TData : allows ref struct;
+
+    /// <summary>
+    /// Inserts an item into a sorted span, maintaining sorted order up to maxCapacity.
+    /// Returns the insertion index, or -1 if the item was not inserted.
+    /// </summary>
+    /// <param name="span">Reference to the current span (may be replaced if expanded).</param>
+    /// <param name="count">Reference to the current count of items in the span.</param>
+    /// <param name="maxCapacity">Maximum number of items to keep.</param>
+    /// <param name="item">The item to insert.</param>
+    /// <param name="comparer">Comparer to determine sort order (less than = better/earlier).</param>
+    /// <param name="expand">Delegate to expand the span if span.Length &lt; capacity. Called with current span and required minimum length.</param>
+    public static int SortedInsert<T, TData>(
+        Span<T> span,
+        int maxCapacity,
+        in T item,
+        IComparer<T> comparer,
+        TData data,
+        ExpandSpan<T, TData> expand)
+        where TData : allows ref struct
+    {
+        var count = span.Length;
+
+        // Hot-path cutoff: if at capacity and item is not better than worst
+        if (count == maxCapacity && comparer.Compare(item, span[count - 1]) >= 0)
+            return -1;
+
+        // Expand span if needed
+        if (span.Length < maxCapacity)
+        {
+            expand.Invoke(ref span, count + 1, data);
+        }
+
+        // Binary search insertion point
+        int lo = 0, hi = count;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (comparer.Compare(item, span[mid]) < 0)
+                hi = mid;
+            else
+                lo = mid + 1;
+        }
+
+        ShiftInsert(span, maxCapacity, item, count, lo);
+
+        return lo;
+    }
+
+    public static void ShiftInsert<T>(Span<T> span, int maxCapacity, T item, int count, int index)
+    {
+        // Shift elements to make room
+        int move = Math.Min(count, maxCapacity - 1) - index;
+        if (move > 0)
+            span.Slice(index, move).CopyTo(span.Slice(index + 1));
+
+        span[index] = item;
+    }
 
     public static int? AsCompare(this int i) => i == 0 ? null : i;
 

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 using System.Diagnostics;
 using System.Diagnostics.ContractsLight;
 using System.Runtime.CompilerServices;
@@ -9,33 +9,41 @@ namespace VectorSearch;
 /// Helper type for avoiding allocations while building arrays.
 /// </summary>
 /// <typeparam name="T">The element type.</typeparam>
-public class ArrayBuilder<T>
+public struct StructArrayBuilder<T>
 {
     private const int DefaultCapacity = 4;
 
-    private T[] _array = null!;
-    private int _count;
+    private T[] _array; // Starts out null, initialized on first Add.
+    private int _count; // Number of items into _array we're using.
 
     /// <summary>
     /// Initializes the <see cref="ArrayBuilder{T}"/> with a specified capacity.
     /// </summary>
-    public ArrayBuilder(int capacity = DefaultCapacity, int? length = 0)
+    /// <param name="capacity">The capacity of the array to allocate.</param>
+    /// <param name="length">the length or null to use capacity as length</param>
+    public StructArrayBuilder(int capacity = DefaultCapacity, int? length = 0)
     {
         Debug.Assert(capacity >= 0);
         if (capacity > 0)
         {
             _array = new T[capacity];
         }
+        else
+        {
+            _array = Array.Empty<T>();
+        }
+
         _count = length ?? capacity;
     }
 
-    public ArrayBuilder(T[] initialArray)
+    public StructArrayBuilder(T[] initialArray)
     {
         _array = initialArray;
     }
 
     /// <summary>
-    /// Gets the number of items this instance can store without re-allocating.
+    /// Gets the number of items this instance can store without re-allocating,
+    /// or 0 if the backing array is <c>null</c>.
     /// </summary>
     public int Capacity => _array?.Length ?? 0;
 
@@ -48,13 +56,14 @@ public class ArrayBuilder<T>
     public int Count => _count;
 
     /// <summary>
-    /// Gets or sets the number of items in the array currently in use.
+    /// Gets the number of items in the array currently in use.
     /// </summary>
     public int Length { get => _count; set => SetLength(value); }
 
     /// <summary>
     /// Gets or sets the item at a certain index in the array.
     /// </summary>
+    /// <param name="index">The index into the array.</param>
     public ref T this[int index]
     {
         get
@@ -64,14 +73,47 @@ public class ArrayBuilder<T>
         }
     }
 
+    public int SortedInsert(int maxCapacity, T item, IComparer<T>? comparer = null)
+    {
+        Ref<StructArrayBuilder<T>> refThis = new(ref this);
+        return Helpers.SortedInsert(
+            Span,
+            maxCapacity,
+            item,
+            comparer ?? Comparer<T>.Default,
+            refThis,
+            (ref span, requiredSize, refThis) =>
+            {
+                ref var me = ref refThis.Value;
+                me.EnsureLength(requiredSize);
+                span = me.Span;
+            });
+    }
+
+    public void BoundedInsert(int index, T item, int maxCapacity)
+    {
+        // Note that insertions at the end are legal.
+        CheckRange(index);
+
+        var priorCount = _count;
+        var newCount = Math.Min(_count + 1, maxCapacity);
+        EnsureLength(newCount);
+        Helpers.ShiftInsert(Span, maxCapacity, item, priorCount, index);
+    }
+
     /// <summary>
     /// Adds an item to the backing array, resizing it if necessary.
     /// </summary>
-    public void Add(T item) => AddAndGet(item);
+    /// <param name="item">The item to add.</param>
+    public void Add(T item)
+    {
+        AddAndGet(item);
+    }
 
     public void RemoveAt(int index)
     {
         CheckRange(index - 1);
+
         if (index < _count)
         {
             Array.Copy(_array, index + 1, _array, index, _count - index);
@@ -89,6 +131,7 @@ public class ArrayBuilder<T>
         {
             EnsureCapacity(_count + 1);
         }
+
         return ref UncheckedAdd(item);
     }
 
@@ -108,12 +151,15 @@ public class ArrayBuilder<T>
 
     public void Insert(int index, T item)
     {
+        // Note that insertions at the end are legal.
         CheckRange(index);
+
         if (_count == _array.Length) EnsureCapacity(_count + 1);
         if (index < _count)
         {
             Array.Copy(_array, index, _array, index + 1, _count - index);
         }
+
         _array[index] = item;
         _count++;
     }
@@ -130,17 +176,21 @@ public class ArrayBuilder<T>
             UncheckedAdd(value);
             return true;
         }
+
         return false;
     }
 
     public Span<T> Span => _array.AsSpan(0, _count);
 
-    public ArraySegment<T> Segment => new(_array, 0, _count);
+    public ArraySegment<T> Segment => new ArraySegment<T>(_array, 0, _count);
 
     /// <summary>
     /// Makes the instance empty WITHOUT clearing the contents
     /// </summary>
-    public void Reset() => _count = 0;
+    public void Reset()
+    {
+        _count = 0;
+    }
 
     /// <summary>
     /// Makes the instance empty AND clears the contents
@@ -152,7 +202,9 @@ public class ArrayBuilder<T>
     }
 
     public ref T First => ref Span[0];
+
     public ref T Last => ref Span[_count - 1];
+
     public T[] UnderlyingArrayUnsafe => _array;
 
     /// <summary>
@@ -164,15 +216,22 @@ public class ArrayBuilder<T>
         {
             return Array.Empty<T>();
         }
+
         return Span.ToArray();
     }
 
     /// <summary>
     /// Adds an item to the backing array, without checking if there is room.
     /// </summary>
+    /// <param name="item">The item to add.</param>
+    /// <remarks>
+    /// Use this method if you know there is enough space in the <see cref="ArrayBuilder{T}"/>
+    /// for another item, and you are writing performance-sensitive code.
+    /// </remarks>
     public ref T UncheckedAdd(T item)
     {
         Debug.Assert(_count < Capacity);
+
         ref var slot = ref _array![_count++];
         slot = item;
         return ref slot;
@@ -196,6 +255,7 @@ public class ArrayBuilder<T>
         var result = EnsureCapacity(minimum);
         _count = Math.Max(_count, minimum);
         return result;
+
     }
 
     public bool EnsureCapacity(int minimum)
@@ -220,5 +280,33 @@ public class ArrayBuilder<T>
         _array = next;
 
         return true;
+    }
+
+    private record struct DebuggerSegment(int Start, int End, ReadOnlyMemory<T> Values)
+    {
+        public static implicit operator DebuggerSegment(ArraySegment<T> values)
+        {
+            return new DebuggerSegment(values.Offset, values.Offset + values.Count, values);
+        }
+    }
+
+    private DebuggerSegment[] DebuggerSegments
+    {
+        get
+        {
+            return enumerate().ToArray();
+        }
+    }
+
+    private IEnumerable<DebuggerSegment> enumerate()
+    {
+        for (int start = 0; start < Count;)
+        {
+            int length = Math.Min(Count - start, 200);
+
+            yield return new ArraySegment<T>(_array, start, length);
+
+            start += length;
+        }
     }
 }

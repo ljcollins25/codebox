@@ -35,7 +35,7 @@ public class IHCITreeTests
 
         var store = new VectorBlockArrayStore(vectors);
         var metric = new L2FloatArrayMetric(dimensions);
-        var tree = new IHCITree(metric, store, leafCapacity: 32, routingMaxChildren: 8, leafNeighborCount: 8);
+        var tree = new IHCITree(metric, store, leafCapacity: 64, routingMaxChildren: 8, leafNeighborCount: 8);
 
         // Insert all vectors
         for (int i = 0; i < vectorCount; i++)
@@ -68,8 +68,33 @@ public class IHCITreeTests
         bruteForce.Sort((a, b) => a.Distance.CompareTo(b.Distance));
         var expected = bruteForce.Take(k).ToList();
 
-        var expectedNodes = expected.Select(i => (i.Id, i.Distance, Node: map[i.Id])).ToArray();
-        var actualNodes = results.Select(i => (i.Id.Index, i.Distance, Node: map[i.Id])).ToArray();
+        (IHCITree.Node Node, float Distance, string Neighbors) get(VectorId id)
+        {
+            return info((IHCITree.LeafNode)map[id], query).SelectWith(t => "Neighbors: " + string.Join(", ", t.Item1.Neighbors.Segment));
+        }
+
+        (IHCITree.LeafNode Node, float Distance, string Neighbors) best(VectorId id)
+        {
+            return tree.Leaves().Select(l => info(l, store.GetVector(id))).MinBy(t => t.Distance).SelectWith(t => "Neighbors: " + string.Join(", ", t.Item1.Neighbors.Segment));
+        }
+
+        (IHCITree.LeafNode Node, float Distance) info(IHCITree.LeafNode node, ReadOnlySpan<float> query)
+        {
+            return (node, metric.Distance(node.Center, query));
+        }
+
+        var expectedNodes = expected.Select(i => (i.Id, i.Distance, "\nLocation", Location: get(i.Id), "\nBest", Best: best(i.Id))).ToArray();
+        var actualNodes = results.Select(i => (Id: i.Id.Index, i.Distance, "\nLocation", Location: get(i.Id), "\nBest", Best: best(i.Id))).ToArray();
+
+        void print<T>(string header, IEnumerable<T> values)
+        {
+            Console.WriteLine();
+            Console.WriteLine(header + $" (Count = {values.Count()})");
+            foreach (var value in values)
+            {
+                Console.WriteLine(value);
+            }
+        }
 
         // Verify results
         Assert.Equal(k, results.Length);
@@ -90,10 +115,15 @@ public class IHCITreeTests
         // We expect reasonable recall - approximate search may have lower recall for larger datasets
         // Recall threshold varies by data complexity
         float minRecall = vectorCount <= 500 ? 0.5f : 0.05f;
-        Assert.True(recall >= minRecall, 
-            $"Recall@{k} = {recall:P2} is too low. Expected at least {minRecall:P0}.");
 
         Console.WriteLine($"Synthetic test: {vectorCount} vectors, {dimensions}D, k={k}, Recall@{k}={recall:P2}");
+
+        print("Missing:", expectedNodes.ExceptBy(actualNodes, t => t.Id));
+        print("Actual:", actualNodes);
+
+        print("Expected:", expectedNodes);
+        Assert.True(recall >= minRecall,
+            $"Recall@{k} = {recall:P2} is too low. Expected at least {minRecall:P0}.");
     }
 
     /// <summary>

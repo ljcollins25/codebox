@@ -57,6 +57,8 @@ public sealed class IHCITree
         _root = leaf;
     }
 
+    public IEnumerable<LeafNode> Leaves() => _leaves.Segment.Where(l => !l.IsDisposed);
+
     public Dictionary<VectorId, Node> GetVectorNodeMap()
     {
         var result = new Dictionary<VectorId, Node>();
@@ -203,7 +205,7 @@ public sealed class IHCITree
         public static implicit operator int(NodeId n) => n.Id;
     }
 
-    public abstract class Node
+    public abstract class Node : IComparable<Node>
     {
         public NodeId NodeId;
         public RoutingNode? Parent;
@@ -231,7 +233,7 @@ public sealed class IHCITree
 
         public abstract void Repair(IHCITree tree);
 
-        public abstract (Node left, Node right) NewSplitNodes(IHCITree tree, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices);
+        public abstract (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices);
 
         public abstract int ChildVectorLength { get; }
 
@@ -242,6 +244,11 @@ public sealed class IHCITree
 
         public abstract void ForEachVector<TData>(IHCITree tree, TData data, Action<int, ReadOnlySpan<float>, TData> handle)
             where TData : allows ref struct;
+
+        public int CompareTo(Node? other)
+        {
+            return 0;
+        }
     }
 
     public sealed class LeafNode : Node
@@ -253,10 +260,10 @@ public sealed class IHCITree
         private int _count;
 
         // Leaf neighbors (directed)
-        public ArrayBuilder<Node?> Neighbors;
+        public StructArrayBuilder<Node?> Neighbors;
+        public StructArrayBuilder<float> NeighborDistances;
 
         public bool IsDisposed;
-
 
         public LeafNode(NodeId nodeId, int neighborCount)
         {
@@ -264,7 +271,8 @@ public sealed class IHCITree
             _vectors = new VectorId[64];
             _count = 0;
             DescCount = 0;
-            Neighbors = new();
+            Neighbors = new(0);
+            NeighborDistances = new(0);
         }
 
         public int CountVectors => _count;
@@ -308,15 +316,15 @@ public sealed class IHCITree
             Radius = radius;
 
             // Repair neighbors: find closest leaves
-            if (tree.LeafNeighborCount > 0)
-            {
-                var nearest = tree.FindNearestLeavesForRepair(this, tree.LeafNeighborCount);
-                Neighbors.Reset();
-                foreach (var n in nearest)
-                {
-                    Neighbors.Add(n);
-                }
-            }
+            //if (tree.LeafNeighborCount > 0)
+            //{
+            //    var nearest = tree.FindNearestLeavesForRepair(this, tree.LeafNeighborCount);
+            //    Neighbors.Reset();
+            //    foreach (var n in nearest)
+            //    {
+            //        Neighbors.Add(n);
+            //    }
+            //}
         }
 
         private void EnsureCenterAllocated(int dim)
@@ -342,7 +350,7 @@ public sealed class IHCITree
             return tree._store.GetVector(_vectors[index]);
         }
 
-        public override (Node left, Node right) NewSplitNodes(IHCITree tree, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices)
+        public override (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices)
         {
             IsDisposed = true;
             var leftLeaf = tree.NewLeaf(parent: null);
@@ -359,11 +367,20 @@ public sealed class IHCITree
                 rightVectors[i] = _vectors[rightChildIndices[i]];
             rightLeaf.ClearAndTakeFrom(rightVectors);
 
+            // TODO: Update neighbors to replace current node with split nodes
             // Inherit neighbors
-            foreach (var neighbor in Neighbors.Span)
+            var insertIndex = NeighborDistances.SortedInsert(maxCapacity: tree.LeafNeighborCount, distance);
+            if (insertIndex >= 0)
             {
-                leftLeaf.Neighbors.Add(neighbor);
-                rightLeaf.Neighbors.Add(neighbor);
+                Neighbors.BoundedInsert(insertIndex, leftLeaf, maxCapacity: tree.LeafNeighborCount);
+            }
+
+            leftLeaf.Neighbors.AddRange(Neighbors.Span);
+            rightLeaf.Neighbors.AddRange(Neighbors.Span);
+
+            if (insertIndex >= 0)
+            {
+                leftLeaf.Neighbors[insertIndex] = rightLeaf;
             }
 
             return (leftLeaf, rightLeaf);
@@ -464,7 +481,7 @@ public sealed class IHCITree
             return Children[index].Center;
         }
 
-        public override (Node left, Node right) NewSplitNodes(IHCITree tree, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices)
+        public override (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices)
         {
             var left = tree.NewRouting(parent: null);
             var right = tree.NewRouting(parent: null);
@@ -528,7 +545,10 @@ public sealed class IHCITree
         }
     }
 
-    private void EnqueueRepair(Node node) => _repairQueue.Enqueue(node);
+    private void EnqueueRepair(Node node)
+    {
+        _repairQueue.Enqueue(node);
+    }
 
     // ----------------------------
     // Descent + pruning
@@ -569,6 +589,7 @@ public sealed class IHCITree
 
     private LeafNode DescendToLeafForQuery(Node node, ReadOnlySpan<float> query, BoundedMaxK best)
     {
+        // First, descend through the tree hierarchy
         while (!node.IsLeaf)
         {
             var rn = (RoutingNode)node;
@@ -611,7 +632,41 @@ public sealed class IHCITree
             }
         }
 
-        return (LeafNode)node;
+        var leaf = (LeafNode)node;
+
+        // Traverse neighbor graph to find a better leaf
+        if (LeafNeighborCount > 0 && leaf.Center.Length > 0)
+        {
+            float bestLeafDist = _metric.Distance(query, leaf.Center);
+            var visited = new Dictionary<LeafNode, float>()
+            {
+                [leaf] = bestLeafDist
+            };
+
+            bool improved = true;
+            while (improved)
+            {
+                improved = false;
+
+                foreach (var neighborNode in leaf.Neighbors.Span)
+                {
+                    if (neighborNode is not LeafNode neighbor) continue;
+                    if (visited.ContainsKey(neighbor)) continue;
+                    if (neighbor.Center.Length == 0) continue;
+
+                    float neighborDist = _metric.Distance(query, neighbor.Center);
+                    visited[neighbor] = neighborDist;
+                    if (neighborDist < bestLeafDist)
+                    {
+                        bestLeafDist = neighborDist;
+                        leaf = neighbor;
+                        improved = true;
+                    }
+                }
+            }
+        }
+
+        return leaf;
     }
 
     private float LowerBoundDistanceToSphere(ReadOnlySpan<float> point, ReadOnlySpan<float> center, float radius)
@@ -648,7 +703,7 @@ public sealed class IHCITree
         int seedA = FarthestIndexFromPoint(node, node.Center);
         ReadOnlySpan<float> leftPoint = node.GetChildVector(this, seedA);
 
-        int seedB = FarthestIndexFromPoint(node, leftPoint, skipIndex: seedA);
+        int seedB = FarthestIndexFromPoint(node, leftPoint, skipIndex: seedA, farthestDistance: new(out var splitDistance));
         ReadOnlySpan<float> rightPoint = node.GetChildVector(this, seedB);
 
         // Partition
@@ -710,7 +765,7 @@ public sealed class IHCITree
         }
 
         // Create two new nodes
-        var (leftNode, rightNode) = node.NewSplitNodes(this, leftChildIndices.Span, rightChildIndices.Span);
+        var (leftNode, rightNode) = node.NewSplitNodes(this, splitDistance, leftChildIndices.Span, rightChildIndices.Span);
 
         // Initialize centers for new nodes
         leftNode.Center = leftCentroidBuilder.Build().ToArray();
@@ -918,7 +973,7 @@ public sealed class IHCITree
         radius = r;
     }
 
-    private int FarthestIndexFromPoint(Node node, ReadOnlySpan<float> point, int skipIndex = -1)
+    private int FarthestIndexFromPoint(Node node, ReadOnlySpan<float> point, int skipIndex = -1, Out<float> farthestDistance = default)
     {
         int farthestIndex = -1;
         float farthestDist = float.NegativeInfinity;
@@ -935,6 +990,7 @@ public sealed class IHCITree
             }
         }
 
+        farthestDistance.Value = farthestDist;
         return farthestIndex;
     }
 
