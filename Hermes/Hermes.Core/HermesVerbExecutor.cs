@@ -1,9 +1,41 @@
+using System.ComponentModel;
 using System.Text.Json;
 
 namespace Hermes.Core;
 
 /// <summary>
-/// Registry-based VeRB executor that dispatches VeRB envelopes to registered handlers.
+/// Represents a registered Verb with its metadata.
+/// </summary>
+public interface IVerbRegistration
+{
+    /// <summary>
+    /// The name of the Verb.
+    /// </summary>
+    string Name { get; }
+
+    /// <summary>
+    /// The argument type for this Verb.
+    /// </summary>
+    Type ArgumentType { get; }
+
+    /// <summary>
+    /// The result type for this Verb.
+    /// </summary>
+    Type ResultType { get; }
+
+    /// <summary>
+    /// The description from the Description attribute on the args type, if present.
+    /// </summary>
+    string? Description { get; }
+
+    /// <summary>
+    /// Executes the Verb with the given JSON arguments.
+    /// </summary>
+    VerbResult Execute(JsonElement args, JsonSerializerOptions options);
+}
+
+/// <summary>
+/// Registry-based Verb executor that dispatches Verb envelopes to registered handlers.
 /// </summary>
 public sealed class HermesVerbExecutor
 {
@@ -16,34 +48,42 @@ public sealed class HermesVerbExecutor
     }
 
     /// <summary>
-    /// Registers a VeRB handler for the given verb name.
+    /// Registers a Verb handler for the given verb name.
     /// </summary>
     public void Register<TArgs, TResult>(string verb, IVerb<TArgs, TResult> handler)
         where TResult : VerbResult
     {
         if (_verbs.ContainsKey(verb))
-            throw new InvalidOperationException($"VeRB '{verb}' is already registered.");
+            throw new InvalidOperationException($"Verb '{verb}' is already registered.");
 
         _verbs[verb] = new VerbRegistration<TArgs, TResult>(verb, handler);
     }
 
     /// <summary>
-    /// Gets all registered VeRB names.
+    /// Gets all registered Verb registrations.
     /// </summary>
-    public IEnumerable<string> GetRegisteredVerbs() => _verbs.Keys;
+    public IEnumerable<IVerbRegistration> GetRegistrations() => _verbs.Values;
 
     /// <summary>
-    /// Executes a VeRB from JSON input and returns the serialized result.
+    /// Gets a specific Verb registration by name, or null if not found.
     /// </summary>
-    /// <param name="input">JSON input containing the VeRB envelope.</param>
+    public IVerbRegistration? GetRegistration(string verb)
+    {
+        return _verbs.TryGetValue(verb, out var registration) ? registration : null;
+    }
+
+    /// <summary>
+    /// Executes a Verb from JSON input and returns the serialized result.
+    /// </summary>
+    /// <param name="input">JSON input containing the Verb envelope.</param>
     /// <returns>Serialized JSON result.</returns>
     public string Execute(string input)
     {
         var envelope = JsonSerializer.Deserialize<VerbEnvelope>(input, _serializerOptions)
-            ?? throw new InvalidOperationException("Invalid VeRB envelope.");
+            ?? throw new InvalidOperationException("Invalid Verb envelope.");
 
         if (!_verbs.TryGetValue(envelope.Verb, out var registration))
-            throw new InvalidOperationException($"Unknown VeRB '{envelope.Verb}'.");
+            throw new InvalidOperationException($"Unknown Verb '{envelope.Verb}'.");
 
         var result = registration.Execute(envelope.Arguments, _serializerOptions);
         // Serialize using the actual runtime type to include derived class properties
@@ -51,58 +91,40 @@ public sealed class HermesVerbExecutor
     }
 
     /// <summary>
-    /// Executes a VeRB from a pre-parsed envelope and returns the result object.
+    /// Executes a Verb from a pre-parsed envelope and returns the result object.
     /// </summary>
     public VerbResult Execute(VerbEnvelope envelope)
     {
         if (!_verbs.TryGetValue(envelope.Verb, out var registration))
-            throw new InvalidOperationException($"Unknown VeRB '{envelope.Verb}'.");
+            throw new InvalidOperationException($"Unknown Verb '{envelope.Verb}'.");
 
         return registration.Execute(envelope.Arguments, _serializerOptions);
-    }
-
-    /// <summary>
-    /// Gets the argument type for a registered VeRB.
-    /// </summary>
-    public Type? GetArgumentType(string verb)
-    {
-        return _verbs.TryGetValue(verb, out var registration) ? registration.ArgumentType : null;
-    }
-
-    /// <summary>
-    /// Gets the result type for a registered VeRB.
-    /// </summary>
-    public Type? GetResultType(string verb)
-    {
-        return _verbs.TryGetValue(verb, out var registration) ? registration.ResultType : null;
-    }
-
-    private interface IVerbRegistration
-    {
-        Type ArgumentType { get; }
-        Type ResultType { get; }
-        VerbResult Execute(JsonElement args, JsonSerializerOptions options);
     }
 
     private sealed class VerbRegistration<TArgs, TResult> : IVerbRegistration
         where TResult : VerbResult
     {
-        private readonly string _verb;
         private readonly IVerb<TArgs, TResult> _handler;
 
         public VerbRegistration(string verb, IVerb<TArgs, TResult> handler)
         {
-            _verb = verb;
+            Name = verb;
             _handler = handler;
         }
 
+        public string Name { get; }
         public Type ArgumentType => typeof(TArgs);
         public Type ResultType => typeof(TResult);
+
+        public string? Description => ArgumentType
+            .GetCustomAttributes(typeof(DescriptionAttribute), false)
+            .OfType<DescriptionAttribute>()
+            .FirstOrDefault()?.Description;
 
         public VerbResult Execute(JsonElement args, JsonSerializerOptions options)
         {
             var typedArgs = args.Deserialize<TArgs>(options)
-                ?? throw new InvalidOperationException($"Failed to deserialize arguments for VeRB '{_verb}'.");
+                ?? throw new InvalidOperationException($"Failed to deserialize arguments for Verb '{Name}'.");
 
             return _handler.Execute(typedArgs);
         }

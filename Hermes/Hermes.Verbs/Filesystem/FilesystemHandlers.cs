@@ -1,7 +1,7 @@
 namespace Hermes.Verbs.Filesystem;
 
 /// <summary>
-/// Unified filesystem VeRB handlers. All fs.* operations are implemented here.
+/// Unified filesystem Verb handlers. All fs.* operations are implemented here.
 /// </summary>
 public static class FilesystemHandlers
 {

@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Hermes.Core;
 
 /// <summary>
-/// Envelope containing a VeRB name and its arguments.
+/// Envelope containing a Verb name and its arguments.
 /// </summary>
 public sealed class VerbEnvelope
 {

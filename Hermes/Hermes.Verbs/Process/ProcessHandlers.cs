@@ -3,7 +3,7 @@ using SysDiag = global::System.Diagnostics;
 namespace Hermes.Verbs.Process;
 
 /// <summary>
-/// Unified process VeRB handlers. All proc.* operations are implemented here.
+/// Unified process Verb handlers. All proc.* operations are implemented here.
 /// </summary>
 public static class ProcessHandlers
 {

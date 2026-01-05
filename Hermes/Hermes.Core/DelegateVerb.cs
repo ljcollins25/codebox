@@ -1,19 +1,19 @@
 namespace Hermes.Core;
 
 /// <summary>
-/// A delegate-based implementation of IVerb that allows inline definition of VeRB handlers.
+/// A delegate-based implementation of IVerb that allows inline definition of Verb handlers.
 /// </summary>
-/// <typeparam name="TArgs">The type of arguments for this VeRB.</typeparam>
-/// <typeparam name="TResult">The type of result returned by this VeRB.</typeparam>
+/// <typeparam name="TArgs">The type of arguments for this Verb.</typeparam>
+/// <typeparam name="TResult">The type of result returned by this Verb.</typeparam>
 public sealed class DelegateVerb<TArgs, TResult> : IVerb<TArgs, TResult>
     where TResult : VerbResult
 {
     private readonly Func<TArgs, TResult> _handler;
 
     /// <summary>
-    /// Creates a new delegate-based VeRB handler.
+    /// Creates a new delegate-based Verb handler.
     /// </summary>
-    /// <param name="handler">The function to execute when this VeRB is invoked.</param>
+    /// <param name="handler">The function to execute when this Verb is invoked.</param>
     public DelegateVerb(Func<TArgs, TResult> handler)
     {
         _handler = handler ?? throw new ArgumentNullException(nameof(handler));

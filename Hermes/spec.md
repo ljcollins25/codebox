@@ -1,4 +1,4 @@
-(Spec updated to replace Command/Action terminology with VeRB, add Hermes VeRB Executor architecture, registry-based dispatch, filesystem command expansion, auto-directory creation rule, console/interactive pathways, and retention notes from code example. See full updated spec content in document.)
+(Spec updated to replace Command/Action terminology with Verb, add Hermes Verb Executor architecture, registry-based dispatch, filesystem command expansion, auto-directory creation rule, console/interactive pathways, and retention notes from code example. See full updated spec content in document.)
 
 ## Project Structure (Normative)
 
@@ -11,17 +11,17 @@ The v0 implementation is expected to be organized into multiple C# projects with
 **Responsibilities**:
 
 * `HermesVerbExecutor`
-* VeRB registry and dispatch
+* Verb registry and dispatch
 * `IVerb<TArgs, TResult>` interface
 * `VerbEnvelope`, `VerbResult`
-* All VeRB argument/result C# types
+* All Verb argument/result C# types
 * Schema derivation (`JsonSchemaBuilder`)
 * YAML → JSON normalization (format-level only)
 
 **Non-responsibilities**:
 
 * No console handling
-* No file system access beyond what is invoked via VeRBs
+* No file system access beyond what is invoked via Verbs
 * No process spawning
 * No Git operations
 
@@ -29,11 +29,11 @@ The v0 implementation is expected to be organized into multiple C# projects with
 
 ### Hermes.Verbs
 
-**Purpose**: Concrete implementations of VeRBs that touch the host system.
+**Purpose**: Concrete implementations of Verbs that touch the host system.
 
 **Responsibilities**:
 
-* Filesystem VeRBs (`fs.*`)
+* Filesystem Verbs (`fs.*`)
 * Process execution (`proc.run`)
 * System inspection (`sys.machineInfo`)
 * Path normalization and safety checks
@@ -63,7 +63,7 @@ The v0 implementation is expected to be organized into multiple C# projects with
 **Non-responsibilities**:
 
 * No business logic
-* No VeRB implementations
+* No Verb implementations
 * No schema derivation
 
 ---
@@ -77,7 +77,7 @@ The v0 implementation is expected to be organized into multiple C# projects with
 * Hosting a persistent `HermesVerbExecutor` instance
 * Exposing execution via a protocol (e.g. stdin/stdout, named pipes, HTTP, or VS Code extension transport)
 * Managing workspace root and agent asset locations
-* Translating inbound requests into VeRB envelopes
+* Translating inbound requests into Verb envelopes
 * Returning serialized results and errors
 * Lifecycle management (startup, shutdown, crash safety)
 
@@ -85,7 +85,7 @@ The v0 implementation is expected to be organized into multiple C# projects with
 
 * No CLI argument parsing or user interaction UX
 * No direct schema derivation logic
-* No VeRB business logic (delegated to `Hermes.Verbs`)
+* No Verb business logic (delegated to `Hermes.Verbs`)
 
 ---
 
@@ -97,7 +97,7 @@ The v0 implementation is expected to be organized into multiple C# projects with
 
 * Unit tests for `HermesVerbExecutor`
 * Golden tests for schema output (`JsonSchemaBuilder`)
-* Filesystem VeRB tests using temp directories
+* Filesystem Verb tests using temp directories
 * Process execution tests (platform-gated where required)
 
 **Non-responsibilities**:
@@ -107,13 +107,13 @@ The v0 implementation is expected to be organized into multiple C# projects with
 
 ---
 
-## VeRB Argument and Result Schemas (Normative)
+## Verb Argument and Result Schemas (Normative)
 
-This section defines the required input (Arguments) and output (Result) shapes for each VeRB supported in v0. These schemas are *authoritative* and correspond 1:1 with the C# argument and result types. JSON/YAML schemas MUST be derived mechanically from these C# types using `System.Text.Json` metadata (`JsonTypeInfo`).
+This section defines the required input (Arguments) and output (Result) shapes for each Verb supported in v0. These schemas are *authoritative* and correspond 1:1 with the C# argument and result types. JSON/YAML schemas MUST be derived mechanically from these C# types using `System.Text.Json` metadata (`JsonTypeInfo`).
 
 ### General Rules
 
-* Every VeRB has exactly one **Arguments** type and one **Result** type.
+* Every Verb has exactly one **Arguments** type and one **Result** type.
 * Arguments and Result types MUST be plain C# record/class types.
 * Serialization MUST use `System.Text.Json` with camelCase naming.
 * YAML input is first converted to JSON, then deserialized.
@@ -603,9 +603,9 @@ public record PropertySchema(string Name, string Type, string? Description) : Me
 
 ---
 
-## Appendix: Reference VeRB Executor Implementation
+## Appendix: Reference Verb Executor Implementation
 
-The following code provides a **reference implementation** of the Hermes VeRB Executor. It defines the registry-based dispatch mechanism used to map VeRB names to strongly-typed argument/result handlers. This implementation is **normative**: alternative implementations MAY refactor internally, but MUST preserve the observable behavior and semantics.
+The following code provides a **reference implementation** of the Hermes Verb Executor. It defines the registry-based dispatch mechanism used to map Verb names to strongly-typed argument/result handlers. This implementation is **normative**: alternative implementations MAY refactor internally, but MUST preserve the observable behavior and semantics.
 
 ```csharp
 public sealed class HermesVerbExecutor
@@ -622,7 +622,7 @@ public sealed class HermesVerbExecutor
         where TResult : VerbResult
     {
         if (_verbs.ContainsKey(verb))
-            throw new InvalidOperationException($"VeRB '{verb}' is already registered.");
+            throw new InvalidOperationException($"Verb '{verb}' is already registered.");
 
         _verbs[verb] = new VerbRegistration<TArgs, TResult>(verb, handler);
     }
@@ -631,10 +631,10 @@ public sealed class HermesVerbExecutor
     {
         // Input is YAML or JSON; YAML is converted to JSON prior to this call
         var envelope = JsonSerializer.Deserialize<VerbEnvelope>(input, _serializerOptions)
-            ?? throw new InvalidOperationException("Invalid VeRB envelope.");
+            ?? throw new InvalidOperationException("Invalid Verb envelope.");
 
         if (!_verbs.TryGetValue(envelope.Verb, out var registration))
-            throw new InvalidOperationException($"Unknown VeRB '{envelope.Verb}'.");
+            throw new InvalidOperationException($"Unknown Verb '{envelope.Verb}'.");
 
         var result = registration.Execute(envelope.Arguments, _serializerOptions);
         return JsonSerializer.Serialize(result, _serializerOptions);
@@ -660,7 +660,7 @@ public sealed class HermesVerbExecutor
         public VerbResult Execute(JsonElement args, JsonSerializerOptions options)
         {
             var typedArgs = args.Deserialize<TArgs>(options)
-                ?? throw new InvalidOperationException($"Failed to deserialize arguments for VeRB '{_verb}'.");
+                ?? throw new InvalidOperationException($"Failed to deserialize arguments for Verb '{_verb}'.");
 
             return _handler.Execute(typedArgs);
         }
@@ -688,8 +688,8 @@ public abstract class VerbResult
 
 This executor:
 
-* Uses a string-to-handler registry keyed by VeRB name
-* Enforces exactly one Arguments and Result type per VeRB
+* Uses a string-to-handler registry keyed by Verb name
+* Enforces exactly one Arguments and Result type per Verb
 * Relies entirely on `System.Text.Json` for deserialization
 * Is agnostic to transport (CLI, VS Code, HTTP, etc.)
 

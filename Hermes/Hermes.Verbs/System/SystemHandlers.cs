@@ -1,7 +1,7 @@
 namespace Hermes.Verbs.System;
 
 /// <summary>
-/// Unified system VeRB handlers. All sys.* operations are implemented here.
+/// Unified system Verb handlers. All sys.* operations are implemented here.
 /// </summary>
 public static class SystemHandlers
 {

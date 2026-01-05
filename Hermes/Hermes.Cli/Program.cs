@@ -174,7 +174,9 @@ public class Program
     private static void ListHandler()
     {
         var executor = CreateExecutor(Path.GetTempPath());
-        var verbs = executor.GetRegisteredVerbs().OrderBy(v => v);
+        var verbs = executor.GetRegistrations()
+            .Select(r => r.Name)
+            .OrderBy(v => v);
 
         foreach (var verb in verbs)
         {
@@ -185,11 +187,9 @@ public class Program
     private static void SchemaHandler(string verb)
     {
         var executor = CreateExecutor(Path.GetTempPath());
+        var registration = executor.GetRegistration(verb);
 
-        var argsType = executor.GetArgumentType(verb);
-        var resultType = executor.GetResultType(verb);
-
-        if (argsType == null || resultType == null)
+        if (registration == null)
         {
             Console.Error.WriteLine($"Unknown VeRB: {verb}");
             Environment.ExitCode = 1;
@@ -199,10 +199,10 @@ public class Program
         Console.WriteLine($"// VeRB: {verb}");
         Console.WriteLine();
         Console.WriteLine("// Arguments:");
-        Console.WriteLine(JsonSchemaBuilder.GetSchema(argsType, SerializerOptions));
+        Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ArgumentType, SerializerOptions));
         Console.WriteLine();
         Console.WriteLine("// Result:");
-        Console.WriteLine(JsonSchemaBuilder.GetSchema(resultType, SerializerOptions));
+        Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ResultType, SerializerOptions));
     }
 
     private static HermesVerbExecutor CreateExecutor(string outputDirectory)

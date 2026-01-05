@@ -1,23 +1,24 @@
 using Hermes.Core;
 using Hermes.Verbs.Filesystem;
+using Hermes.Verbs.Help;
 using Hermes.Verbs.Process;
 using Hermes.Verbs.System;
 
 namespace Hermes.Verbs;
 
 /// <summary>
-/// Registers all built-in VeRBs with the executor.
+/// Registers all built-in Verbs with the executor.
 /// </summary>
 public static class VerbRegistration
 {
     /// <summary>
-    /// Registers all built-in VeRBs with the given executor.
+    /// Registers all built-in Verbs with the given executor.
     /// </summary>
-    /// <param name="executor">The executor to register VeRBs with.</param>
+    /// <param name="executor">The executor to register Verbs with.</param>
     /// <param name="processOutputDirectory">Directory for process output files.</param>
     public static void RegisterAll(HermesVerbExecutor executor, string processOutputDirectory)
     {
-        // Filesystem VeRBs
+        // Filesystem Verbs
         executor.Register<FsExistsArgs, FsExistsResult>("fs.exists", FilesystemHandlers.Exists);
         executor.Register<FsReadFileArgs, FsReadFileResult>("fs.readFile", FilesystemHandlers.ReadFile);
         executor.Register<FsReadRangeArgs, FsReadRangeResult>("fs.readRange", FilesystemHandlers.ReadRange);
@@ -31,10 +32,13 @@ public static class VerbRegistration
         executor.Register<FsLineCountArgs, FsLineCountResult>("fs.lineCount", FilesystemHandlers.LineCount);
         executor.Register<FsListDirArgs, FsListDirResult>("fs.listDir", FilesystemHandlers.ListDir);
 
-        // Process VeRBs
+        // Process Verbs
         executor.Register<ProcRunArgs, ProcRunResult>("proc.run", args => ProcessHandlers.Run(args, processOutputDirectory));
 
-        // System VeRBs
+        // System Verbs
         executor.Register<SysMachineInfoArgs, SysMachineInfoResult>("sys.machineInfo", SystemHandlers.MachineInfo);
+
+        // Help Verbs (capture executor for self-introspection)
+        executor.Register<HelpArgs, HelpResult>("help", args => HelpHandlers.GetHelp(args, executor));
     }
 }

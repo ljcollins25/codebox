@@ -39,7 +39,7 @@ public class HermesVerbExecutorTests
         var input = """{"verb": "unknown.verb", "arguments": {}}""";
         
         var ex = Assert.Throws<InvalidOperationException>(() => executor.Execute(input));
-        Assert.Contains("Unknown VeRB", ex.Message);
+        Assert.Contains("Unknown Verb", ex.Message);
     }
 
     [Fact]
@@ -53,16 +53,41 @@ public class HermesVerbExecutorTests
     }
 
     [Fact]
-    public void GetRegisteredVerbs_ReturnsAllRegistered()
+    public void GetRegistrations_ReturnsAllRegistered()
     {
         var executor = new HermesVerbExecutor(_options);
         executor.Register("test.echo", new TestEchoVerb());
         executor.Register("test.other", new TestEchoVerb());
 
-        var verbs = executor.GetRegisteredVerbs().ToList();
+        var registrations = executor.GetRegistrations().ToList();
+        var verbNames = registrations.Select(r => r.Name).ToList();
         
-        Assert.Contains("test.echo", verbs);
-        Assert.Contains("test.other", verbs);
+        Assert.Contains("test.echo", verbNames);
+        Assert.Contains("test.other", verbNames);
+    }
+
+    [Fact]
+    public void GetRegistration_ReturnsRegistrationWithMetadata()
+    {
+        var executor = new HermesVerbExecutor(_options);
+        executor.Register("test.echo", new TestEchoVerb());
+
+        var registration = executor.GetRegistration("test.echo");
+        
+        Assert.NotNull(registration);
+        Assert.Equal("test.echo", registration.Name);
+        Assert.Equal(typeof(TestEchoArgs), registration.ArgumentType);
+        Assert.Equal(typeof(TestEchoResult), registration.ResultType);
+    }
+
+    [Fact]
+    public void GetRegistration_ReturnsNull_WhenNotFound()
+    {
+        var executor = new HermesVerbExecutor(_options);
+
+        var registration = executor.GetRegistration("nonexistent");
+        
+        Assert.Null(registration);
     }
 
     [Fact]
