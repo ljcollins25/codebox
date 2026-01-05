@@ -1,0 +1,238 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hermes Verb Execution API",
+    "description": "API for executing Hermes Verbs - filesystem, process, and system operations",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://your-hermes-server.example.com",
+      "description": "Hermes Server endpoint - replace with your actual server URL"
+    }
+  ],
+  "paths": {
+    "/execute": {
+      "post": {
+        "operationId": "executeVerb",
+        "summary": "Execute a Hermes Verb",
+        "description": "Execute any registered Hermes Verb with the provided arguments. The verb field specifies which operation to perform, and arguments contains the verb-specific parameters.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerbEnvelope"
+              },
+              "examples": {
+                "readFile": {
+                  "summary": "Read a file",
+                  "value": {
+                    "verb": "fs.read-file",
+                    "arguments": {
+                      "path": "/path/to/file.txt"
+                    }
+                  }
+                },
+                "listDirectory": {
+                  "summary": "List directory contents",
+                  "value": {
+                    "verb": "fs.list-directory",
+                    "arguments": {
+                      "path": "/path/to/directory"
+                    }
+                  }
+                },
+                "help": {
+                  "summary": "Get help for available verbs",
+                  "value": {
+                    "verb": "help",
+                    "arguments": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verb execution result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerbResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/verbs": {
+      "get": {
+        "operationId": "listVerbs",
+        "summary": "List all available Verbs",
+        "description": "Returns a list of all registered Hermes Verbs with their names and descriptions.",
+        "responses": {
+          "200": {
+            "description": "List of available verbs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "verbs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "description": "The verb identifier"
+                          },
+                          "description": {
+                            "type": "string",
+                            "description": "Description of what the verb does"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schema/{verb}": {
+      "get": {
+        "operationId": "getVerbSchema",
+        "summary": "Get schema for a specific Verb",
+        "description": "Returns the JSON schema for a verb's arguments and result types.",
+        "parameters": [
+          {
+            "name": "verb",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The verb name (e.g., 'fs.read-file', 'help')"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verb schema information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "verb": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "argumentsSchema": {
+                      "type": "object"
+                    },
+                    "resultSchema": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Verb not found"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "summary": "Health check endpoint",
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "healthy"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "VerbEnvelope": {
+        "type": "object",
+        "required": ["verb", "arguments"],
+        "properties": {
+          "verb": {
+            "type": "string",
+            "description": "The verb to execute. Use 'help' to list all available verbs.",
+            "examples": ["help", "fs.read-file", "fs.list-directory", "fs.write-file", "proc.run", "sys.get-environment"]
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Verb-specific arguments. Use /schema/{verb} endpoint to get the schema for a specific verb."
+          }
+        }
+      },
+      "VerbResult": {
+        "type": "object",
+        "properties": {
+          "succeeded": {
+            "type": "boolean",
+            "description": "Whether the verb execution succeeded"
+          },
+          "result": {
+            "type": "object",
+            "description": "The verb-specific result (present if succeeded is true)"
+          },
+          "errorMessage": {
+            "type": "string",
+            "description": "Error message (present if succeeded is false)"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "succeeded": {
+            "type": "boolean",
+            "const": false
+          },
+          "errorMessage": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

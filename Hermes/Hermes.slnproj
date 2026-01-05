@@ -8,5 +8,6 @@
     <ProjectReference Include="Hermes.Cli\Hermes.Cli.csproj" Folder="" />
     <ProjectReference Include="Hermes.Server\Hermes.Server.csproj" Folder="" />
     <ProjectReference Include="Hermes.Tests\Hermes.Tests.csproj" Folder="" />
+    <ProjectReference Include="Hermes.Server.Tests\Hermes.Server.Tests.csproj" Folder="" />
   </ItemGroup>
 </Project>

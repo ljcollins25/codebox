@@ -2,16 +2,18 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Hermes.Core;
 using Hermes.Verbs;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Hermes.Server;
 
 /// <summary>
-/// Long-running Hermes server that processes Verb requests over stdin/stdout.
-/// Each line is a complete YAML or JSON request, and responses are written as complete JSON lines.
+/// Hermes server with HTTP and stdio modes.
+/// HTTP mode: ASP.NET Core server with /execute endpoint.
+/// stdio mode: Line-delimited JSON protocol for MCP integration.
 /// </summary>
 public class Program
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
+    public static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
@@ -20,18 +22,141 @@ public class Program
 
     public static async Task<int> Main(string[] args)
     {
-        var workspaceRoot = args.Length > 0 ? args[0] : Environment.CurrentDirectory;
+        // Check for stdio mode
+        if (args.Contains("--stdio"))
+        {
+            return await RunStdioMode(args);
+        }
+
+        // Default to HTTP server mode
+        return await RunHttpMode(args);
+    }
+
+    private static async Task<int> RunHttpMode(string[] args)
+    {
+        var builder = WebApplication.CreateBuilder(args);
+
+        // Configure JSON serialization
+        builder.Services.ConfigureHttpJsonOptions(options =>
+        {
+            options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        });
+
+        // Add services
+        builder.Services.AddSingleton(SerializerOptions);
+        builder.Services.AddSingleton<HermesVerbExecutor>(sp =>
+        {
+            var executor = new HermesVerbExecutor(SerializerOptions);
+            var outputDir = Path.Combine(builder.Environment.ContentRootPath, ".hermes", "output");
+            Directory.CreateDirectory(outputDir);
+            VerbRegistration.RegisterAll(executor, outputDir);
+            return executor;
+        });
+
+        // Add OpenAPI/Swagger
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddOpenApi();
+
+        var app = builder.Build();
+
+        // Configure middleware
+        if (app.Environment.IsDevelopment())
+        {
+            app.MapOpenApi();
+        }
+
+        // Map endpoints
+        app.MapPost("/execute", ExecuteEndpoint)
+            .WithName("ExecuteVerb")
+            .WithDescription("Execute a Hermes Verb");
+
+        app.MapGet("/verbs", ListVerbsEndpoint)
+            .WithName("ListVerbs")
+            .WithDescription("List all available Verbs");
+
+        app.MapGet("/schema/{verb}", GetSchemaEndpoint)
+            .WithName("GetVerbSchema")
+            .WithDescription("Get schema for a specific Verb");
+
+        app.MapGet("/health", () => Results.Ok(new { status = "healthy" }))
+            .WithName("HealthCheck")
+            .WithDescription("Health check endpoint");
+
+        Console.WriteLine($"Hermes HTTP Server starting on {builder.Configuration["Urls"] ?? "http://localhost:5000"}");
+
+        await app.RunAsync();
+        return 0;
+    }
+
+    private static async Task<IResult> ExecuteEndpoint(
+        HttpRequest request,
+        HermesVerbExecutor executor)
+    {
+        try
+        {
+            using var reader = new StreamReader(request.Body);
+            var input = await reader.ReadToEndAsync();
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return Results.BadRequest(new { succeeded = false, errorMessage = "Request body is required" });
+            }
+
+            var result = executor.Execute(input);
+            var jsonDoc = JsonDocument.Parse(result);
+            return Results.Ok(jsonDoc.RootElement);
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { succeeded = false, errorMessage = ex.Message });
+        }
+    }
+
+    private static IResult ListVerbsEndpoint(HermesVerbExecutor executor)
+    {
+        var verbs = executor.GetRegistrations()
+            .OrderBy(r => r.Name)
+            .Select(r => new
+            {
+                name = r.Name,
+                description = r.Description ?? "No description available."
+            });
+
+        return Results.Ok(new { verbs });
+    }
+
+    private static IResult GetSchemaEndpoint(string verb, HermesVerbExecutor executor)
+    {
+        var registration = executor.GetRegistration(verb);
+
+        if (registration == null)
+        {
+            return Results.NotFound(new { succeeded = false, errorMessage = $"Verb '{verb}' not found" });
+        }
+
+        return Results.Ok(new
+        {
+            verb = registration.Name,
+            description = registration.Description,
+            argumentsSchema = JsonSchemaBuilder.GetSchema(registration.ArgumentType, SerializerOptions),
+            resultSchema = JsonSchemaBuilder.GetSchema(registration.ResultType, SerializerOptions)
+        });
+    }
+
+    private static async Task<int> RunStdioMode(string[] args)
+    {
+        var workspaceRoot = args.FirstOrDefault(a => !a.StartsWith("-")) ?? Environment.CurrentDirectory;
         var outputDirectory = Path.Combine(workspaceRoot, ".hermes", "output");
 
-        // Ensure output directory exists
         Directory.CreateDirectory(outputDirectory);
 
         var executor = new HermesVerbExecutor(SerializerOptions);
         VerbRegistration.RegisterAll(executor, outputDirectory);
 
-        var server = new HermesServer(executor, SerializerOptions);
-        
-        Console.Error.WriteLine($"Hermes Server started. Workspace: {workspaceRoot}");
+        var server = new StdioServer(executor, SerializerOptions);
+
+        Console.Error.WriteLine($"Hermes Server (stdio mode) started. Workspace: {workspaceRoot}");
         Console.Error.WriteLine("Ready to receive requests on stdin...");
 
         await server.RunAsync(Console.In, Console.Out);
@@ -42,13 +167,14 @@ public class Program
 
 /// <summary>
 /// Hermes server that processes requests from a TextReader and writes responses to a TextWriter.
+/// Used for stdio mode and MCP protocol.
 /// </summary>
-public sealed class HermesServer
+public sealed class StdioServer
 {
     private readonly HermesVerbExecutor _executor;
     private readonly JsonSerializerOptions _serializerOptions;
 
-    public HermesServer(HermesVerbExecutor executor, JsonSerializerOptions serializerOptions)
+    public StdioServer(HermesVerbExecutor executor, JsonSerializerOptions serializerOptions)
     {
         _executor = executor;
         _serializerOptions = serializerOptions;
@@ -59,10 +185,9 @@ public sealed class HermesServer
         while (!cancellationToken.IsCancellationRequested)
         {
             var line = await input.ReadLineAsync(cancellationToken);
-            
+
             if (line == null)
             {
-                // EOF
                 break;
             }
 
@@ -77,23 +202,20 @@ public sealed class HermesServer
         }
     }
 
-    private string ProcessRequest(string request)
+    public string ProcessRequest(string request)
     {
         try
         {
-            // Parse the request to get the request ID if present
             var requestDoc = JsonDocument.Parse(YamlToJsonConverter.NormalizeToJson(request));
             string? requestId = null;
-            
+
             if (requestDoc.RootElement.TryGetProperty("id", out var idElement))
             {
                 requestId = idElement.GetString();
             }
 
-            // Execute handles YAML/JSON normalization internally
             var result = _executor.Execute(request);
 
-            // If there was a request ID, wrap the response
             if (requestId != null)
             {
                 return JsonSerializer.Serialize(new ServerResponse

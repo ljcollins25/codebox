@@ -82,6 +82,21 @@ public class Program
 
                     return result;
                 },
+                r => r.RunAsync()),
+
+            CliModel.Bind<McpOperation>(
+                new Command("mcp", "Run as MCP server over stdio"),
+                m =>
+                {
+                    var result = new McpOperation
+                    {
+                        WorkspacePath = m.Argument(c => ref c.WorkspacePath, name: "workspace",
+                            arity: System.CommandLine.ArgumentArity.ZeroOrOne,
+                            description: "Workspace root path. Defaults to current directory.")
+                    };
+
+                    return result;
+                },
                 r => r.RunAsync())
         };
     }
@@ -261,6 +276,89 @@ public class Program
             Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ResultType, SerializerOptions));
 
             return Task.FromResult(0);
+        }
+    }
+
+    /// <summary>
+    /// MCP operation - runs as MCP server over stdio.
+    /// </summary>
+    private class McpOperation
+    {
+        public string? WorkspacePath;
+
+        public async Task<int> RunAsync()
+        {
+            var workspace = WorkspacePath ?? Environment.CurrentDirectory;
+            var outputDirectory = Path.Combine(workspace, ".hermes", "output");
+
+            Directory.CreateDirectory(outputDirectory);
+
+            var executor = CreateExecutor(outputDirectory);
+
+            Console.Error.WriteLine($"Hermes MCP Server started. Workspace: {workspace}");
+            Console.Error.WriteLine("Ready to receive requests on stdin...");
+
+            await RunMcpLoop(executor);
+
+            return 0;
+        }
+
+        private static async Task RunMcpLoop(HermesVerbExecutor executor)
+        {
+            while (true)
+            {
+                var line = await Console.In.ReadLineAsync();
+
+                if (line == null)
+                {
+                    // EOF
+                    break;
+                }
+
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                var response = ProcessRequest(executor, line);
+                Console.WriteLine(response);
+                await Console.Out.FlushAsync();
+            }
+        }
+
+        private static string ProcessRequest(HermesVerbExecutor executor, string request)
+        {
+            try
+            {
+                var requestDoc = JsonDocument.Parse(YamlToJsonConverter.NormalizeToJson(request));
+                string? requestId = null;
+
+                if (requestDoc.RootElement.TryGetProperty("id", out var idElement))
+                {
+                    requestId = idElement.GetString();
+                }
+
+                var result = executor.Execute(request);
+
+                if (requestId != null)
+                {
+                    return JsonSerializer.Serialize(new
+                    {
+                        id = requestId,
+                        result = JsonDocument.Parse(result).RootElement
+                    }, SerializerOptions);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    succeeded = false,
+                    errorMessage = ex.Message
+                }, SerializerOptions);
+            }
         }
     }
 
