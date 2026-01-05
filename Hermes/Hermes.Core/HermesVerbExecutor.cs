@@ -73,13 +73,14 @@ public sealed class HermesVerbExecutor
     }
 
     /// <summary>
-    /// Executes a Verb from JSON input and returns the serialized result.
+    /// Executes a Verb from YAML or JSON input and returns the serialized result.
     /// </summary>
-    /// <param name="input">JSON input containing the Verb envelope.</param>
+    /// <param name="input">YAML or JSON input containing the Verb envelope.</param>
     /// <returns>Serialized JSON result.</returns>
     public string Execute(string input)
     {
-        var envelope = JsonSerializer.Deserialize<VerbEnvelope>(input, _serializerOptions)
+        var json = YamlToJsonConverter.NormalizeToJson(input);
+        var envelope = JsonSerializer.Deserialize<VerbEnvelope>(json, _serializerOptions)
             ?? throw new InvalidOperationException("Invalid Verb envelope.");
 
         if (!_verbs.TryGetValue(envelope.Verb, out var registration))

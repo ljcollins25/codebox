@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Parsing;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Hermes.Core;
@@ -8,45 +10,20 @@ namespace Hermes.Cli;
 
 public class Program
 {
-    public static async Task<int> Main(string[] args)
+    public static async Task<int> Main(params string[] args)
     {
-        var rootCommand = new RootCommand("Hermes Verb Executor CLI");
+        var rootCommand = GetCommand();
 
-        var executeCommand = new Command("execute", "Execute a Verb from input");
-        var inputOption = new Option<FileInfo?>(
-            aliases: ["--input", "-i"],
-            description: "Input file containing Verb envelope (YAML or JSON). If not specified, reads from stdin.");
-        var outputOption = new Option<FileInfo?>(
-            aliases: ["--output", "-o"],
-            description: "Output file for result (JSON). If not specified, writes to stdout.");
-        var interactiveOption = new Option<bool>(
-            aliases: ["--interactive"],
-            description: "Run in interactive mode, processing multiple Verbs.");
-        var outputDirOption = new Option<DirectoryInfo>(
-            aliases: ["--output-dir", "-d"],
-            getDefaultValue: () => new DirectoryInfo(Path.Combine(Path.GetTempPath(), "hermes")),
-            description: "Directory for process output files.");
+        var builder = new CommandLineBuilder(rootCommand)
+            .UseVersionOption()
+            .UseHelp()
+            .UseEnvironmentVariableDirective()
+            .UseParseDirective()
+            .UseParseErrorReporting()
+            .UseExceptionHandler()
+            .CancelOnProcessTermination();
 
-        executeCommand.AddOption(inputOption);
-        executeCommand.AddOption(outputOption);
-        executeCommand.AddOption(interactiveOption);
-        executeCommand.AddOption(outputDirOption);
-
-        executeCommand.SetHandler(ExecuteHandler, inputOption, outputOption, interactiveOption, outputDirOption);
-
-        var listCommand = new Command("list", "List all registered Verbs");
-        listCommand.SetHandler(ListHandler);
-
-        var schemaCommand = new Command("schema", "Get schema for a Verb");
-        var verbArgument = new Argument<string>("verb", "The Verb name to get schema for");
-        schemaCommand.AddArgument(verbArgument);
-        schemaCommand.SetHandler(SchemaHandler, verbArgument);
-
-        rootCommand.AddCommand(executeCommand);
-        rootCommand.AddCommand(listCommand);
-        rootCommand.AddCommand(schemaCommand);
-
-        return await rootCommand.InvokeAsync(args);
+        return await builder.Build().InvokeAsync(args);
     }
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -56,95 +33,103 @@ public class Program
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    private static void ExecuteHandler(FileInfo? input, FileInfo? output, bool interactive, DirectoryInfo outputDir)
+    public static RootCommand GetCommand()
     {
-        var executor = CreateExecutor(outputDir.FullName);
+        return new RootCommand("Hermes Verb Executor CLI")
+        {
+            CliModel.Bind<ExecuteOperation>(
+                new Command("execute", "Execute a Verb from input"),
+                m =>
+                {
+                    var result = new ExecuteOperation
+                    {
+                        InputText = m.Argument(c => ref c.InputText, name: "input-text",
+                            arity: System.CommandLine.ArgumentArity.ZeroOrOne,
+                            description: "Verb envelope as YAML or JSON text. If not specified, reads from --input file or stdin."),
 
-        if (interactive)
-        {
-            RunInteractive(executor, output);
-        }
-        else
-        {
-            RunSingle(executor, input, output);
-        }
+                        Input = m.Option(c => ref c.Input, name: "input", aliases: ["-i"],
+                            description: "Input file containing Verb envelope (YAML or JSON). If not specified, reads from stdin."),
+
+                        Output = m.Option(c => ref c.Output, name: "output", aliases: ["-o"],
+                            description: "Output file for result (JSON). If not specified, writes to stdout."),
+
+                        Interactive = m.Option(c => ref c.Interactive, name: "interactive",
+                            description: "Run in interactive mode, processing multiple Verbs."),
+
+                        OutputDirectory = m.Option(c => ref c.OutputDirectory, name: "output-dir", aliases: ["-d"],
+                            defaultValue: Path.Combine(Path.GetTempPath(), "hermes"),
+                            description: "Directory for process output files.")
+                    };
+
+                    return result;
+                },
+                r => r.RunAsync()),
+
+            CliModel.Bind<ListOperation>(
+                new Command("list", "List all registered Verbs"),
+                m => new ListOperation(),
+                r => r.RunAsync()),
+
+            CliModel.Bind<SchemaOperation>(
+                new Command("schema", "Get schema for a Verb"),
+                m =>
+                {
+                    var result = new SchemaOperation
+                    {
+                        Verb = m.Argument(c => ref c.Verb, name: "verb",
+                            description: "The Verb name to get schema for")
+                    };
+
+                    return result;
+                },
+                r => r.RunAsync())
+        };
     }
 
-    private static void RunSingle(HermesVerbExecutor executor, FileInfo? input, FileInfo? output)
+    /// <summary>
+    /// Execute operation - runs Verb(s) from input.
+    /// </summary>
+    private class ExecuteOperation
     {
-        string inputText;
-        
-        if (input != null)
-        {
-            inputText = File.ReadAllText(input.FullName);
-        }
-        else
-        {
-            inputText = Console.In.ReadToEnd();
-        }
+        public string? InputText;
+        public FileInfo? Input;
+        public FileInfo? Output;
+        public bool Interactive;
+        public string OutputDirectory = Path.Combine(Path.GetTempPath(), "hermes");
 
-        var json = YamlToJsonConverter.NormalizeToJson(inputText);
-        
-        try
+        public Task<int> RunAsync()
         {
-            var result = executor.Execute(json);
-            WriteOutput(result, output);
-        }
-        catch (Exception ex)
-        {
-            var errorResult = JsonSerializer.Serialize(new
+            var executor = CreateExecutor(OutputDirectory);
+
+            if (Interactive)
             {
-                succeeded = false,
-                errorMessage = ex.Message
-            }, SerializerOptions);
-            WriteOutput(errorResult, output);
-            Environment.ExitCode = 1;
-        }
-    }
-
-    private static void RunInteractive(HermesVerbExecutor executor, FileInfo? output)
-    {
-        Console.Error.WriteLine("Hermes Interactive Mode. Enter Verb envelopes (YAML/JSON), followed by an empty line to execute.");
-        Console.Error.WriteLine("Type 'exit' or Ctrl+C to quit.");
-
-        while (true)
-        {
-            Console.Error.Write("> ");
-            var lines = new List<string>();
-            string? line;
-
-            while ((line = Console.ReadLine()) != null)
+                RunInteractive(executor, Output);
+            }
+            else
             {
-                if (line.Equals("exit", StringComparison.OrdinalIgnoreCase))
+                RunSingle(executor, InputText, Input, Output);
+            }
+
+            return Task.FromResult(Environment.ExitCode);
+        }
+
+        private static void RunSingle(HermesVerbExecutor executor, string? inputText, FileInfo? input, FileInfo? output)
+        {
+            if (string.IsNullOrEmpty(inputText))
+            {
+                if (input != null)
                 {
-                    return;
+                    inputText = File.ReadAllText(input.FullName);
                 }
-
-                if (string.IsNullOrWhiteSpace(line) && lines.Count > 0)
+                else
                 {
-                    break;
+                    inputText = Console.In.ReadToEnd();
                 }
-
-                lines.Add(line);
             }
-
-            if (line == null)
-            {
-                // EOF
-                break;
-            }
-
-            if (lines.Count == 0)
-            {
-                continue;
-            }
-
-            var inputText = string.Join(Environment.NewLine, lines);
-            var json = YamlToJsonConverter.NormalizeToJson(inputText);
 
             try
             {
-                var result = executor.Execute(json);
+                var result = executor.Execute(inputText);
                 WriteOutput(result, output);
             }
             catch (Exception ex)
@@ -155,54 +140,128 @@ public class Program
                     errorMessage = ex.Message
                 }, SerializerOptions);
                 WriteOutput(errorResult, output);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        private static void RunInteractive(HermesVerbExecutor executor, FileInfo? output)
+        {
+            Console.Error.WriteLine("Hermes Interactive Mode. Enter Verb envelopes (YAML/JSON), followed by an empty line to execute.");
+            Console.Error.WriteLine("Type 'exit' or Ctrl+C to quit.");
+
+            while (true)
+            {
+                Console.Error.Write("> ");
+                var lines = new List<string>();
+                string? line;
+
+                while ((line = Console.ReadLine()) != null)
+                {
+                    if (line.Equals("exit", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(line) && lines.Count > 0)
+                    {
+                        break;
+                    }
+
+                    lines.Add(line);
+                }
+
+                if (line == null)
+                {
+                    // EOF
+                    break;
+                }
+
+                if (lines.Count == 0)
+                {
+                    continue;
+                }
+
+                var inputText = string.Join(Environment.NewLine, lines);
+
+                try
+                {
+                    var result = executor.Execute(inputText);
+                    WriteOutput(result, output);
+                }
+                catch (Exception ex)
+                {
+                    var errorResult = JsonSerializer.Serialize(new
+                    {
+                        succeeded = false,
+                        errorMessage = ex.Message
+                    }, SerializerOptions);
+                    WriteOutput(errorResult, output);
+                }
+            }
+        }
+
+        private static void WriteOutput(string result, FileInfo? output)
+        {
+            if (output != null)
+            {
+                File.WriteAllText(output.FullName, result);
+            }
+            else
+            {
+                Console.WriteLine(result);
             }
         }
     }
 
-    private static void WriteOutput(string result, FileInfo? output)
+    /// <summary>
+    /// List operation - lists all registered Verbs.
+    /// </summary>
+    private class ListOperation
     {
-        if (output != null)
+        public Task<int> RunAsync()
         {
-            File.WriteAllText(output.FullName, result);
-        }
-        else
-        {
-            Console.WriteLine(result);
+            var executor = CreateExecutor(Path.GetTempPath());
+            var verbs = executor.GetRegistrations()
+                .Select(r => r.Name)
+                .OrderBy(v => v);
+
+            foreach (var verb in verbs)
+            {
+                Console.WriteLine(verb);
+            }
+
+            return Task.FromResult(0);
         }
     }
 
-    private static void ListHandler()
+    /// <summary>
+    /// Schema operation - displays schema for a Verb.
+    /// </summary>
+    private class SchemaOperation
     {
-        var executor = CreateExecutor(Path.GetTempPath());
-        var verbs = executor.GetRegistrations()
-            .Select(r => r.Name)
-            .OrderBy(v => v);
+        public string Verb = string.Empty;
 
-        foreach (var verb in verbs)
+        public Task<int> RunAsync()
         {
-            Console.WriteLine(verb);
+            var executor = CreateExecutor(Path.GetTempPath());
+            var registration = executor.GetRegistration(Verb);
+
+            if (registration == null)
+            {
+                Console.Error.WriteLine($"Unknown Verb: {Verb}");
+                return Task.FromResult(1);
+            }
+
+            Console.WriteLine($"// Verb: {Verb}");
+            Console.WriteLine();
+            Console.WriteLine("// Arguments:");
+            Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ArgumentType, SerializerOptions));
+            Console.WriteLine();
+            Console.WriteLine("// Result:");
+            Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ResultType, SerializerOptions));
+
+            return Task.FromResult(0);
         }
-    }
-
-    private static void SchemaHandler(string verb)
-    {
-        var executor = CreateExecutor(Path.GetTempPath());
-        var registration = executor.GetRegistration(verb);
-
-        if (registration == null)
-        {
-            Console.Error.WriteLine($"Unknown Verb: {verb}");
-            Environment.ExitCode = 1;
-            return;
-        }
-
-        Console.WriteLine($"// Verb: {verb}");
-        Console.WriteLine();
-        Console.WriteLine("// Arguments:");
-        Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ArgumentType, SerializerOptions));
-        Console.WriteLine();
-        Console.WriteLine("// Result:");
-        Console.WriteLine(JsonSchemaBuilder.GetSchema(registration.ResultType, SerializerOptions));
     }
 
     private static HermesVerbExecutor CreateExecutor(string outputDirectory)

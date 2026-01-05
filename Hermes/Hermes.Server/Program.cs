@@ -6,8 +6,8 @@ using Hermes.Verbs;
 namespace Hermes.Server;
 
 /// <summary>
-/// Long-running Hermes server that processes VeRB requests over stdin/stdout.
-/// Each line is a complete JSON request, and responses are written as complete JSON lines.
+/// Long-running Hermes server that processes Verb requests over stdin/stdout.
+/// Each line is a complete YAML or JSON request, and responses are written as complete JSON lines.
 /// </summary>
 public class Program
 {
@@ -82,7 +82,7 @@ public sealed class HermesServer
         try
         {
             // Parse the request to get the request ID if present
-            var requestDoc = JsonDocument.Parse(request);
+            var requestDoc = JsonDocument.Parse(YamlToJsonConverter.NormalizeToJson(request));
             string? requestId = null;
             
             if (requestDoc.RootElement.TryGetProperty("id", out var idElement))
@@ -90,9 +90,8 @@ public sealed class HermesServer
                 requestId = idElement.GetString();
             }
 
-            // Normalize YAML to JSON if needed
-            var json = YamlToJsonConverter.NormalizeToJson(request);
-            var result = _executor.Execute(json);
+            // Execute handles YAML/JSON normalization internally
+            var result = _executor.Execute(request);
 
             // If there was a request ID, wrap the response
             if (requestId != null)
