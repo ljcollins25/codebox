@@ -15,6 +15,30 @@ public class CliTests
     public async Task TestHelp()
     {
         await Program.RunAsync(Array.Empty<string>());
+
+        await Program.RunAsync(["synchronize"]);
+
+        await Program.RunAsync(["test", "--args", "hello", "--world"]);
+
+    }
+
+    public record InitRecordBase
+    {
+        protected virtual int InitHandler
+        {
+            get
+            {
+                return 0;
+            }
+            init
+            {
+            }
+        }
+
+        public InitRecordBase()
+        {
+            InitHandler = 0;
+        }
     }
 
     [Fact]

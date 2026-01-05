@@ -161,7 +161,7 @@ public record CliModel<T>(Command Command, Func<CliModel<T>, InvocationContext, 
             {
                 foreach (var alias in aliases)
                 {
-                    option.AddAlias(alias);
+                    option.AddAlias(alias.StartsWith("--") ? alias : $"--{alias}");
                 }
             }
 
