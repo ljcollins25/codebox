@@ -35,7 +35,7 @@ public class IHCITreeTests
 
         var store = new VectorBlockArrayStore(vectors);
         var metric = new L2FloatArrayMetric(dimensions);
-        var tree = new IHCITree(metric, store, leafCapacity: 32, routingMaxChildren: 8, leafNeighborCount: 4);
+        var tree = new IHCITree(metric, store, leafCapacity: 32, routingMaxChildren: 8, leafNeighborCount: 8);
 
         // Insert all vectors
         for (int i = 0; i < vectorCount; i++)
@@ -53,6 +53,7 @@ public class IHCITreeTests
             query[j] = (float)(rng.NextDouble() * 2.0 - 1.0);
         }
 
+        var map = tree.GetVectorNodeMap();
         // Query the tree
         var results = tree.Query(query, k);
 
@@ -66,6 +67,9 @@ public class IHCITreeTests
         }
         bruteForce.Sort((a, b) => a.Distance.CompareTo(b.Distance));
         var expected = bruteForce.Take(k).ToList();
+
+        var expectedNodes = expected.Select(i => (i.Id, i.Distance, Node: map[i.Id])).ToArray();
+        var actualNodes = results.Select(i => (i.Id.Index, i.Distance, Node: map[i.Id])).ToArray();
 
         // Verify results
         Assert.Equal(k, results.Length);

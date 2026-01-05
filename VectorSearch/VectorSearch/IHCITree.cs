@@ -57,6 +57,22 @@ public sealed class IHCITree
         _root = leaf;
     }
 
+    public Dictionary<VectorId, Node> GetVectorNodeMap()
+    {
+        var result = new Dictionary<VectorId, Node>();
+        foreach (var leaf in _leaves.Span)
+        {
+            if (leaf.IsDisposed) continue;
+
+            foreach (var vector in leaf.Vectors)
+            {
+                result[vector] = leaf;
+            }
+        }
+
+        return result;
+    }
+
     // ----------------------------
     // Public API
     // ----------------------------
@@ -193,6 +209,13 @@ public sealed class IHCITree
         public RoutingNode? Parent;
         public int IndexInParent = -1;
 
+        public string Path => field ??= string.Join("/", Parent?.Path, NodeId.Id);
+
+        public override string ToString()
+        {
+            return Path;
+        }
+
         // Center is the current stored representative (stale between repairs).
         // Radius is always an upper bound around Center.
         public float[] Center = Array.Empty<float>();
@@ -231,6 +254,9 @@ public sealed class IHCITree
 
         // Leaf neighbors (directed)
         public ArrayBuilder<Node?> Neighbors;
+
+        public bool IsDisposed;
+
 
         public LeafNode(NodeId nodeId, int neighborCount)
         {
@@ -318,6 +344,7 @@ public sealed class IHCITree
 
         public override (Node left, Node right) NewSplitNodes(IHCITree tree, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices)
         {
+            IsDisposed = true;
             var leftLeaf = tree.NewLeaf(parent: null);
             var rightLeaf = tree.NewLeaf(parent: null);
 
