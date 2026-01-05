@@ -82,7 +82,18 @@
       "get": {
         "operationId": "listVerbs",
         "summary": "List all available Verbs",
-        "description": "Returns a list of all registered Hermes Verbs with their names and descriptions.",
+        "description": "Returns a list of all registered Hermes Verbs with their names and descriptions. Optionally filter to a specific verb by name.",
+        "parameters": [
+          {
+            "name": "verb",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional verb name to filter to. If provided, returns only that verb's information."
+          }
+        ],
         "responses": {
           "200": {
             "description": "List of available verbs",
@@ -111,53 +122,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/schema/{verb}": {
-      "get": {
-        "operationId": "getVerbSchema",
-        "summary": "Get schema for a specific Verb",
-        "description": "Returns the JSON schema for a verb's arguments and result types.",
-        "parameters": [
-          {
-            "name": "verb",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "The verb name (e.g., 'fs.read-file', 'help')"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Verb schema information",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "verb": {
-                      "type": "string"
-                    },
-                    "description": {
-                      "type": "string"
-                    },
-                    "argumentsSchema": {
-                      "type": "object"
-                    },
-                    "resultSchema": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Verb not found"
           }
         }
       }

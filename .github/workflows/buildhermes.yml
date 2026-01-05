@@ -1,0 +1,81 @@
+name: Build and Release Hermes
+run-name: Hermes R#${{ github.run_number }} (${{ github.event.repository.updated_at }}) [${{ github.event.head_commit.message }}]
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Hermes/**'
+      
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Set up versioning
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $timestamp = Get-Date -Format "yyyyMMdd.${{ github.run_number }}"
+        $versionSuffix = "Dev-${timestamp}-$(git rev-parse --short HEAD)"
+
+        echo "VersionSuffix=$versionSuffix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Restore dependencies
+      run: dotnet restore Hermes/Hermes.slnproj
+
+    - name: Build
+      run: dotnet build Hermes/Hermes.slnproj -c Release --no-restore
+
+    - name: Test
+      run: dotnet test Hermes/Hermes.slnproj -c Release --no-build
+
+    - name: Publish Hermes CLI (Windows)
+      run: |
+        dotnet publish Hermes/Hermes.Cli/Hermes.Cli.csproj -c Release -r win-x64 -o publish
+
+    - name: Publish Hermes CLI (Linux)
+      run: |
+        dotnet publish Hermes/Hermes.Cli/Hermes.Cli.csproj -c Release -r linux-x64 -o publish
+
+    - name: Publish Hermes Server (Windows)
+      run: |
+        dotnet publish Hermes/Hermes.Server/Hermes.Server.csproj -c Release -r win-x64 -o publish
+
+    - name: Publish Hermes Server (Linux)
+      run: |
+        dotnet publish Hermes/Hermes.Server/Hermes.Server.csproj -c Release -r linux-x64 -o publish
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: hermes-latest
+        tag_name: hermes-latest
+        prerelease: true
+        body: |
+          Hermes release version suffix: ${{ env.VersionSuffix }}
+        files: |
+          publish/hermes
+          publish/hermes.exe
+          publish/hermes-server
+          publish/hermes-server.exe

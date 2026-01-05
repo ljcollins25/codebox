@@ -113,9 +113,16 @@ public class Program
         }
     }
 
-    private static IResult ListVerbsEndpoint(HermesVerbExecutor executor)
+    private static IResult ListVerbsEndpoint(HermesVerbExecutor executor, string? verb = null)
     {
-        var verbs = executor.GetRegistrations()
+        var registrations = executor.GetRegistrations();
+        
+        if (!string.IsNullOrEmpty(verb))
+        {
+            registrations = registrations.Where(r => r.Name.Equals(verb, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var verbs = registrations
             .OrderBy(r => r.Name)
             .Select(r => new
             {
