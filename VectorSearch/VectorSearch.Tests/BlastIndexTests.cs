@@ -92,6 +92,30 @@ public class BlastIndexTests
         Console.WriteLine($"BlastIndex test: {vectorCount} vectors, {dimensions}D, k={k}, Recall@{k}={recall:P2}");
         Console.WriteLine($"  Buckets: {index.Buckets().Count()}, Vectors: {index.Vectors().Count()}");
 
+        // End dumps per spec 9.2
+        Console.WriteLine($"topK k={k}");
+        for (int i = 0; i < results.Length; i++)
+        {
+            Console.WriteLine($"  {i + 1}) {results[i].Id.Index} dist={results[i].Distance:F6}");
+        }
+
+        // Expected (brute force) for comparison
+        Console.WriteLine($"expected k={k}");
+        for (int i = 0; i < Math.Min(k, expected.Count); i++)
+        {
+            var inResult = resultIds.Contains(expected[i].Id) ? "✓" : "✗";
+            Console.WriteLine($"  {i + 1}) {expected[i].Id} dist={expected[i].Distance:F6} {inResult}");
+        }
+
+        Console.WriteLine($"stats recall={recall:P2} matched={intersection}/{k}");
+        Console.WriteLine();
+
+        // Adjacency dump per spec 9.3 (limited to small tests)
+        //if (vectorCount <= 100)
+        {
+            PrintAdjacencyDump(index, metric, store);
+        }
+
         Assert.True(recall >= minRecall,
             $"Recall@{k} = {recall:P2} is too low. Expected at least {minRecall:P0}.");
     }
@@ -255,5 +279,97 @@ public class BlastIndexTests
         Assert.True(totalOutgoing > 0 || totalIncoming > 0, "Expected neighbor edges to be created");
 
         Console.WriteLine("Neighbor graph test passed.");
+    }
+
+    /// <summary>
+    /// Prints the adjacency dump per spec section 9.3.
+    /// </summary>
+    private static void PrintAdjacencyDump(BlastIndex index, L2FloatArrayMetric metric, VectorBlockArrayStore store)
+    {
+        Console.WriteLine("=== Adjacency Dump ===");
+
+        // Print buckets (routing nodes)
+        foreach (var bucket in index.Buckets())
+        {
+            Console.WriteLine($"NODE {bucket.Path}");
+
+            // Children with distances
+            var children = new List<string>();
+            foreach (var child in bucket.Children.Segment)
+            {
+                float dist;
+                if (child is BlastIndex.VectorNode vn)
+                {
+                    dist = bucket.Representative.Length > 0
+                        ? metric.Distance(bucket.Representative, store.GetVector(vn.VectorId))
+                        : 0f;
+                    children.Add($"V{vn.VectorId.Index}({dist:F3})");
+                }
+                else if (child is BlastIndex.BucketNode bn)
+                {
+                    dist = (bucket.Representative.Length > 0 && bn.Representative.Length > 0)
+                        ? metric.Distance(bucket.Representative, bn.Representative)
+                        : 0f;
+                    children.Add($"B{bn.NodeId.Id}({dist:F3})");
+                }
+            }
+            Console.WriteLine($"  children:  {(children.Count > 0 ? string.Join(" ", children) : "(none)")}");
+
+            // Outgoing neighbors with distances
+            var outgoing = new List<string>();
+            for (int i = 0; i < bucket.OutgoingNeighbors.Count; i++)
+            {
+                var neighbor = bucket.OutgoingNeighbors[i];
+                if (neighbor is not null && bucket.Representative.Length > 0 && neighbor.Representative.Length > 0)
+                {
+                    float dist = metric.Distance(bucket.Representative, neighbor.Representative);
+                    outgoing.Add($"B{neighbor.NodeId.Id}({dist:F3})");
+                }
+            }
+            Console.WriteLine($"  outgoing:  {(outgoing.Count > 0 ? string.Join(" ", outgoing) : "(none)")}");
+
+            // Incoming neighbors with distances
+            var incoming = new List<string>();
+            foreach (var neighbor in bucket.IncomingNeighbors)
+            {
+                if (bucket.Representative.Length > 0 && neighbor.Representative.Length > 0)
+                {
+                    float dist = metric.Distance(bucket.Representative, neighbor.Representative);
+                    incoming.Add($"B{neighbor.NodeId.Id}({dist:F3})");
+                }
+            }
+            Console.WriteLine($"  incoming:  {(incoming.Count > 0 ? string.Join(" ", incoming) : "(none)")}");
+        }
+
+        // Print vectors
+        foreach (var vector in index.Vectors())
+        {
+            Console.WriteLine($"VECTOR V{vector.VectorId.Index}");
+
+            // Outgoing neighbors with distances (recomputed per spec)
+            var outgoing = new List<string>();
+            for (int i = 0; i < vector.OutgoingNeighbors.Count; i++)
+            {
+                var neighbor = vector.OutgoingNeighbors[i];
+                if (neighbor is not null)
+                {
+                    float dist = metric.Distance(store.GetVector(vector.VectorId), store.GetVector(neighbor.VectorId));
+                    outgoing.Add($"V{neighbor.VectorId.Index}({dist:F3})");
+                }
+            }
+            Console.WriteLine($"  outgoing: {(outgoing.Count > 0 ? string.Join(" ", outgoing) : "(none)")}");
+
+            // Incoming neighbors with distances (recomputed per spec)
+            var incoming = new List<string>();
+            foreach (var neighbor in vector.IncomingNeighbors)
+            {
+                float dist = metric.Distance(store.GetVector(vector.VectorId), store.GetVector(neighbor.VectorId));
+                incoming.Add($"V{neighbor.VectorId.Index}({dist:F3})");
+            }
+            Console.WriteLine($"  incoming: {(incoming.Count > 0 ? string.Join(" ", incoming) : "(none)")}");
+        }
+
+        Console.WriteLine("=== End Adjacency Dump ===");
+        Console.WriteLine();
     }
 }
