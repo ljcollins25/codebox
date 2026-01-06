@@ -53,6 +53,16 @@ public interface IFuncInvoke<TArg1, TArg2, TResult>
     TResult Invoke(TArg1 arg1, TArg2 arg2);
 }
 
+public class DisplayLazy<T>(Func<T> factory)
+{
+    public T Value => field ??= factory();
+
+    public override string ToString()
+    {
+        return Value!.ToString()!;
+    }
+}
+
 /// <summary>
 /// Static helper methods.
 /// </summary>
@@ -62,6 +72,13 @@ public static class Helpers
     {
         return (t.Item1, t.Item2, select(t));
     }
+
+    public static (T1, T2, T3, T4) SelectWith<T1, T2, T3, T4>(this (T1, T2, T3) t, Func<(T1, T2, T3), T4> select)
+    {
+        return (t.Item1, t.Item2, t.Item3, select(t));
+    }
+
+    public static DisplayLazy<T> DisplayLazy<T>(Func<T> func) => new(func);
 
     public static IEnumerable<TSource> ExceptBy<TSource, TKey>(this IEnumerable<TSource> first, IEnumerable<TSource> second, Func<TSource, TKey> keySelector)
     {

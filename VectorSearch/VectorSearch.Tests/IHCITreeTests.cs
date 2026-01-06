@@ -6,6 +6,8 @@ using Xunit;
 
 namespace VectorSearch.Tests;
 
+using static Helpers;
+
 /// <summary>
 /// Tests for the IHCI Tree implementation.
 /// </summary>
@@ -19,6 +21,7 @@ public class IHCITreeTests
     [InlineData(500, 16, 10)]
     [InlineData(1000, 32, 20)]
     [InlineData(2000, 64, 50)]
+    [InlineData(20000, 64, 50)]
     public void TestSyntheticDataset(int vectorCount, int dimensions, int k)
     {
         // Generate random vectors
@@ -35,7 +38,7 @@ public class IHCITreeTests
 
         var store = new VectorBlockArrayStore(vectors);
         var metric = new L2FloatArrayMetric(dimensions);
-        var tree = new IHCITree(metric, store, leafCapacity: 64, routingMaxChildren: 8, leafNeighborCount: 8);
+        var tree = new IHCITree(metric, store, leafCapacity: 32, routingMaxChildren: 8, leafNeighborCount: 8);
 
         // Insert all vectors
         for (int i = 0; i < vectorCount; i++)
@@ -54,6 +57,8 @@ public class IHCITreeTests
         }
 
         var map = tree.GetVectorNodeMap();
+
+        var leaves = tree.Leaves().ToArray();
         // Query the tree
 
         var results = tree.Query(query, k, routingWidth: 2, seenLeaves: Out.Var(out var visited, new Dictionary<IHCITree.LeafNode, float>()));
@@ -69,23 +74,25 @@ public class IHCITreeTests
         bruteForce.Sort((a, b) => a.Distance.CompareTo(b.Distance));
         var expected = bruteForce.Take(k).ToList();
 
-        (IHCITree.Node Node, float Distance, string Neighbors) get(VectorId id)
+        (IHCITree.LeafNode Node, VectorId Id) get(VectorId id)
         {
-            return info((IHCITree.LeafNode)map[id], query).SelectWith(t => "Neighbors: " + string.Join(", ", t.Item1.Neighbors.Segment));
+            return ((IHCITree.LeafNode)map[id], id);
         }
 
-        (IHCITree.LeafNode Node, float Distance, string Neighbors) best(VectorId id)
+        (IHCITree.LeafNode Node, VectorId Id) best(VectorId id)
         {
-            return tree.Leaves().Select(l => info(l, store.GetVector(id))).MinBy(t => t.Distance).SelectWith(t => "Neighbors: " + string.Join(", ", t.Item1.Neighbors.Segment));
+            return (tree.Leaves().MinBy(l => metric.Distance(l.Center, store.GetVector(id)))!, id);
         }
 
-        (IHCITree.LeafNode Node, float Distance) info(IHCITree.LeafNode node, ReadOnlySpan<float> query)
+        (IHCITree.LeafNode Node, (string, float Distance), (string, float Distance), object) info((IHCITree.LeafNode node, VectorId id) t)
         {
-            return (node, metric.Distance(node.Center, query));
+            var (node, id) = t;
+            var v = store.GetVector(id);
+            return (node, ("QD",metric.Distance(node.Center, query)), ("VD", metric.Distance(node.Center, v)), DisplayLazy(() => "Neighbors: " + string.Join(", ", node.Neighbors.Segment)));
         }
 
-        var expectedNodes = expected.Select(i => (i.Id, i.Distance, "\nLocation", Location: get(i.Id), "\nBest", Best: best(i.Id))).ToArray();
-        var actualNodes = results.Select(i => (Id: i.Id.Index, i.Distance, "\nLocation", Location: get(i.Id), "\nBest", Best: best(i.Id))).ToArray();
+        var expectedNodes = expected.Select(i => (i.Id, i.Distance, "\nLocation", Location: info(get(i.Id)), "\nBest", Best: info(best(i.Id)))).ToArray();
+        var actualNodes = results.Select(i => (Id: i.Id.Index, i.Distance, "\nLocation", Location: info(get(i.Id)), "\nBest", Best: info(best(i.Id)))).ToArray();
 
         void print<T>(string header, IEnumerable<T> values)
         {
@@ -122,9 +129,21 @@ public class IHCITreeTests
         print("Visited:", visited.Select(e => (e.Key, e.Value)));
 
         print("Missing:", expectedNodes.ExceptBy(actualNodes, t => t.Id));
+
+
+        print("Adjacency:", leaves.Select(l =>
+        {
+            return $"{l} = \nActual: ({string.Join(", ", l.Neighbors.Segment.Select((n, i) => (n, l.NeighborDistances[i], metric.Distance(l.Center, n!.Center))))}) \nBest: ({string.Join(", ", leaves.Select(n => (n, distance: metric.Distance(l.Center, n!.Center))).OrderBy(t => t.distance).Skip(1).Take(8))})";
+        }));
+
+        print("Extra:", actualNodes.ExceptBy(expectedNodes, t => t.Id));
         print("Actual:", actualNodes);
 
+
         print("Expected:", expectedNodes);
+
+        //print("BestAdjacency:", leaves.Select(l => $"{l} = ({string.Join(", ", leaves.Select(n => (n, distance: metric.Distance(l.Center, n!.Center))).OrderBy(t => t.distance).Skip(1).Take(8))})"));
+
         Assert.True(recall >= minRecall,
             $"Recall@{k} = {recall:P2} is too low. Expected at least {minRecall:P0}.");
     }

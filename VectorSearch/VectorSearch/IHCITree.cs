@@ -53,7 +53,7 @@ public sealed class IHCITree
         RepairQueueHighWatermark = repairQueueHighWatermark > 0 ? repairQueueHighWatermark : (routingMaxChildren * 8);
 
         // Start with single leaf root
-        var leaf = NewLeaf(parent: null);
+        var leaf = NewLeaf(parent: null, Array.Empty<float>());
         _root = leaf;
     }
 
@@ -245,7 +245,7 @@ public sealed class IHCITree
 
         public abstract void Repair(IHCITree tree);
 
-        public abstract (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices);
+        public abstract (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<float> leftCenter, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<float> rightCenter, ReadOnlySpan<int> rightChildIndices);
 
         public abstract int ChildVectorLength { get; }
 
@@ -324,8 +324,32 @@ public sealed class IHCITree
         {
             EnsureCenterAllocated(tree._store.Dimensions);
 
-            ComputeLeafCenterAndRadius(tree._store, tree._metric, Vectors, Center, out float radius);
+            IMetricModel metric = tree._metric;
+            ComputeLeafCenterAndRadius(tree._store, metric, Vectors, Center, out float radius);
             Radius = radius;
+
+            var center = Center.AsSpan();
+
+            bool needsSort = false;
+            float lastDistance = 0;
+            for (int i = 0; i < Neighbors.Length; i++)
+            {
+                var neighbor = Neighbors[i];
+                var distance = metric.Distance(center, neighbor!.Center);
+                NeighborDistances[i] = distance;
+
+                if (lastDistance > distance)
+                {
+                    needsSort = true;
+                }
+
+                lastDistance = distance;
+            }
+
+            if (needsSort)
+            {
+                SortNeighbors();
+            }
 
             // Repair neighbors: find closest leaves
             //if (tree.LeafNeighborCount > 0)
@@ -362,11 +386,16 @@ public sealed class IHCITree
             return tree._store.GetVector(_vectors[index]);
         }
 
-        public override (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices)
+        public void SortNeighbors()
+        {
+            NeighborDistances.Span.Sort(Neighbors.Span);
+        }
+
+        public override (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<float> leftCenter, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<float> rightCenter, ReadOnlySpan<int> rightChildIndices)
         {
             IsDisposed = true;
-            var leftLeaf = tree.NewLeaf(parent: null);
-            var rightLeaf = tree.NewLeaf(parent: null);
+            var leftLeaf = tree.NewLeaf(parent: null, leftCenter);
+            var rightLeaf = tree.NewLeaf(parent: null, rightCenter);
 
             // Copy vectors to new leaves
             Span<VectorId> leftVectors = stackalloc VectorId[leftChildIndices.Length];
@@ -381,13 +410,55 @@ public sealed class IHCITree
 
             // Initialize new leaves' neighbors from source node's neighbors (excluding self)
             // and add each other as neighbors
-            leftLeaf.Neighbors.AddRange(Neighbors.Span);
-            leftLeaf.NeighborDistances.AddRange(NeighborDistances.Span);
+            //leftLeaf.Neighbors.AddRange(Neighbors.Span);
+            //leftLeaf.NeighborDistances.AddRange(NeighborDistances.Span);
 
-            rightLeaf.Neighbors.AddRange(Neighbors.Span);
-            rightLeaf.NeighborDistances.AddRange(NeighborDistances.Span);
+            //rightLeaf.Neighbors.AddRange(Neighbors.Span);
+            //rightLeaf.NeighborDistances.AddRange(NeighborDistances.Span);
 
             // Add each other as neighbors (sorted by distance)
+
+            // Update all old neighbors: remove source node (this), add the two new leaves
+            for (int i = 0; i < Neighbors.Count; i++)
+            {
+                var neighbor = Neighbors[i]!;
+
+                float neighborDist = NeighborDistances[i];
+                var neighborCenter = neighbor.Center.AsSpan();
+
+                float leftNeighborDistance = tree._metric.Distance(rightCenter, neighborCenter);
+                float rightNeighborDistance = tree._metric.Distance(leftCenter, neighborCenter);
+
+                // Remove the source node from neighbor's lists
+                int sourceIndex = neighbor.FindNeighborIndex(this);
+                if (sourceIndex >= 0)
+                {
+                    neighbor.Neighbors.RemoveAt(sourceIndex);
+                    neighbor.NeighborDistances.RemoveAt(sourceIndex);
+                }
+
+                leftLeaf.Neighbors.Add(neighbor);
+                leftLeaf.NeighborDistances.Add(leftNeighborDistance);
+                rightLeaf.Neighbors.Add(neighbor);
+                rightLeaf.NeighborDistances.Add(rightNeighborDistance);
+
+                // Add the two new leaves to this neighbor (maintaining bounded count)
+                neighbor.NeighborDistances.SortedInsertWithMirror(
+                    ref neighbor.Neighbors,
+                    tree.LeafNeighborCount,
+                    leftNeighborDistance,
+                    leftLeaf);
+
+                neighbor.NeighborDistances.SortedInsertWithMirror(
+                    ref neighbor.Neighbors,
+                    tree.LeafNeighborCount,
+                    rightNeighborDistance,
+                    rightLeaf);
+            }
+
+            leftLeaf.SortNeighbors();
+            rightLeaf.SortNeighbors();
+
             leftLeaf.NeighborDistances.SortedInsertWithMirror(
                 ref leftLeaf.Neighbors,
                 tree.LeafNeighborCount,
@@ -399,35 +470,6 @@ public sealed class IHCITree
                 tree.LeafNeighborCount,
                 distance,
                 leftLeaf);
-
-            // Update all old neighbors: remove source node (this), add the two new leaves
-            for (int i = 0; i < Neighbors.Count; i++)
-            {
-                if (Neighbors[i] is not LeafNode neighbor) continue;
-
-                float neighborDist = NeighborDistances[i];
-
-                // Remove the source node from neighbor's lists
-                int sourceIndex = neighbor.FindNeighborIndex(this);
-                if (sourceIndex >= 0)
-                {
-                    neighbor.Neighbors.RemoveAt(sourceIndex);
-                    neighbor.NeighborDistances.RemoveAt(sourceIndex);
-                }
-
-                // Add the two new leaves to this neighbor (maintaining bounded count)
-                neighbor.NeighborDistances.SortedInsertWithMirror(
-                    ref neighbor.Neighbors,
-                    tree.LeafNeighborCount,
-                    neighborDist,
-                    leftLeaf);
-
-                neighbor.NeighborDistances.SortedInsertWithMirror(
-                    ref neighbor.Neighbors,
-                    tree.LeafNeighborCount,
-                    neighborDist,
-                    rightLeaf);
-            }
 
             return (leftLeaf, rightLeaf);
         }
@@ -537,10 +579,10 @@ public sealed class IHCITree
             return Children[index].Center;
         }
 
-        public override (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<int> rightChildIndices)
+        public override (Node left, Node right) NewSplitNodes(IHCITree tree, float distance, ReadOnlySpan<float> leftCenter, ReadOnlySpan<int> leftChildIndices, ReadOnlySpan<float> rightCenter, ReadOnlySpan<int> rightChildIndices)
         {
-            var left = tree.NewRouting(parent: null);
-            var right = tree.NewRouting(parent: null);
+            var left = tree.NewRouting(parent: null, center: leftCenter);
+            var right = tree.NewRouting(parent: null, center: rightCenter);
 
             for (int i = 0; i < leftChildIndices.Length; i++)
                 left.AddChild(Children[leftChildIndices[i]]);
@@ -913,11 +955,13 @@ public sealed class IHCITree
         }
 
         // Create two new nodes
-        var (leftNode, rightNode) = node.NewSplitNodes(this, splitDistance, leftChildIndices.Span, rightChildIndices.Span);
-
-        // Initialize centers for new nodes
-        leftNode.Center = leftCentroidBuilder.Build().ToArray();
-        rightNode.Center = rightCentroidBuilder.Build().ToArray();
+        var (leftNode, rightNode) = node.NewSplitNodes(
+            tree: this,
+            distance: splitDistance,
+            leftCenter: leftCentroidBuilder.Build(),
+            leftChildIndices: leftChildIndices.Span,
+            rightCenter: rightCentroidBuilder.Build(),
+            rightChildIndices: rightChildIndices.Span);
 
         // Compute radii
         var leftCentroid = leftNode.Center.AsSpan();
@@ -955,7 +999,7 @@ public sealed class IHCITree
         if (oldNode.Parent is null)
         {
             // oldNode was root → create new root routing node with 2 children
-            var newRoot = NewRouting(parent: null);
+            var newRoot = NewRouting(parent: null, center: default);
             newRoot.AddChild(leftNode);
             newRoot.AddChild(rightNode);
             _root = newRoot;
@@ -1146,13 +1190,13 @@ public sealed class IHCITree
     // Node allocation
     // ----------------------------
 
-    private LeafNode NewLeaf(RoutingNode? parent)
+    private LeafNode NewLeaf(RoutingNode? parent, ReadOnlySpan<float> center)
     {
         var id = new NodeId(_leaves.Count);
         var leaf = new LeafNode(nodeId: id, neighborCount: LeafNeighborCount)
         {
             Parent = parent,
-            Center = Array.Empty<float>(),
+            Center = center.ToArray(),
             Radius = 0
         };
 
@@ -1160,10 +1204,11 @@ public sealed class IHCITree
         return leaf;
     }
 
-    private RoutingNode NewRouting(RoutingNode? parent)
+    private RoutingNode NewRouting(RoutingNode? parent, ReadOnlySpan<float> center)
     {
         var rn = new RoutingNode(nodeId: new NodeId(++_nodeIdGen), maxChildren: RoutingMaxChildren, dim: _store.Dimensions)
         {
+            Center = center.Length == 0 ? Array.Empty<float>() : center.ToArray(),
             Parent = parent,
             Radius = 0
         };
