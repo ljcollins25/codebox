@@ -56,8 +56,9 @@ public class BlastIndexTests
             query[j] = (float)(rng.NextDouble() * 2.0 - 1.0);
         }
 
-        // Query the index
-        var results = index.Query(query, k);
+        // Query the index with tracing
+        var traceResult = index.QueryWithTrace(query, k);
+        var results = traceResult.Results;
 
         // Compute brute-force results for comparison
         var bruteForce = new List<(int Id, float Distance)>();
@@ -91,8 +92,27 @@ public class BlastIndexTests
 
         Console.WriteLine($"BlastIndex test: {vectorCount} vectors, {dimensions}D, k={k}, Recall@{k}={recall:P2}");
         Console.WriteLine($"  Buckets: {index.Buckets().Count()}, Vectors: {index.Vectors().Count()}");
+        Console.WriteLine();
+
+        // Event log per spec 9.1
+        Console.WriteLine("=== Event Log (spec 9.1) ===");
+        foreach (var evt in traceResult.Events)
+        {
+            var line = evt.Type switch
+            {
+                BlastIndex.TraceEventType.PopCandidate => $"popCandidate id={evt.Id} dist={evt.Distance:F6}",
+                BlastIndex.TraceEventType.SetCurrent => $"setCurrent  id={evt.Id} dist={evt.Distance:F6}",
+                BlastIndex.TraceEventType.AddCandidate => $"addCandidate id={evt.Id} dist={evt.Distance:F6} reason={evt.Reason}",
+                BlastIndex.TraceEventType.ScanVector => $"scanVector id={evt.Id} dist={evt.Distance:F6}",
+                BlastIndex.TraceEventType.Terminate => $"terminate reason={evt.Reason}",
+                _ => ""
+            };
+            Console.WriteLine(line);
+        }
+        Console.WriteLine();
 
         // End dumps per spec 9.2
+        Console.WriteLine("=== End Dumps (spec 9.2) ===");
         Console.WriteLine($"topK k={k}");
         for (int i = 0; i < results.Length; i++)
         {
@@ -107,14 +127,12 @@ public class BlastIndexTests
             Console.WriteLine($"  {i + 1}) {expected[i].Id} dist={expected[i].Distance:F6} {inResult}");
         }
 
+        Console.WriteLine($"stats popped={traceResult.Popped} candidatesAdded={traceResult.CandidatesAdded} scanned={traceResult.Scanned}");
         Console.WriteLine($"stats recall={recall:P2} matched={intersection}/{k}");
         Console.WriteLine();
 
-        // Adjacency dump per spec 9.3 (limited to small tests)
-        //if (vectorCount <= 100)
-        {
-            PrintAdjacencyDump(index, metric, store);
-        }
+        // Adjacency dump per spec 9.3
+        PrintAdjacencyDump(index, metric, store);
 
         Assert.True(recall >= minRecall,
             $"Recall@{k} = {recall:P2} is too low. Expected at least {minRecall:P0}.");

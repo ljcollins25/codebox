@@ -176,6 +176,181 @@ public sealed class BlastIndex
         return best.ToSortedArray();
     }
 
+    /// <summary>
+    /// Query trace event types per spec 9.1.
+    /// </summary>
+    public enum TraceEventType
+    {
+        PopCandidate,
+        SetCurrent,
+        AddCandidate,
+        ScanVector,
+        Terminate
+    }
+
+    /// <summary>
+    /// A single trace event per spec 9.1.
+    /// </summary>
+    public readonly record struct TraceEvent(TraceEventType Type, string Id, float Distance, string Reason);
+
+    /// <summary>
+    /// Query trace result containing events and stats per spec 9.1 and 9.2.
+    /// </summary>
+    public sealed class QueryTraceResult
+    {
+        public (VectorId Id, float Distance)[] Results { get; set; } = Array.Empty<(VectorId, float)>();
+        public List<TraceEvent> Events { get; } = new();
+        public int Popped { get; set; }
+        public int CandidatesAdded { get; set; }
+        public int Scanned { get; set; }
+        public string TerminateReason { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Queries with full debug tracing per spec 9.1 and 9.2.
+    /// </summary>
+    public QueryTraceResult QueryWithTrace(ReadOnlySpan<float> query, int k)
+    {
+        if (k <= 0) throw new ArgumentOutOfRangeException(nameof(k));
+        if (query.Length != _store.Dimensions) throw new ArgumentException("Query dimension mismatch", nameof(query));
+
+        var trace = new QueryTraceResult();
+        var best = new BoundedMaxK(k);
+        var visited = new HashSet<Node>();
+        var pq = new PriorityQueue<Node, float>();
+
+        // Start from root (seed)
+        float rootDist = GetDistanceToNode(_root, query);
+        pq.Enqueue(_root, rootDist);
+        trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(_root), rootDist, "seed"));
+        trace.CandidatesAdded++;
+
+        int maxVisits = Math.Max(k * 20, 200);
+        int visits = 0;
+
+        while (pq.TryDequeue(out var current, out var currentDist))
+        {
+            trace.Events.Add(new TraceEvent(TraceEventType.PopCandidate, GetNodeId(current), currentDist, ""));
+            trace.Popped++;
+
+            if (!visited.Add(current))
+                continue;
+
+            if (visits >= maxVisits)
+            {
+                trace.TerminateReason = "max_visits";
+                trace.Events.Add(new TraceEvent(TraceEventType.Terminate, "", 0, "max_visits"));
+                break;
+            }
+
+            visits++;
+            trace.Events.Add(new TraceEvent(TraceEventType.SetCurrent, GetNodeId(current), currentDist, ""));
+
+            if (current is VectorNode vn)
+            {
+                // Scan this vector
+                float d = _metric.Distance(query, _store.GetVector(vn.VectorId));
+                best.Add(vn.VectorId, d);
+                trace.Events.Add(new TraceEvent(TraceEventType.ScanVector, $"V{vn.VectorId.Index}", d, ""));
+                trace.Scanned++;
+
+                // Expand to neighbors
+                ExpandVectorNeighborsWithTrace(vn, query, pq, visited, best, trace);
+            }
+            else if (current is BucketNode bn)
+            {
+                bool hasVisited(Node n) => visited.Contains(n);
+                // Expand children
+                foreach (var child in bn.Children.Span)
+                {
+                    if (hasVisited(child)) continue;
+                    float childDist = GetDistanceToNode(child, query);
+                    if (best.HasWorst && childDist > best.WorstDistance) continue;
+                    pq.Enqueue(child, childDist);
+                    trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(child), childDist, "child"));
+                    trace.CandidatesAdded++;
+                }
+
+                // Expand outgoing neighbors
+                foreach (var neighbor in bn.OutgoingNeighbors.Span)
+                {
+                    if (neighbor is null || hasVisited(neighbor)) continue;
+                    float neighborDist = GetDistanceToNode(neighbor, query);
+                    if (best.HasWorst && neighborDist > best.WorstDistance) continue;
+                    pq.Enqueue(neighbor, neighborDist);
+                    trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(neighbor), neighborDist, "neighbor"));
+                    trace.CandidatesAdded++;
+                }
+
+                // Expand incoming neighbors
+                foreach (var neighbor in bn.IncomingNeighbors)
+                {
+                    if (hasVisited(neighbor)) continue;
+                    float neighborDist = GetDistanceToNode(neighbor, query);
+                    if (best.HasWorst && neighborDist > best.WorstDistance) continue;
+                    pq.Enqueue(neighbor, neighborDist);
+                    trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(neighbor), neighborDist, "neighbor"));
+                    trace.CandidatesAdded++;
+                }
+            }
+        }
+
+        if (string.IsNullOrEmpty(trace.TerminateReason))
+        {
+            trace.TerminateReason = "pq_empty";
+            trace.Events.Add(new TraceEvent(TraceEventType.Terminate, "", 0, "pq_empty"));
+        }
+
+        trace.Results = best.ToSortedArray();
+        return trace;
+    }
+
+    private void ExpandVectorNeighborsWithTrace(VectorNode start, ReadOnlySpan<float> query, PriorityQueue<Node, float> pq, HashSet<Node> visited, BoundedMaxK best, QueryTraceResult trace)
+    {
+        // First hop: direct neighbors
+        foreach (var neighbor in start.OutgoingNeighbors.Span)
+        {
+            if (neighbor is null || visited.Contains(neighbor)) continue;
+            float d = GetDistanceToNode(neighbor, query);
+            if (best.HasWorst && d > best.WorstDistance) continue;
+            pq.Enqueue(neighbor, d);
+            trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(neighbor), d, "neighbor"));
+            trace.CandidatesAdded++;
+
+            // Second hop
+            if (NeighborHops >= 2)
+            {
+                foreach (var neighbor2 in neighbor.OutgoingNeighbors.Span)
+                {
+                    if (neighbor2 is null || visited.Contains(neighbor2)) continue;
+                    float d2 = GetDistanceToNode(neighbor2, query);
+                    if (best.HasWorst && d2 > best.WorstDistance) continue;
+                    pq.Enqueue(neighbor2, d2);
+                    trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(neighbor2), d2, "neighbor"));
+                    trace.CandidatesAdded++;
+                }
+            }
+        }
+
+        // Incoming neighbors
+        foreach (var neighbor in start.IncomingNeighbors)
+        {
+            if (visited.Contains(neighbor)) continue;
+            float d = GetDistanceToNode(neighbor, query);
+            if (best.HasWorst && d > best.WorstDistance) continue;
+            pq.Enqueue(neighbor, d);
+            trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(neighbor), d, "neighbor"));
+            trace.CandidatesAdded++;
+        }
+    }
+
+    private static string GetNodeId(Node node) => node switch
+    {
+        VectorNode vn => $"V{vn.VectorId.Index}",
+        BucketNode bn => bn.Path,
+        _ => "?"
+    };
+
     private void ExpandVectorNeighbors(VectorNode start, ReadOnlySpan<float> query, PriorityQueue<Node, float> pq, HashSet<Node> visited, BoundedMaxK best)
     {
         // First hop: direct neighbors
