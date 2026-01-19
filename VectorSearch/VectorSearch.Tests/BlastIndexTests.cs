@@ -19,6 +19,7 @@ public class BlastIndexTests
     [InlineData(500, 16, 10)]
     [InlineData(1000, 32, 20)]
     [InlineData(2000, 64, 50)]
+    [InlineData(20000, 64, 50)]
     public void TestSyntheticDataset(int vectorCount, int dimensions, int k)
     {
         // Generate random vectors
@@ -39,7 +40,7 @@ public class BlastIndexTests
             metric,
             store,
             bucketCapacity: 32,
-            outgoingNeighborCount: 8,
+            outgoingNeighborCount: 4,
             neighborHops: 2,
             windowSize: 4);
 
@@ -94,23 +95,6 @@ public class BlastIndexTests
         Console.WriteLine($"  Buckets: {index.Buckets().Count()}, Vectors: {index.Vectors().Count()}");
         Console.WriteLine();
 
-        // Event log per spec 9.1
-        Console.WriteLine("=== Event Log (spec 9.1) ===");
-        foreach (var evt in traceResult.Events)
-        {
-            var line = evt.Type switch
-            {
-                BlastIndex.TraceEventType.PopCandidate => $"popCandidate id={evt.Id} dist={evt.Distance:F6}",
-                BlastIndex.TraceEventType.SetCurrent => $"setCurrent  id={evt.Id} dist={evt.Distance:F6}",
-                BlastIndex.TraceEventType.AddCandidate => $"addCandidate id={evt.Id} dist={evt.Distance:F6} reason={evt.Reason}",
-                BlastIndex.TraceEventType.ScanVector => $"scanVector id={evt.Id} dist={evt.Distance:F6}",
-                BlastIndex.TraceEventType.Terminate => $"terminate reason={evt.Reason}",
-                _ => ""
-            };
-            Console.WriteLine(line);
-        }
-        Console.WriteLine();
-
         // End dumps per spec 9.2
         Console.WriteLine("=== End Dumps (spec 9.2) ===");
         Console.WriteLine($"topK k={k}");
@@ -129,6 +113,23 @@ public class BlastIndexTests
 
         Console.WriteLine($"stats popped={traceResult.Popped} candidatesAdded={traceResult.CandidatesAdded} scanned={traceResult.Scanned}");
         Console.WriteLine($"stats recall={recall:P2} matched={intersection}/{k}");
+        Console.WriteLine();
+
+        // Event log per spec 9.1
+        Console.WriteLine("=== Event Log (spec 9.1) ===");
+        foreach (var evt in traceResult.Events)
+        {
+            var line = evt.Type switch
+            {
+                BlastIndex.TraceEventType.PopCandidate => $"popCandidate id={evt.Id} dist={evt.Distance:F6}",
+                BlastIndex.TraceEventType.SetCurrent => $"setCurrent  id={evt.Id} dist={evt.Distance:F6}",
+                BlastIndex.TraceEventType.AddCandidate => $"addCandidate id={evt.Id} dist={evt.Distance:F6} reason={evt.Reason}",
+                BlastIndex.TraceEventType.ScanVector => $"scanVector id={evt.Id} dist={evt.Distance:F6}",
+                BlastIndex.TraceEventType.Terminate => $"terminate reason={evt.Reason}",
+                _ => ""
+            };
+            Console.WriteLine(line);
+        }
         Console.WriteLine();
 
         // Adjacency dump per spec 9.3

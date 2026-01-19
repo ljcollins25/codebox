@@ -159,6 +159,7 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
     [Theory]
     [InlineData(0)]
     [InlineData(0,1, "https://youtu.be/3CgorMd6gOU?si=ZxEafA8zSRA6bmCh")]
+    [InlineData(0,1, "https://youtu.be/4-fbVcfTpKI?si=6sAiBLi326qIVuJY")]
     [InlineData(0, 12)]
     [InlineData(0, 200, "Drama")]
     [InlineData(0, 50, "Favs")]
@@ -172,16 +173,17 @@ public partial class CliTests(ITestOutputHelper output) : TestBase(output)
 
         var op = new YoutubeDownloadFlow(TestConsole, Token)
         {
-            UploadUri = ContainerUriJpe.Combine("Media/Youtube"),
+            UploadUri = ContainerUriWus.Combine("Media/Youtube"),
             CookiesFilePath = @"C:\mount\youtube\cookies.txt",
             Sources = [source],
             PlaylistMapPath = @"Q:\src\codebox\scripts\playlists.json",
-            GdrivePath = $"gdrive:translatedtitles/",
             OutputRoot = @"Q:\media\youtube",
             Limit = limit,
             Skip = skip,
             RefreshPlaylists = true
         };
+
+        Directory.CreateDirectory(op.OutputRoot);
 
         await op.RunAsync();
     }

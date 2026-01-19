@@ -156,7 +156,6 @@ public class Program
                         CookiesFilePath = m.Option(c => ref c.CookiesFilePath, "cookies", "The path to the cookies file", required: true),
                         Sources = m.Option(c => ref c.Sources, "source", "A source (playlist or video url)", required: true, aliases: ["s"]),
                         OutputRoot = m.Option(c => ref c.OutputRoot, "output", "The local path to output data", required: true, aliases: ["o"]),
-                        GdrivePath = m.Option(c => ref c.GdrivePath, "gdrive-path", "The gdrive path to where translated files go", required: true, defaultValue: $"gdrive:translatedtitles/"),
                     };
 
                     m.Option(c => ref c.RefreshPlaylists, name: "refresh-playlists", description: "Force download of playlists");

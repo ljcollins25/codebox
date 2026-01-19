@@ -43,8 +43,6 @@ public class YoutubeDownloadFlow(IConsole Console, CancellationToken token)
 
     public required string OutputRoot;
 
-    public required string GdrivePath;
-
     public Uri? UploadUri;
 
     public static bool SingleThreaded = System.Diagnostics.Debugger.IsAttached;

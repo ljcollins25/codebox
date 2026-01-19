@@ -119,7 +119,17 @@ public record class ProcessPlaylist(IConsole Console, CancellationToken token)
 
         private string[]? translatedLines;
         private string[]? summarizedLines;
-        public string[] TranslatedLines { get => translatedLines ?? translated.SplitLines().Select(t => t.Trim(TrimChars)).Where(s => s.IsNonEmpty()).ToArray(); set => translatedLines = value; }
-        public string[] SummarizedLines { get => summarizedLines ?? summarized.SplitLines().Select(t => t.Trim(TrimChars)).Where(s => s.IsNonEmpty()).ToArray(); set => summarizedLines = value; }
+        public string[] TranslatedLines { get => translatedLines ?? SplitAndNormalize(translated); set => translatedLines = value; }
+        public string[] SummarizedLines { get => summarizedLines ?? SplitAndNormalize(summarized); set => summarizedLines = value; }
+
+        private static string[] SplitAndNormalize(string s)
+        {
+            return s.SplitLines().Select(t => Normalize(t)).Where(s => s.IsNonEmpty()).ToArray();
+        }
+
+        public static string Normalize(string s)
+        {
+            return string.Join("", s.Where(c => char.IsAscii(c))).Trim(TrimChars);
+        }
     }
 }

@@ -104,6 +104,7 @@ public sealed class BlastIndex
 
         var best = new BoundedMaxK(k);
         var visited = new HashSet<Node>();
+        var enqueued = new HashSet<Node>();
 
         // Priority queue for traversal: (distance, node)
         var pq = new PriorityQueue<Node, float>();
@@ -111,6 +112,7 @@ public sealed class BlastIndex
         // Start from root
         float rootDist = GetDistanceToNode(_root, query);
         pq.Enqueue(_root, rootDist);
+        enqueued.Add(_root);
 
         int maxVisits = Math.Max(k * 20, 200); // Limit exploration
         int visits = 0;
@@ -129,14 +131,14 @@ public sealed class BlastIndex
                 best.Add(vn.VectorId, d);
 
                 // Expand to neighbors (up to NeighborHops)
-                ExpandVectorNeighbors(vn, query, pq, visited, best);
+                ExpandVectorNeighbors(vn, query, pq, enqueued, best);
             }
             else if (current is BucketNode bn)
             {
                 // Expand children
                 foreach (var child in bn.Children.Span)
                 {
-                    if (visited.Contains(child)) continue;
+                    if (!enqueued.Add(child)) continue;
 
                     float childDist = GetDistanceToNode(child, query);
 
@@ -150,7 +152,7 @@ public sealed class BlastIndex
                 // Expand outgoing neighbors
                 foreach (var neighbor in bn.OutgoingNeighbors.Span)
                 {
-                    if (neighbor is null || visited.Contains(neighbor)) continue;
+                    if (neighbor is null || !enqueued.Add(neighbor)) continue;
 
                     float neighborDist = GetDistanceToNode(neighbor, query);
                     if (best.HasWorst && neighborDist > best.WorstDistance)
@@ -162,7 +164,7 @@ public sealed class BlastIndex
                 // Expand incoming neighbors (allowed per spec)
                 foreach (var neighbor in bn.IncomingNeighbors)
                 {
-                    if (visited.Contains(neighbor)) continue;
+                    if (!enqueued.Add(neighbor)) continue;
 
                     float neighborDist = GetDistanceToNode(neighbor, query);
                     if (best.HasWorst && neighborDist > best.WorstDistance)
@@ -217,11 +219,13 @@ public sealed class BlastIndex
         var trace = new QueryTraceResult();
         var best = new BoundedMaxK(k);
         var visited = new HashSet<Node>();
+        var enqueued = new HashSet<Node>();
         var pq = new PriorityQueue<Node, float>();
 
         // Start from root (seed)
         float rootDist = GetDistanceToNode(_root, query);
         pq.Enqueue(_root, rootDist);
+        enqueued.Add(_root);
         trace.Events.Add(new TraceEvent(TraceEventType.AddCandidate, GetNodeId(_root), rootDist, "seed"));
         trace.CandidatesAdded++;
 
@@ -255,15 +259,14 @@ public sealed class BlastIndex
                 trace.Scanned++;
 
                 // Expand to neighbors
-                ExpandVectorNeighborsWithTrace(vn, query, pq, visited, best, trace);
+                ExpandVectorNeighborsWithTrace(vn, query, pq, enqueued, best, trace);
             }
             else if (current is BucketNode bn)
             {
-                bool hasVisited(Node n) => visited.Contains(n);
                 // Expand children
                 foreach (var child in bn.Children.Span)
                 {
-                    if (hasVisited(child)) continue;
+                    if (!enqueued.Add(child)) continue;
                     float childDist = GetDistanceToNode(child, query);
                     if (best.HasWorst && childDist > best.WorstDistance) continue;
                     pq.Enqueue(child, childDist);
@@ -274,7 +277,7 @@ public sealed class BlastIndex
                 // Expand outgoing neighbors
                 foreach (var neighbor in bn.OutgoingNeighbors.Span)
                 {
-                    if (neighbor is null || hasVisited(neighbor)) continue;
+                    if (neighbor is null || !enqueued.Add(neighbor)) continue;
                     float neighborDist = GetDistanceToNode(neighbor, query);
                     if (best.HasWorst && neighborDist > best.WorstDistance) continue;
                     pq.Enqueue(neighbor, neighborDist);
@@ -285,7 +288,7 @@ public sealed class BlastIndex
                 // Expand incoming neighbors
                 foreach (var neighbor in bn.IncomingNeighbors)
                 {
-                    if (hasVisited(neighbor)) continue;
+                    if (!enqueued.Add(neighbor)) continue;
                     float neighborDist = GetDistanceToNode(neighbor, query);
                     if (best.HasWorst && neighborDist > best.WorstDistance) continue;
                     pq.Enqueue(neighbor, neighborDist);
@@ -305,12 +308,12 @@ public sealed class BlastIndex
         return trace;
     }
 
-    private void ExpandVectorNeighborsWithTrace(VectorNode start, ReadOnlySpan<float> query, PriorityQueue<Node, float> pq, HashSet<Node> visited, BoundedMaxK best, QueryTraceResult trace)
+    private void ExpandVectorNeighborsWithTrace(VectorNode start, ReadOnlySpan<float> query, PriorityQueue<Node, float> pq, HashSet<Node> enqueued, BoundedMaxK best, QueryTraceResult trace)
     {
         // First hop: direct neighbors
         foreach (var neighbor in start.OutgoingNeighbors.Span)
         {
-            if (neighbor is null || visited.Contains(neighbor)) continue;
+            if (neighbor is null || !enqueued.Add(neighbor)) continue;
             float d = GetDistanceToNode(neighbor, query);
             if (best.HasWorst && d > best.WorstDistance) continue;
             pq.Enqueue(neighbor, d);
@@ -322,7 +325,7 @@ public sealed class BlastIndex
             {
                 foreach (var neighbor2 in neighbor.OutgoingNeighbors.Span)
                 {
-                    if (neighbor2 is null || visited.Contains(neighbor2)) continue;
+                    if (neighbor2 is null || !enqueued.Add(neighbor2)) continue;
                     float d2 = GetDistanceToNode(neighbor2, query);
                     if (best.HasWorst && d2 > best.WorstDistance) continue;
                     pq.Enqueue(neighbor2, d2);
@@ -335,7 +338,7 @@ public sealed class BlastIndex
         // Incoming neighbors
         foreach (var neighbor in start.IncomingNeighbors)
         {
-            if (visited.Contains(neighbor)) continue;
+            if (!enqueued.Add(neighbor)) continue;
             float d = GetDistanceToNode(neighbor, query);
             if (best.HasWorst && d > best.WorstDistance) continue;
             pq.Enqueue(neighbor, d);
@@ -351,12 +354,12 @@ public sealed class BlastIndex
         _ => "?"
     };
 
-    private void ExpandVectorNeighbors(VectorNode start, ReadOnlySpan<float> query, PriorityQueue<Node, float> pq, HashSet<Node> visited, BoundedMaxK best)
+    private void ExpandVectorNeighbors(VectorNode start, ReadOnlySpan<float> query, PriorityQueue<Node, float> pq, HashSet<Node> enqueued, BoundedMaxK best)
     {
         // First hop: direct neighbors
         foreach (var neighbor in start.OutgoingNeighbors.Span)
         {
-            if (neighbor is null || visited.Contains(neighbor)) continue;
+            if (neighbor is null || !enqueued.Add(neighbor)) continue;
 
             float d = GetDistanceToNode(neighbor, query);
             if (best.HasWorst && d > best.WorstDistance) continue;
@@ -364,11 +367,11 @@ public sealed class BlastIndex
             pq.Enqueue(neighbor, d);
 
             // Second hop: neighbors of neighbors
-            if (NeighborHops >= 2 && neighbor is VectorNode vn2)
+            if (NeighborHops >= 2)
             {
-                foreach (var neighbor2 in vn2.OutgoingNeighbors.Span)
+                foreach (var neighbor2 in neighbor.OutgoingNeighbors.Span)
                 {
-                    if (neighbor2 is null || visited.Contains(neighbor2)) continue;
+                    if (neighbor2 is null || !enqueued.Add(neighbor2)) continue;
 
                     float d2 = GetDistanceToNode(neighbor2, query);
                     if (best.HasWorst && d2 > best.WorstDistance) continue;
@@ -381,7 +384,7 @@ public sealed class BlastIndex
         // Also check incoming neighbors
         foreach (var neighbor in start.IncomingNeighbors)
         {
-            if (visited.Contains(neighbor)) continue;
+            if (!enqueued.Add(neighbor)) continue;
 
             float d = GetDistanceToNode(neighbor, query);
             if (best.HasWorst && d > best.WorstDistance) continue;
