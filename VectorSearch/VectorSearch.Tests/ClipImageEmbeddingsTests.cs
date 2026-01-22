@@ -19,8 +19,10 @@ using static Helpers;
 public class ClipImageEmbeddingsTests
 {
     //public static string ModelPath = @$"{Root}\clip-vit-base-patch32.vision_model.onnx";
-    public static string ModelPath = @$"{Root}\clip-vit-base-patch32.vision_model.onnx";
-    public static string ModelName => Path.GetFileNameWithoutExtension(ModelPath);
+    public static string ModelPath = @$"{Root}\{ModelName}.onnx";
+    //public const string ModelName = "dinov2-small";
+    //public const string ModelName = "clip-vit-base-patch32.vision_model";
+    public const string ModelName = "clip-vit-base-patch32.vision_model_q4f16";
 
     public const string Root = @"Q:\bin\vidtest";
 
@@ -49,18 +51,22 @@ public class ClipImageEmbeddingsTests
     /// Tests getting embeddings for a single file and finding best matches using brute force.
     /// </summary>
     [Theory]
-    [InlineData(@$"{Root}\frames.json", @$"{Root}\query.webp", 10)]
-    [InlineData(@$"{Root}\frames.json", @$"{Root}\query.webp", 20)]
-    [InlineData(@$"{Root}\frames.json", @$"{Root}\mlsleep.webp", 20)]
-    [InlineData(@$"{Root}\frames.json", @$"{Root}\flbottle.webp", 20)]
-    [InlineData(@$"{Root}\frames.json", @$"{Root}\fvsit.webp", 20)]
-    [InlineData(@$"{Root}\frames.json", @$"{Root}\flbottle.webp", 5)]
-    [InlineData(@$"{Root}\frames.json", @$"{Root}\006448.jpg", 10)]
+    [InlineData("frames", "query.webp", 10)]
+    [InlineData("frames", "query.webp", 20)]
+    [InlineData("frames", "mlsleep.webp", 20)]
+    [InlineData("frames", "flbottle.webp", 20)]
+    [InlineData("frames", "fvsit.webp", 20)]
+    [InlineData("frames", "flbottle.webp", 5)]
+    [InlineData("frames", "006448.jpg", 10)]
     public void TestSingleFileEmbeddingAndBruteForceSearch(
-        string databaseJsonPath,
-        string queryImagePath,
+        string databaseName,
+        string queryImageName,
         int topK)
     {
+        var databaseJsonPath = Path.Combine(Root,  databaseName + $".{ModelName}.json");
+        var queryImagePath = Path.Combine(Root, queryImageName);
+        var databaseFolderPath = Path.Combine(Root, databaseName);
+
         // Load database embeddings
         _output.WriteLine($"Loading database embeddings from: {databaseJsonPath}");
         var databaseEmbeddings = ClipImageEmbeddings.LoadEmbeddingsFromJson(databaseJsonPath);
@@ -71,8 +77,9 @@ public class ClipImageEmbeddingsTests
         var queryEmbeddings = ClipImageEmbeddings.GetEmbeddingsForFile(
             modelPath: ModelPath,
             imagePath: queryImagePath,
-            normalize: true);
-        _output.WriteLine($"Generated {queryEmbeddings.Count} crop embeddings for query");
+            normalize: true,
+            includeFlip: true);
+        _output.WriteLine($"Generated {queryEmbeddings.Count} crop embeddings for query (including flipped)");
 
         // Find best matching individual embeddings
         _output.WriteLine($"\n=== Top {topK} Best Matching Embeddings ===");
@@ -111,7 +118,6 @@ public class ClipImageEmbeddingsTests
         var resultImagePath = Path.Combine(queryDir, $"{queryName}.{ModelName}.{topK}.jpg");
 
         // Determine the database folder from the JSON path
-        var databaseFolderPath = Path.ChangeExtension(databaseJsonPath, null);
 
         GenerateConcatenatedResultImage(
             queryImagePath,

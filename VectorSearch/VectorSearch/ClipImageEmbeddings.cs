@@ -339,11 +339,13 @@ public static class ClipImageEmbeddings
     /// <param name="modelPath">Path to the ONNX model file</param>
     /// <param name="imagePath">Path to the image file</param>
     /// <param name="normalize">If true, apply L2 normalization to each embedding vector</param>
+    /// <param name="includeFlip">If true, also generate embeddings for horizontally flipped image</param>
     /// <returns>Dictionary mapping crop name to embedding vector</returns>
     public static Dictionary<string, float[]> GetEmbeddingsForFile(
         string modelPath,
         string imagePath,
-        bool normalize = true)
+        bool normalize = true,
+        bool includeFlip = false)
     {
         if (string.IsNullOrEmpty(modelPath))
         {
@@ -361,7 +363,7 @@ public static class ClipImageEmbeddings
         }
 
         using var session = new InferenceSession(modelPath);
-        return GetEmbeddingsForFile(session, imagePath, normalize);
+        return GetEmbeddingsForFile(session, imagePath, normalize, includeFlip);
     }
 
     /// <summary>
@@ -370,11 +372,13 @@ public static class ClipImageEmbeddings
     /// <param name="session">ONNX inference session</param>
     /// <param name="imagePath">Path to the image file</param>
     /// <param name="normalize">If true, apply L2 normalization to each embedding vector</param>
-    /// <returns>Dictionary mapping crop name to embedding vector</returns>
+    /// <param name="includeFlip">If true, also generate embeddings for horizontally flipped image</param>
+    /// <returns>Dictionary mapping crop name to embedding vector (flipped crops have "flip_" prefix)</returns>
     public static Dictionary<string, float[]> GetEmbeddingsForFile(
         InferenceSession session,
         string imagePath,
-        bool normalize = true)
+        bool normalize = true,
+        bool includeFlip = true)
     {
         if (!File.Exists(imagePath))
         {
@@ -386,6 +390,30 @@ public static class ClipImageEmbeddings
 
         using var image = Image.Load<Rgb24>(imagePath);
 
+        // Generate embeddings for original image
+        GenerateEmbeddingsForImage(session, image, inputTensor, normalize, result, prefix: "");
+
+        // Generate embeddings for horizontally flipped image
+        if (includeFlip)
+        {
+            using var flippedImage = image.Clone(ctx => ctx.Flip(FlipMode.Horizontal));
+            GenerateEmbeddingsForImage(session, flippedImage, inputTensor, normalize, result, prefix: "flip_");
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Generates embeddings for all crops of an image and adds them to the result dictionary.
+    /// </summary>
+    private static void GenerateEmbeddingsForImage(
+        InferenceSession session,
+        Image<Rgb24> image,
+        DenseTensor<float> inputTensor,
+        bool normalize,
+        Dictionary<string, float[]> result,
+        string prefix)
+    {
         foreach (var cropName in CropNames)
         {
             using var croppedImage = ApplyCrop(image, cropName);
@@ -397,10 +425,8 @@ public static class ClipImageEmbeddings
                 L2Normalize(embedding);
             }
 
-            result[cropName] = embedding;
+            result[prefix + cropName] = embedding;
         }
-
-        return result;
     }
 
     /// <summary>
