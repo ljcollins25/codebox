@@ -1,6 +1,8 @@
 #nullable disable
 #nullable enable annotations
+using SixLabors.Fonts;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using VectorSearch;
@@ -16,9 +18,11 @@ using static Helpers;
 /// </summary>
 public class ClipImageEmbeddingsTests
 {
-    //public static string ModelPath = @"Q:\bin\vidtest\clip-vit-base-patch32.vision_model.onnx";
-    public static string ModelPath = @"Q:\bin\vidtest\clip-vit-base-patch32.vision_model.onnx";
+    //public static string ModelPath = @$"{Root}\clip-vit-base-patch32.vision_model.onnx";
+    public static string ModelPath = @$"{Root}\clip-vit-base-patch32.vision_model.onnx";
     public static string ModelName => Path.GetFileNameWithoutExtension(ModelPath);
+
+    public const string Root = @"Q:\bin\vidtest";
 
     private readonly ITestOutputHelper _output;
 
@@ -31,7 +35,7 @@ public class ClipImageEmbeddingsTests
     /// Tests the BlastIndex with a synthetic random dataset.
     /// </summary>
     [Theory]
-    [InlineData(@"Q:\bin\vidtest\frames")]
+    [InlineData(@$"{Root}\frames")]
     public void TestDataset(string imageFolderPath)
     {
         var outputFileName = Path.TrimEndingDirectorySeparator(imageFolderPath) + $".{ModelName}.json";
@@ -45,10 +49,13 @@ public class ClipImageEmbeddingsTests
     /// Tests getting embeddings for a single file and finding best matches using brute force.
     /// </summary>
     [Theory]
-    [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\query.webp", 10)]
-    [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\query.webp", 20)]
-    [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\mlsleep.webp", 20)]
-    [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\006448.jpg", 10)]
+    [InlineData(@$"{Root}\frames.json", @$"{Root}\query.webp", 10)]
+    [InlineData(@$"{Root}\frames.json", @$"{Root}\query.webp", 20)]
+    [InlineData(@$"{Root}\frames.json", @$"{Root}\mlsleep.webp", 20)]
+    [InlineData(@$"{Root}\frames.json", @$"{Root}\flbottle.webp", 20)]
+    [InlineData(@$"{Root}\frames.json", @$"{Root}\fvsit.webp", 20)]
+    [InlineData(@$"{Root}\frames.json", @$"{Root}\flbottle.webp", 5)]
+    [InlineData(@$"{Root}\frames.json", @$"{Root}\006448.jpg", 10)]
     public void TestSingleFileEmbeddingAndBruteForceSearch(
         string databaseJsonPath,
         string queryImagePath,
@@ -74,9 +81,10 @@ public class ClipImageEmbeddingsTests
             databaseEmbeddings,
             topK);
 
+        int i = 0;
         foreach (var (key, similarity) in bestMatches)
         {
-            _output.WriteLine($"  {similarity:F4}  {key}");
+            _output.WriteLine($"{i++}  {similarity:F4}  {key}");
         }
 
         // Find best matching frames (aggregated by filename)
@@ -85,10 +93,10 @@ public class ClipImageEmbeddingsTests
             queryEmbeddings,
             databaseEmbeddings,
             topK);
-
+        i = 0;
         foreach (var (fileName, similarity) in bestFrames)
         {
-            _output.WriteLine($"  {similarity:F4}  {fileName}");
+            _output.WriteLine($"{i++}  {similarity:F4}  {fileName}");
         }
 
         // Assertions
@@ -125,7 +133,12 @@ public class ClipImageEmbeddingsTests
     {
         const int thumbSize = 224;
         const int padding = 4;
-        const int labelHeight = 20;
+        const int labelHeight = 18;
+
+        // Load font for labels
+        var fontFamily = SystemFonts.Get("Arial");
+        var font = fontFamily.CreateFont(12, FontStyle.Regular);
+        var textColor = Color.White;
 
         // Load query image
         using var queryImage = Image.Load<Rgb24>(queryImagePath);
@@ -145,7 +158,10 @@ public class ClipImageEmbeddingsTests
 
         using var result = new Image<Rgb24>(totalWidth, totalHeight, new Rgb24(32, 32, 32));
 
-        // Draw query image (resized to thumb size)
+        // Draw query label and image
+        var queryFileName = Path.GetFileName(queryImagePath);
+        result.Mutate(ctx => ctx.DrawText($"Q: {queryFileName}", font, textColor, new PointF(2, 2)));
+
         using (var queryThumb = queryImage.Clone(ctx => ctx.Resize(thumbSize, thumbSize)))
         {
             result.Mutate(ctx => ctx.DrawImage(queryThumb, new Point(0, labelHeight), 1f));
@@ -166,11 +182,16 @@ public class ClipImageEmbeddingsTests
             var col = i % cols;
             var row = i / cols;
             var x = startX + col * (thumbSize + padding);
-            var y = row * (thumbSize + labelHeight + padding) + labelHeight;
+            var y = row * (thumbSize + labelHeight + padding);
 
+            // Draw label with rank, similarity, and filename
+            var label = $"#{i + 1} {similarity:F3} {fileName}";
+            result.Mutate(ctx => ctx.DrawText(label, font, textColor, new PointF(x + 2, y + 2)));
+
+            // Draw thumbnail
             using var frameImage = Image.Load<Rgb24>(framePath);
             using var frameThumb = frameImage.Clone(ctx => ctx.Resize(thumbSize, thumbSize));
-            result.Mutate(ctx => ctx.DrawImage(frameThumb, new Point(x, y), 1f));
+            result.Mutate(ctx => ctx.DrawImage(frameThumb, new Point(x, y + labelHeight), 1f));
         }
 
         // Save result
@@ -181,7 +202,7 @@ public class ClipImageEmbeddingsTests
     /// Tests using an existing frame from the database as a query (should find itself as best match).
     /// </summary>
     [Theory]
-    [InlineData(@"Q:\bin\vidtest\frames")]
+    [InlineData(@$"{Root}\frames")]
     public void TestSelfMatchShouldBeHighestSimilarity(string databaseFolderPath)
     {
         var databaseJsonPath = Path.TrimEndingDirectorySeparator(databaseFolderPath) + ".json";

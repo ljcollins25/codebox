@@ -23,6 +23,8 @@
     </PackageReference>
     <PackageReference Include="CommunityToolkit.HighPerformance" Version="8.4.0" />
     <PackageReference Include="PureHDF" Version="2.1.1" />
+    <PackageReference Include="SixLabors.Fonts" Version="2.1.0" />
+    <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.5" />
   </ItemGroup>
 
   <ItemGroup>
