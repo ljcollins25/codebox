@@ -1,5 +1,8 @@
 #nullable disable
 #nullable enable annotations
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 using VectorSearch;
 using Xunit;
 using Xunit.Abstractions;
@@ -13,7 +16,9 @@ using static Helpers;
 /// </summary>
 public class ClipImageEmbeddingsTests
 {
-    public static string ModelPath = @"Q:\bin\vidtest\vision_model.onnx";
+    //public static string ModelPath = @"Q:\bin\vidtest\clip-vit-base-patch32.vision_model.onnx";
+    public static string ModelPath = @"Q:\bin\vidtest\clip-vit-base-patch32.vision_model.onnx";
+    public static string ModelName => Path.GetFileNameWithoutExtension(ModelPath);
 
     private readonly ITestOutputHelper _output;
 
@@ -29,7 +34,7 @@ public class ClipImageEmbeddingsTests
     [InlineData(@"Q:\bin\vidtest\frames")]
     public void TestDataset(string imageFolderPath)
     {
-        var outputFileName = Path.TrimEndingDirectorySeparator(imageFolderPath) + ".json";
+        var outputFileName = Path.TrimEndingDirectorySeparator(imageFolderPath) + $".{ModelName}.json";
         ClipImageEmbeddings.GenerateImageEmbeddingsToJson(
             modelPath: ModelPath,
             inputFolderPath: imageFolderPath,
@@ -42,7 +47,8 @@ public class ClipImageEmbeddingsTests
     [Theory]
     [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\query.webp", 10)]
     [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\query.webp", 20)]
-    [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\frames\006448.jpg", 10)]
+    [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\mlsleep.webp", 20)]
+    [InlineData(@"Q:\bin\vidtest\frames.json", @"Q:\bin\vidtest\006448.jpg", 10)]
     public void TestSingleFileEmbeddingAndBruteForceSearch(
         string databaseJsonPath,
         string queryImagePath,
@@ -90,6 +96,85 @@ public class ClipImageEmbeddingsTests
         Assert.NotEmpty(bestFrames);
         Assert.True(bestMatches[0].Similarity >= bestMatches[^1].Similarity, "Results should be sorted descending");
         Assert.True(bestFrames[0].Similarity >= bestFrames[^1].Similarity, "Results should be sorted descending");
+
+        // Generate concatenated result image
+        var queryDir = Path.GetDirectoryName(queryImagePath)!;
+        var queryName = Path.GetFileNameWithoutExtension(queryImagePath);
+        var resultImagePath = Path.Combine(queryDir, $"{queryName}.{ModelName}.{topK}.jpg");
+
+        // Determine the database folder from the JSON path
+        var databaseFolderPath = Path.ChangeExtension(databaseJsonPath, null);
+
+        GenerateConcatenatedResultImage(
+            queryImagePath,
+            databaseFolderPath,
+            bestFrames,
+            resultImagePath);
+
+        _output.WriteLine($"\nResult image saved to: {resultImagePath}");
+    }
+
+    /// <summary>
+    /// Generates a concatenated image showing the query and top matching frames.
+    /// </summary>
+    private static void GenerateConcatenatedResultImage(
+        string queryImagePath,
+        string databaseFolderPath,
+        List<(string FileName, float Similarity)> bestFrames,
+        string outputPath)
+    {
+        const int thumbSize = 224;
+        const int padding = 4;
+        const int labelHeight = 20;
+
+        // Load query image
+        using var queryImage = Image.Load<Rgb24>(queryImagePath);
+
+        // Calculate layout: query on left, results in a grid on right
+        var resultCount = bestFrames.Count;
+        var cols = (int)Math.Ceiling(Math.Sqrt(resultCount));
+        var rows = (int)Math.Ceiling((double)resultCount / cols);
+
+        var queryThumbWidth = thumbSize;
+        var queryThumbHeight = thumbSize + labelHeight;
+        var resultsWidth = cols * (thumbSize + padding) - padding;
+        var resultsHeight = rows * (thumbSize + labelHeight + padding) - padding;
+
+        var totalWidth = queryThumbWidth + padding * 2 + resultsWidth;
+        var totalHeight = Math.Max(queryThumbHeight, resultsHeight);
+
+        using var result = new Image<Rgb24>(totalWidth, totalHeight, new Rgb24(32, 32, 32));
+
+        // Draw query image (resized to thumb size)
+        using (var queryThumb = queryImage.Clone(ctx => ctx.Resize(thumbSize, thumbSize)))
+        {
+            result.Mutate(ctx => ctx.DrawImage(queryThumb, new Point(0, labelHeight), 1f));
+        }
+
+        // Draw result frames in a grid
+        var startX = queryThumbWidth + padding * 2;
+        for (int i = 0; i < bestFrames.Count; i++)
+        {
+            var (fileName, similarity) = bestFrames[i];
+            var framePath = Path.Combine(databaseFolderPath, fileName);
+
+            if (!File.Exists(framePath))
+            {
+                continue;
+            }
+
+            var col = i % cols;
+            var row = i / cols;
+            var x = startX + col * (thumbSize + padding);
+            var y = row * (thumbSize + labelHeight + padding) + labelHeight;
+
+            using var frameImage = Image.Load<Rgb24>(framePath);
+            using var frameThumb = frameImage.Clone(ctx => ctx.Resize(thumbSize, thumbSize));
+            result.Mutate(ctx => ctx.DrawImage(frameThumb, new Point(x, y), 1f));
+        }
+
+        // Save result
+        result.SaveAsJpeg(outputPath);
     }
 
     /// <summary>
