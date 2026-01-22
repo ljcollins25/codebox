@@ -138,6 +138,22 @@ public static class Helpers
         }
     }
 
+    public static void For<TLocal>(bool parallel, int fromInclusive, int toExclusive, Func<TLocal> localInit, Func<int, ParallelLoopState, TLocal, TLocal> body, Action<TLocal> localFinally)
+    {
+        if (parallel)
+        {
+            Parallel.For(fromInclusive, toExclusive, localInit, body, localFinally);
+        }
+        else
+        {
+            var options = new ParallelOptions()
+            {
+                MaxDegreeOfParallelism = 1
+            };
+            Parallel.For(fromInclusive, toExclusive, options, localInit, body, localFinally);
+        }
+    }
+
     public static int SizeOf<T>() where T : unmanaged
         => MemoryMarshal.AsBytes(stackalloc T[1]).Length;
 
