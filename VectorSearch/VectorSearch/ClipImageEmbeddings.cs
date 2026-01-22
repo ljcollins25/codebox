@@ -332,4 +332,195 @@ public static class ClipImageEmbeddings
 
         File.WriteAllText(outputJsonPath, json);
     }
+
+    /// <summary>
+    /// Generates embeddings for a single image file.
+    /// </summary>
+    /// <param name="modelPath">Path to the ONNX model file</param>
+    /// <param name="imagePath">Path to the image file</param>
+    /// <param name="normalize">If true, apply L2 normalization to each embedding vector</param>
+    /// <returns>Dictionary mapping crop name to embedding vector</returns>
+    public static Dictionary<string, float[]> GetEmbeddingsForFile(
+        string modelPath,
+        string imagePath,
+        bool normalize = true)
+    {
+        if (string.IsNullOrEmpty(modelPath))
+        {
+            throw new ArgumentException("Model path must be provided.", nameof(modelPath));
+        }
+
+        if (!File.Exists(modelPath))
+        {
+            throw new FileNotFoundException($"ONNX model file not found: {modelPath}", modelPath);
+        }
+
+        if (!File.Exists(imagePath))
+        {
+            throw new FileNotFoundException($"Image file not found: {imagePath}", imagePath);
+        }
+
+        using var session = new InferenceSession(modelPath);
+        return GetEmbeddingsForFile(session, imagePath, normalize);
+    }
+
+    /// <summary>
+    /// Generates embeddings for a single image file using an existing inference session.
+    /// </summary>
+    /// <param name="session">ONNX inference session</param>
+    /// <param name="imagePath">Path to the image file</param>
+    /// <param name="normalize">If true, apply L2 normalization to each embedding vector</param>
+    /// <returns>Dictionary mapping crop name to embedding vector</returns>
+    public static Dictionary<string, float[]> GetEmbeddingsForFile(
+        InferenceSession session,
+        string imagePath,
+        bool normalize = true)
+    {
+        if (!File.Exists(imagePath))
+        {
+            throw new FileNotFoundException($"Image file not found: {imagePath}", imagePath);
+        }
+
+        var inputTensor = new DenseTensor<float>([1, 3, ImageSize, ImageSize]);
+        var result = new Dictionary<string, float[]>();
+
+        using var image = Image.Load<Rgb24>(imagePath);
+
+        foreach (var cropName in CropNames)
+        {
+            using var croppedImage = ApplyCrop(image, cropName);
+            PreprocessImage(croppedImage, inputTensor);
+            var embedding = RunInference(session, inputTensor);
+
+            if (normalize)
+            {
+                L2Normalize(embedding);
+            }
+
+            result[cropName] = embedding;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Loads embeddings from a JSON file.
+    /// </summary>
+    /// <param name="jsonPath">Path to the JSON file</param>
+    /// <returns>Dictionary mapping "filename/crop" keys to embedding vectors</returns>
+    public static Dictionary<string, float[]> LoadEmbeddingsFromJson(string jsonPath)
+    {
+        if (!File.Exists(jsonPath))
+        {
+            throw new FileNotFoundException($"JSON file not found: {jsonPath}", jsonPath);
+        }
+
+        var json = File.ReadAllText(jsonPath);
+        return JsonSerializer.Deserialize<Dictionary<string, float[]>>(json)
+            ?? throw new InvalidOperationException("Failed to deserialize embeddings JSON.");
+    }
+
+    /// <summary>
+    /// Computes cosine similarity between two vectors.
+    /// Assumes vectors are already L2-normalized (dot product equals cosine similarity).
+    /// </summary>
+    public static float CosineSimilarity(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
+    {
+        if (a.Length != b.Length)
+        {
+            throw new ArgumentException("Vectors must have the same length.");
+        }
+
+        float dot = 0;
+        for (int i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+        }
+
+        return dot;
+    }
+
+    /// <summary>
+    /// Finds the best matching embeddings from a database using brute force search.
+    /// </summary>
+    /// <param name="queryEmbeddings">Query embeddings (crop name -> embedding)</param>
+    /// <param name="databaseEmbeddings">Database embeddings ("filename/crop" -> embedding)</param>
+    /// <param name="topK">Number of top results to return</param>
+    /// <returns>List of (key, similarity) pairs sorted by similarity descending</returns>
+    public static List<(string Key, float Similarity)> FindBestMatches(
+        Dictionary<string, float[]> queryEmbeddings,
+        Dictionary<string, float[]> databaseEmbeddings,
+        int topK = 10)
+    {
+        var results = new List<(string Key, float Similarity)>();
+
+        foreach (var (dbKey, dbEmbedding) in databaseEmbeddings)
+        {
+            // Extract crop name from database key (format: "filename/crop")
+            var slashIndex = dbKey.LastIndexOf('/');
+            if (slashIndex < 0) continue;
+
+            var dbCrop = dbKey[(slashIndex + 1)..];
+
+            // Find best matching crop from query
+            float bestSimilarity = float.MinValue;
+            foreach (var (queryCrop, queryEmbedding) in queryEmbeddings)
+            {
+                var similarity = CosineSimilarity(queryEmbedding, dbEmbedding);
+                if (similarity > bestSimilarity)
+                {
+                    bestSimilarity = similarity;
+                }
+            }
+
+            results.Add((dbKey, bestSimilarity));
+        }
+
+        // Sort by similarity descending and take top K
+        return results
+            .OrderByDescending(r => r.Similarity)
+            .Take(topK)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Finds the best matching frames (aggregating across crops) using brute force search.
+    /// </summary>
+    /// <param name="queryEmbeddings">Query embeddings (crop name -> embedding)</param>
+    /// <param name="databaseEmbeddings">Database embeddings ("filename/crop" -> embedding)</param>
+    /// <param name="topK">Number of top results to return</param>
+    /// <returns>List of (filename, best similarity) pairs sorted by similarity descending</returns>
+    public static List<(string FileName, float Similarity)> FindBestMatchingFrames(
+        Dictionary<string, float[]> queryEmbeddings,
+        Dictionary<string, float[]> databaseEmbeddings,
+        int topK = 10)
+    {
+        // Group by filename and find best similarity per file
+        var fileScores = new Dictionary<string, float>();
+
+        foreach (var (dbKey, dbEmbedding) in databaseEmbeddings)
+        {
+            var slashIndex = dbKey.LastIndexOf('/');
+            if (slashIndex < 0) continue;
+
+            var fileName = dbKey[..slashIndex];
+
+            // Find best similarity across all query crops
+            foreach (var (_, queryEmbedding) in queryEmbeddings)
+            {
+                var similarity = CosineSimilarity(queryEmbedding, dbEmbedding);
+
+                if (!fileScores.TryGetValue(fileName, out var currentBest) || similarity > currentBest)
+                {
+                    fileScores[fileName] = similarity;
+                }
+            }
+        }
+
+        return fileScores
+            .OrderByDescending(kv => kv.Value)
+            .Take(topK)
+            .Select(kv => (kv.Key, kv.Value))
+            .ToList();
+    }
 }
