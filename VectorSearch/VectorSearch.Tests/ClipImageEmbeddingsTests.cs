@@ -264,4 +264,164 @@ public class ClipImageEmbeddingsTests
             $"Self-match similarity should be > 0.99, got {selfMatch.Similarity}");
         Assert.Equal(queryFileName, bestFrames[0].FileName);
     }
+
+    /// <summary>
+    /// Tests ORB-based visual verification as a second stage after embedding search.
+    /// </summary>
+    [Theory]
+    [InlineData("frames", "query.webp", 10)]
+    [InlineData("frames", "query.webp", 20)]
+    [InlineData("frames", "mlsleep.webp", 20)]
+    [InlineData("frames", "flbottle.webp", 20)]
+    [InlineData("frames", "fvsit.webp", 20)]
+    [InlineData("frames", "flbottle.webp", 5)]
+    [InlineData("frames", "006448.jpg", 10)]
+    public void TestOrbVisualVerification(
+        string databaseName,
+        string queryImageName,
+        int topK)
+    {
+        var databaseJsonPath = Path.Combine(Root, databaseName + $".{ModelName}.json");
+        var queryImagePath = Path.Combine(Root, queryImageName);
+        var databaseFolderPath = Path.Combine(Root, databaseName);
+
+        // Load database embeddings
+        _output.WriteLine($"Loading database embeddings from: {databaseJsonPath}");
+        var databaseEmbeddings = ClipImageEmbeddings.LoadEmbeddingsFromJson(databaseJsonPath);
+        _output.WriteLine($"Loaded {databaseEmbeddings.Count} embeddings from database");
+
+        // Get embeddings for query image (with flip for better recall)
+        _output.WriteLine($"Generating embeddings for query image: {queryImagePath}");
+        var queryEmbeddings = ClipImageEmbeddings.GetEmbeddingsForFile(
+            modelPath: ModelPath,
+            imagePath: queryImagePath,
+            normalize: true,
+            includeFlip: true);
+
+        // Stage 1: Find top K candidates using embedding similarity
+        var modelSuffix = $".{ModelName}";
+        if (databaseFolderPath.EndsWith(modelSuffix))
+        {
+            databaseFolderPath = databaseFolderPath[..^modelSuffix.Length];
+        }
+
+        var bestFrames = ClipImageEmbeddings.FindBestMatchingFrames(
+            queryEmbeddings,
+            databaseEmbeddings,
+            topK);
+
+        _output.WriteLine($"\n=== Stage 1: Top {topK} Embedding Matches ===");
+        foreach (var (fileName, similarity) in bestFrames)
+        {
+            _output.WriteLine($"  {similarity:F4}  {fileName}");
+        }
+
+        // Stage 2: Rerank using ORB visual verification
+        _output.WriteLine($"\n=== Stage 2: ORB Visual Verification ===");
+        var candidatePaths = bestFrames
+            .Select(f => Path.Combine(databaseFolderPath, f.FileName))
+            .ToList();
+
+        using var orbMatcher = new OrbVisualMatcher(nFeatures: 2000);
+        var orbResults = orbMatcher.RankCandidates(queryImagePath, candidatePaths);
+
+        _output.WriteLine($"\nORB Reranked Results:");
+        foreach (var result in orbResults)
+        {
+            var fileName = Path.GetFileName(result.CandidatePath);
+            var flipIndicator = result.WasFlippedMatch ? " [FLIPPED]" : "";
+            _output.WriteLine($"  Inliers: {result.InlierCount,3} / {result.TotalGoodMatches,3} good matches  {fileName}{flipIndicator}");
+        }
+
+        // Get the best ORB match
+        var bestOrbMatch = orbResults.FirstOrDefault();
+        if (bestOrbMatch.InlierCount >= 8)
+        {
+            _output.WriteLine($"\nBest ORB match: {Path.GetFileName(bestOrbMatch.CandidatePath)} with {bestOrbMatch.InlierCount} inliers");
+        }
+        else
+        {
+            _output.WriteLine($"\nNo strong ORB match found (best had only {bestOrbMatch.InlierCount} inliers)");
+        }
+
+        // Generate result visualization
+        var queryDir = Path.GetDirectoryName(queryImagePath)!;
+        var queryName = Path.GetFileNameWithoutExtension(queryImagePath);
+        var resultImagePath = Path.Combine(queryDir, $"{queryName}.{ModelName}.orb.{topK}.jpg");
+
+        GenerateOrbResultImage(
+            queryImagePath,
+            orbResults,
+            resultImagePath);
+
+        _output.WriteLine($"\nResult image saved to: {resultImagePath}");
+    }
+
+    /// <summary>
+    /// Generates a visualization of ORB matching results.
+    /// </summary>
+    private void GenerateOrbResultImage(
+        string queryImagePath,
+        List<OrbVisualMatcher.MatchResult> orbResults,
+        string outputPath)
+    {
+        const int thumbSize = 224;
+        const int padding = 4;
+        const int labelHeight = 18;
+
+        var fontFamily = SystemFonts.Get("Arial");
+        var font = fontFamily.CreateFont(11, FontStyle.Regular);
+        var textColor = Color.White;
+        var highlightColor = Color.Lime;
+
+        using var queryImage = Image.Load<Rgb24>(queryImagePath);
+
+        var resultCount = orbResults.Count;
+        var cols = (int)Math.Ceiling(Math.Sqrt(resultCount));
+        var rows = (int)Math.Ceiling((double)resultCount / cols);
+
+        var queryThumbWidth = thumbSize;
+        var resultsWidth = cols * (thumbSize + padding) - padding;
+        var resultsHeight = rows * (thumbSize + labelHeight + padding) - padding;
+
+        var totalWidth = queryThumbWidth + padding * 2 + resultsWidth;
+        var totalHeight = Math.Max(thumbSize + labelHeight, resultsHeight);
+
+        using var result = new Image<Rgb24>(totalWidth, totalHeight, new Rgb24(32, 32, 32));
+
+        // Draw query
+        var queryFileName = Path.GetFileName(queryImagePath);
+        result.Mutate(ctx => ctx.DrawText($"Q: {queryFileName}", font, textColor, new PointF(2, 2)));
+        using (var queryThumb = queryImage.Clone(ctx => ctx.Resize(thumbSize, thumbSize)))
+        {
+            result.Mutate(ctx => ctx.DrawImage(queryThumb, new Point(0, labelHeight), 1f));
+        }
+
+        // Draw ORB results
+        var startX = queryThumbWidth + padding * 2;
+        for (int i = 0; i < orbResults.Count; i++)
+        {
+            var orbResult = orbResults[i];
+            if (!File.Exists(orbResult.CandidatePath))
+                continue;
+
+            var col = i % cols;
+            var row = i / cols;
+            var x = startX + col * (thumbSize + padding);
+            var y = row * (thumbSize + labelHeight + padding);
+
+            // Label with rank, inlier count, and filename
+            var fileName = Path.GetFileName(orbResult.CandidatePath);
+            var flipMark = orbResult.WasFlippedMatch ? "F" : "";
+            var label = $"#{i + 1} {orbResult.InlierCount}/{orbResult.TotalGoodMatches}{flipMark} {fileName}";
+            var labelColor = orbResult.InlierCount >= 8 ? highlightColor : textColor;
+            result.Mutate(ctx => ctx.DrawText(label, font, labelColor, new PointF(x + 2, y + 2)));
+
+            using var frameImage = Image.Load<Rgb24>(orbResult.CandidatePath);
+            using var frameThumb = frameImage.Clone(ctx => ctx.Resize(thumbSize, thumbSize));
+            result.Mutate(ctx => ctx.DrawImage(frameThumb, new Point(x, y + labelHeight), 1f));
+        }
+
+        result.SaveAsJpeg(outputPath);
+    }
 }
