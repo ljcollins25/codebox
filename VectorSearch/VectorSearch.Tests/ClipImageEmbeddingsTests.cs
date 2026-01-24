@@ -424,4 +424,206 @@ public class ClipImageEmbeddingsTests
 
         result.SaveAsJpeg(outputPath);
     }
+
+    /// <summary>
+    /// Tests BlastIndex search against brute force, using real image embeddings.
+    /// </summary>
+    [Theory]
+    [InlineData("frames", "query.webp", 10)]
+    [InlineData("frames", "mlsleep.webp", 10)]
+    [InlineData("frames", "flbottle.webp", 10)]
+    public void TestBlastIndexVsBruteForce(
+        string databaseName,
+        string queryImageName,
+        int topK)
+    {
+        var databaseJsonPath = Path.Combine(Root, databaseName + $".{ModelName}.json");
+        var queryImagePath = Path.Combine(Root, queryImageName);
+
+        // Load database embeddings
+        _output.WriteLine($"Loading database embeddings from: {databaseJsonPath}");
+        var databaseEmbeddings = ClipImageEmbeddings.LoadEmbeddingsFromJson(databaseJsonPath);
+        _output.WriteLine($"Loaded {databaseEmbeddings.Count} embeddings from database");
+
+        // Convert to VectorBlockArrayStore for index
+        var embeddingList = databaseEmbeddings.ToList();
+        var dimension = embeddingList[0].Value.Length;
+        var vectors = new float[embeddingList.Count, dimension];
+        var keyToIndex = new Dictionary<string, int>();
+        var indexToKey = new string[embeddingList.Count];
+
+        for (int i = 0; i < embeddingList.Count; i++)
+        {
+            var (key, embedding) = embeddingList[i];
+            keyToIndex[key] = i;
+            indexToKey[i] = key;
+            for (int j = 0; j < dimension; j++)
+            {
+                vectors[i, j] = embedding[j];
+            }
+        }
+
+        var store = new VectorBlockArrayStore(vectors);
+        var metric = new CosineFloatArrayMetric(dimension);
+
+        // Build BlastIndex
+        _output.WriteLine($"Building BlastIndex with {embeddingList.Count} vectors...");
+        var index = new BlastIndex(metric, store, bucketCapacity: 64, outgoingNeighborCount: 16);
+        for (int i = 0; i < embeddingList.Count; i++)
+        {
+            index.Insert(new VectorId(i));
+        }
+        _output.WriteLine("BlastIndex built.");
+
+        // Get embeddings for query image
+        var queryEmbeddings = ClipImageEmbeddings.GetEmbeddingsForFile(
+            modelPath: ModelPath,
+            imagePath: queryImagePath,
+            normalize: true,
+            includeFlip: true);
+
+        // Use "center" crop as the query vector
+        var queryVector = queryEmbeddings["center"];
+
+        // Brute force search
+        var bruteForceResults = new List<(string Key, float Distance)>();
+        for (int i = 0; i < embeddingList.Count; i++)
+        {
+            var dist = metric.Distance(queryVector, store.GetVector(new VectorId(i)));
+            bruteForceResults.Add((indexToKey[i], dist));
+        }
+        bruteForceResults.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+        var bruteForceTopK = bruteForceResults.Take(topK).ToList();
+
+        // BlastIndex search
+        var indexResults = index.Query(queryVector, topK);
+        var indexTopK = indexResults.Select(r => (Key: indexToKey[r.Id], r.Distance)).ToList();
+
+        // Output results
+        _output.WriteLine($"\n=== Brute Force Top {topK} ===");
+        for (int i = 0; i < bruteForceTopK.Count; i++)
+        {
+            var (key, dist) = bruteForceTopK[i];
+            _output.WriteLine($"  {i + 1}. {dist:F6}  {key}");
+        }
+
+        _output.WriteLine($"\n=== BlastIndex Top {topK} ===");
+        for (int i = 0; i < indexTopK.Count; i++)
+        {
+            var (key, dist) = indexTopK[i];
+            _output.WriteLine($"  {i + 1}. {dist:F6}  {key}");
+        }
+
+        // Calculate recall
+        var bruteForceSet = bruteForceTopK.Select(x => x.Key).ToHashSet();
+        var indexSet = indexTopK.Select(x => x.Key).ToHashSet();
+        var intersection = bruteForceSet.Intersect(indexSet).Count();
+        var recall = (float)intersection / topK;
+        _output.WriteLine($"\nRecall@{topK}: {recall:P1} ({intersection}/{topK})");
+
+        // Verify top-1 match
+        Assert.Equal(bruteForceTopK[0].Key, indexTopK[0].Key);
+        Assert.True(recall >= 0.7f, $"Recall should be at least 70%, got {recall:P1}");
+    }
+
+    /// <summary>
+    /// Tests IHCITree search against brute force, using real image embeddings.
+    /// </summary>
+    [Theory]
+    [InlineData("frames", "query.webp", 10)]
+    [InlineData("frames", "mlsleep.webp", 10)]
+    [InlineData("frames", "flbottle.webp", 10)]
+    public void TestIHCITreeVsBruteForce(
+        string databaseName,
+        string queryImageName,
+        int topK)
+    {
+        var databaseJsonPath = Path.Combine(Root, databaseName + $".{ModelName}.json");
+        var queryImagePath = Path.Combine(Root, queryImageName);
+
+        // Load database embeddings
+        _output.WriteLine($"Loading database embeddings from: {databaseJsonPath}");
+        var databaseEmbeddings = ClipImageEmbeddings.LoadEmbeddingsFromJson(databaseJsonPath);
+        _output.WriteLine($"Loaded {databaseEmbeddings.Count} embeddings from database");
+
+        // Convert to VectorBlockArrayStore for index
+        var embeddingList = databaseEmbeddings.ToList();
+        var dimension = embeddingList[0].Value.Length;
+        var vectors = new float[embeddingList.Count, dimension];
+        var keyToIndex = new Dictionary<string, int>();
+        var indexToKey = new string[embeddingList.Count];
+
+        for (int i = 0; i < embeddingList.Count; i++)
+        {
+            var (key, embedding) = embeddingList[i];
+            keyToIndex[key] = i;
+            indexToKey[i] = key;
+            for (int j = 0; j < dimension; j++)
+            {
+                vectors[i, j] = embedding[j];
+            }
+        }
+
+        var store = new VectorBlockArrayStore(vectors);
+        var metric = new CosineFloatArrayMetric(dimension);
+
+        // Build IHCITree
+        _output.WriteLine($"Building IHCITree with {embeddingList.Count} vectors...");
+        var tree = new IHCITree(metric, store, leafCapacity: 64, routingMaxChildren: 16, leafNeighborCount: 8);
+        for (int i = 0; i < embeddingList.Count; i++)
+        {
+            tree.Insert(new VectorId(i));
+        }
+        _output.WriteLine("IHCITree built.");
+
+        // Get embeddings for query image
+        var queryEmbeddings = ClipImageEmbeddings.GetEmbeddingsForFile(
+            modelPath: ModelPath,
+            imagePath: queryImagePath,
+            normalize: true,
+            includeFlip: true);
+
+        // Use "center" crop as the query vector
+        var queryVector = queryEmbeddings["center"];
+
+        // Brute force search
+        var bruteForceResults = new List<(string Key, float Distance)>();
+        for (int i = 0; i < embeddingList.Count; i++)
+        {
+            var dist = metric.Distance(queryVector, store.GetVector(new VectorId(i)));
+            bruteForceResults.Add((indexToKey[i], dist));
+        }
+        bruteForceResults.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+        var bruteForceTopK = bruteForceResults.Take(topK).ToList();
+
+        // IHCITree search
+        var treeResults = tree.Query(queryVector, topK, routingWidth: 4);
+        var treeTopK = treeResults.Select(r => (Key: indexToKey[r.Id], r.Distance)).ToList();
+
+        // Output results
+        _output.WriteLine($"\n=== Brute Force Top {topK} ===");
+        for (int i = 0; i < bruteForceTopK.Count; i++)
+        {
+            var (key, dist) = bruteForceTopK[i];
+            _output.WriteLine($"  {i + 1}. {dist:F6}  {key}");
+        }
+
+        _output.WriteLine($"\n=== IHCITree Top {topK} ===");
+        for (int i = 0; i < treeTopK.Count; i++)
+        {
+            var (key, dist) = treeTopK[i];
+            _output.WriteLine($"  {i + 1}. {dist:F6}  {key}");
+        }
+
+        // Calculate recall
+        var bruteForceSet = bruteForceTopK.Select(x => x.Key).ToHashSet();
+        var treeSet = treeTopK.Select(x => x.Key).ToHashSet();
+        var intersection = bruteForceSet.Intersect(treeSet).Count();
+        var recall = (float)intersection / topK;
+        _output.WriteLine($"\nRecall@{topK}: {recall:P1} ({intersection}/{topK})");
+
+        // Verify top-1 match
+        Assert.Equal(bruteForceTopK[0].Key, treeTopK[0].Key);
+        Assert.True(recall >= 0.7f, $"Recall should be at least 70%, got {recall:P1}");
+    }
 }
