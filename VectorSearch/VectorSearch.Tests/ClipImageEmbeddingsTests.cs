@@ -626,4 +626,130 @@ public class ClipImageEmbeddingsTests
         Assert.Equal(bruteForceTopK[0].Key, treeTopK[0].Key);
         Assert.True(recall >= 0.7f, $"Recall should be at least 70%, got {recall:P1}");
     }
+
+    /// <summary>
+    /// Generates perceptual frame descriptors for all frames and saves to JSON.
+    /// </summary>
+    [Theory]
+    [InlineData(@$"{Root}\frames")]
+    public void TestPerceptualDataset(string imageFolderPath)
+    {
+        var outputFileName = Path.TrimEndingDirectorySeparator(imageFolderPath) + ".perceptual.json";
+        _output.WriteLine($"Generating perceptual descriptors for: {imageFolderPath}");
+        _output.WriteLine($"Output: {outputFileName}");
+
+        PerceptualFrameDescriptor.GenerateDescriptorsToJson(
+            inputFolderPath: imageFolderPath,
+            outputJsonPath: outputFileName);
+
+        // Verify the file was created and has content
+        Assert.True(File.Exists(outputFileName), "Output JSON file should exist");
+        var descriptors = PerceptualFrameDescriptor.LoadDescriptorsFromJson(outputFileName);
+        _output.WriteLine($"Generated {descriptors.Count} descriptors");
+        Assert.NotEmpty(descriptors);
+
+        // Verify descriptor dimension
+        var firstDescriptor = descriptors.Values.First();
+        Assert.Equal(PerceptualFrameDescriptor.Dimension, firstDescriptor.Length);
+        _output.WriteLine($"Descriptor dimension: {firstDescriptor.Length}");
+    }
+
+    /// <summary>
+    /// Tests perceptual frame descriptor for ranking candidates.
+    /// </summary>
+    [Theory]
+    [InlineData("frames", "query.webp", 20)]
+    [InlineData("frames", "mlsleep.webp", 20)]
+    [InlineData("frames", "flbottle.webp", 20)]
+    public void TestPerceptualFrameDescriptor(
+        string databaseName,
+        string queryImageName,
+        int topK)
+    {
+        var databaseFolderPath = Path.Combine(Root, databaseName);
+        var databaseJsonPath = Path.TrimEndingDirectorySeparator(databaseFolderPath) + ".perceptual.json";
+        var queryImagePath = Path.Combine(Root, queryImageName);
+
+        // Ensure database JSON exists
+        if (!File.Exists(databaseJsonPath))
+        {
+            _output.WriteLine($"Generating perceptual descriptors for database...");
+            PerceptualFrameDescriptor.GenerateDescriptorsToJson(databaseFolderPath, databaseJsonPath);
+        }
+
+        // Load database descriptors
+        _output.WriteLine($"Loading perceptual descriptors from: {databaseJsonPath}");
+        var databaseDescriptors = PerceptualFrameDescriptor.LoadDescriptorsFromJson(databaseJsonPath);
+        _output.WriteLine($"Loaded {databaseDescriptors.Count} descriptors from database");
+
+        // Compute descriptor for query
+        _output.WriteLine($"Computing descriptor for query: {queryImagePath}");
+        var queryDescriptor = PerceptualFrameDescriptor.Compute(queryImagePath);
+        _output.WriteLine($"Query descriptor dimension: {queryDescriptor.Length}");
+
+        // Rank database descriptors by similarity
+        var results = new List<(string FileName, float Similarity)>();
+        foreach (var (fileName, descriptor) in databaseDescriptors)
+        {
+            var similarity = PerceptualFrameDescriptor.CosineSimilarity(queryDescriptor, descriptor);
+            results.Add((fileName, similarity));
+        }
+
+        // Sort by similarity descending
+        results.Sort((a, b) => b.Similarity.CompareTo(a.Similarity));
+        var topResults = results.Take(topK).ToList();
+
+        _output.WriteLine($"\n=== Top {topK} Perceptual Matches ===");
+        for (int i = 0; i < topResults.Count; i++)
+        {
+            var (fileName, similarity) = topResults[i];
+            _output.WriteLine($"  {i + 1}. {similarity:F4}  {fileName}");
+        }
+
+        // Generate result visualization
+        var queryDir = Path.GetDirectoryName(queryImagePath)!;
+        var queryName = Path.GetFileNameWithoutExtension(queryImagePath);
+        var resultImagePath = Path.Combine(queryDir, $"{queryName}.perceptual.{topK}.jpg");
+
+        GenerateConcatenatedResultImage(
+            queryImagePath,
+            databaseFolderPath,
+            topResults,
+            resultImagePath);
+
+        _output.WriteLine($"\nResult image saved to: {resultImagePath}");
+
+        // Basic assertions
+        Assert.NotEmpty(topResults);
+        Assert.True(topResults[0].Similarity >= topResults[^1].Similarity, "Results should be sorted descending");
+    }
+
+    /// <summary>
+    /// Tests that the perceptual descriptor is robust to horizontal mirroring.
+    /// </summary>
+    [Theory]
+    [InlineData("frames", "006448.jpg")]
+    public void TestPerceptualDescriptorMirrorInvariance(
+        string databaseName,
+        string imageName)
+    {
+        var imagePath = Path.Combine(Root, databaseName, imageName);
+
+        // Load original image
+        using var original = OpenCvSharp.Cv2.ImRead(imagePath, OpenCvSharp.ImreadModes.Color);
+
+        // Create horizontally flipped version
+        using var flipped = new OpenCvSharp.Mat();
+        OpenCvSharp.Cv2.Flip(original, flipped, OpenCvSharp.FlipMode.Y);
+
+        // Compute descriptors
+        var originalDesc = PerceptualFrameDescriptor.Compute(original);
+        var flippedDesc = PerceptualFrameDescriptor.Compute(flipped);
+
+        // They should be very similar
+        var similarity = PerceptualFrameDescriptor.CosineSimilarity(originalDesc, flippedDesc);
+        _output.WriteLine($"Original vs Flipped similarity: {similarity:F4}");
+
+        Assert.True(similarity > 0.95f, $"Flipped image should have >95% similarity, got {similarity:F4}");
+    }
 }
