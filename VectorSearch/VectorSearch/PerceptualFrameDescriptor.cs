@@ -12,12 +12,13 @@ namespace VectorSearch;
 /// - Luminance statistics: 6 dims
 /// - Texture statistics (uniform LBP): 59 dims
 /// - Edge orientation distribution: 16 dims
-/// Total: 113 dimensions
+/// - Color dominance (area-based color occupancy): 76 dims
+/// Total: 189 dimensions
 /// </summary>
 public static class PerceptualFrameDescriptor
 {
     /// <summary>Total dimension of the perceptual frame vector.</summary>
-    public const int Dimension = 32 + 6 + 59 + 16; // = 113
+    public const int Dimension = 32 + 6 + 59 + 16 + 76; // = 189
 
     private static readonly string[] SupportedExtensions = [".jpg", ".jpeg", ".png", ".webp", ".bmp"];
 
@@ -28,6 +29,15 @@ public static class PerceptualFrameDescriptor
     private const int LbpBins = 59;    // Uniform LBP patterns (P=8, R=1)
     private const int OrientationBins = 8;
     private const int MagnitudeBins = 8;
+
+    // Color dominance bin counts
+    // 5x5 a-b grid × 3 lightness bands + 1 neutral bin = 76 dims
+    private const int DominanceAbGridSize = 5;     // 5×5 grid over a*-b* plane
+    private const int DominanceLightnessBands = 3; // Dark, Mid, Bright
+    private const int DominanceColorBins = DominanceAbGridSize * DominanceAbGridSize * DominanceLightnessBands; // 75
+    private const int DominanceNeutralBin = 1;     // Single bin for low-chroma pixels
+    private const int DominanceTotalBins = DominanceColorBins + DominanceNeutralBin; // 76
+    private const float ChromaThreshold = 10f;     // Chroma < 10 = neutral pixel
 
     // LBP uniform pattern lookup table (maps 0-255 to uniform pattern index or non-uniform bin)
     private static readonly int[] UniformLbpLut = BuildUniformLbpLut();
@@ -83,10 +93,104 @@ public static class PerceptualFrameDescriptor
         ComputeEdgeHistograms(gray, result.AsSpan(offset, OrientationBins + MagnitudeBins));
         offset += OrientationBins + MagnitudeBins;
 
+        // Component 5: Color dominance (area-based color occupancy) - 76 dims
+        ComputeColorDominance(lab, result.AsSpan(offset, DominanceTotalBins));
+        offset += DominanceTotalBins;
+
         // Final L2 normalization of the entire vector
         L2Normalize(result);
 
         return result;
+    }
+
+    /// <summary>
+    /// Computes color dominance vector capturing area-based color occupancy.
+    /// 
+    /// Binning logic:
+    /// - Neutral pixels (chroma &lt; 10): accumulated in a single neutral bin.
+    ///   Includes white/black/gray, subtitles, UI overlays, low-saturation regions.
+    /// - Non-neutral pixels: discretized into a 5×5 grid over the a*-b* plane,
+    ///   further partitioned by 3 lightness bands (Dark: L&lt;35, Mid: 35≤L≤70, Bright: L&gt;70).
+    /// 
+    /// Total bins: 5×5×3 color bins + 1 neutral bin = 76 dimensions.
+    /// 
+    /// Each bin stores pixel_count / total_pixel_count, then L2-normalized.
+    /// </summary>
+    private static void ComputeColorDominance(Mat lab, Span<float> output)
+    {
+        output.Clear();
+
+        int rows = lab.Rows;
+        int cols = lab.Cols;
+        int totalPixels = rows * cols;
+
+        if (totalPixels == 0)
+            return;
+
+        // Get Lab pixel data (3 channels: L, a, b)
+        // OpenCV Lab ranges: L=[0,255] (scaled from 0-100), a=[0,255] (centered at 128), b=[0,255] (centered at 128)
+        var indexer = lab.GetGenericIndexer<Vec3b>();
+
+        // Neutral bin is at the end (index 75)
+        int neutralBinIndex = DominanceColorBins;
+
+        for (int y = 0; y < rows; y++)
+        {
+            for (int x = 0; x < cols; x++)
+            {
+                Vec3b pixel = indexer[y, x];
+
+                // OpenCV Lab: L in [0,255], a in [0,255] centered at 128, b in [0,255] centered at 128
+                float L = pixel.Item0;                    // L* scaled to 0-255
+                float a = pixel.Item1 - 128f;             // a* centered: [-128, 127]
+                float b = pixel.Item2 - 128f;             // b* centered: [-128, 127]
+
+                // Compute chroma
+                float chroma = MathF.Sqrt(a * a + b * b);
+
+                if (chroma < ChromaThreshold)
+                {
+                    // Neutral pixel (low chroma): white/black/gray/subtitles/UI overlays
+                    output[neutralBinIndex]++;
+                }
+                else
+                {
+                    // Non-neutral pixel: discretize into 5×5 a-b grid × 3 lightness bands
+
+                    // a* bin: map [-128, 127] to [0, 4]
+                    // Clamp to valid range and compute bin
+                    int aBin = Math.Clamp((int)((a + 128f) / 256f * DominanceAbGridSize), 0, DominanceAbGridSize - 1);
+
+                    // b* bin: map [-128, 127] to [0, 4]
+                    int bBin = Math.Clamp((int)((b + 128f) / 256f * DominanceAbGridSize), 0, DominanceAbGridSize - 1);
+
+                    // Lightness band: L is in [0,255] in OpenCV, scale to [0,100] for thresholds
+                    // L* (0-100) = L (0-255) * 100 / 255
+                    float L100 = L * 100f / 255f;
+                    int lightnessBand;
+                    if (L100 < 35f)
+                        lightnessBand = 0;      // Dark
+                    else if (L100 <= 70f)
+                        lightnessBand = 1;      // Mid
+                    else
+                        lightnessBand = 2;      // Bright
+
+                    // Compute bin index: (aBin * 5 + bBin) * 3 + lightnessBand
+                    int binIndex = (aBin * DominanceAbGridSize + bBin) * DominanceLightnessBands + lightnessBand;
+                    output[binIndex]++;
+                }
+            }
+        }
+
+        // Normalize by total pixel count (area-based occupancy)
+        float invTotal = 1f / totalPixels;
+        for (int i = 0; i < output.Length; i++)
+        {
+            output[i] *= invTotal;
+        }
+
+        // L2 normalize the color dominance component
+        L2Normalize(output);
     }
 
     /// <summary>
