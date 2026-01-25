@@ -752,4 +752,148 @@ public class ClipImageEmbeddingsTests
 
         Assert.True(similarity > 0.95f, $"Flipped image should have >95% similarity, got {similarity:F4}");
     }
+
+    /// <summary>
+    /// Generates composite frame vectors (CLIP + Perceptual) for all frames and saves to JSON.
+    /// Requires both CLIP and perceptual JSON files to exist.
+    /// </summary>
+    [Theory]
+    [InlineData(@$"{Root}\frames")]
+    public void TestCompositeDataset(string imageFolderPath)
+    {
+        var clipJsonPath = Path.TrimEndingDirectorySeparator(imageFolderPath) + $".{ModelName}.json";
+        var perceptualJsonPath = Path.TrimEndingDirectorySeparator(imageFolderPath) + ".perceptual.json";
+        var outputFileName = Path.TrimEndingDirectorySeparator(imageFolderPath) + ".composite.json";
+
+        _output.WriteLine($"CLIP embeddings: {clipJsonPath}");
+        _output.WriteLine($"Perceptual descriptors: {perceptualJsonPath}");
+        _output.WriteLine($"Output: {outputFileName}");
+
+        // Ensure source files exist
+        if (!File.Exists(clipJsonPath))
+        {
+            _output.WriteLine("Generating CLIP embeddings...");
+            ClipImageEmbeddings.GenerateImageEmbeddingsToJson(ModelPath, imageFolderPath, clipJsonPath);
+        }
+
+        if (!File.Exists(perceptualJsonPath))
+        {
+            _output.WriteLine("Generating perceptual descriptors...");
+            PerceptualFrameDescriptor.GenerateDescriptorsToJson(imageFolderPath, perceptualJsonPath);
+        }
+
+        // Generate composite vectors
+        _output.WriteLine("Generating composite vectors...");
+        CompositeFrameVector.GenerateCompositeVectorsToJson(
+            clipJsonPath: clipJsonPath,
+            perceptualJsonPath: perceptualJsonPath,
+            outputJsonPath: outputFileName,
+            clipCrop: "center");
+
+        // Verify the file was created and has content
+        Assert.True(File.Exists(outputFileName), "Output JSON file should exist");
+        var compositeVectors = CompositeFrameVector.LoadFromJson(outputFileName);
+        _output.WriteLine($"Generated {compositeVectors.Count} composite vectors");
+        Assert.NotEmpty(compositeVectors);
+
+        // Verify composite dimension (CLIP 512 + Perceptual 189 = 701)
+        var firstVector = compositeVectors.Values.First();
+        var expectedDim = 512 + PerceptualFrameDescriptor.Dimension;
+        Assert.Equal(expectedDim, firstVector.Length);
+        _output.WriteLine($"Composite vector dimension: {firstVector.Length} (CLIP 512 + Perceptual {PerceptualFrameDescriptor.Dimension})");
+
+        // Verify L2 normalization
+        float norm = 0;
+        foreach (var v in firstVector) norm += v * v;
+        norm = MathF.Sqrt(norm);
+        _output.WriteLine($"First vector L2 norm: {norm:F6}");
+        Assert.True(Math.Abs(norm - 1.0f) < 0.001f, $"Vector should be L2 normalized, got norm {norm}");
+    }
+
+    /// <summary>
+    /// Tests composite frame vector for ranking candidates.
+    /// </summary>
+    [Theory]
+    [InlineData("frames", "query.webp", 20)]
+    [InlineData("frames", "mlsleep.webp", 20)]
+    [InlineData("frames", "flbottle.webp", 20)]
+    [InlineData("frames", "fvsit.webp", 20)]
+    public void TestCompositeFrameVector(
+        string databaseName,
+        string queryImageName,
+        int topK)
+    {
+        var databaseFolderPath = Path.Combine(Root, databaseName);
+        var compositeJsonPath = Path.TrimEndingDirectorySeparator(databaseFolderPath) + ".composite.json";
+        var queryImagePath = Path.Combine(Root, queryImageName);
+
+        // Ensure composite JSON exists
+        if (!File.Exists(compositeJsonPath))
+        {
+            var clipJsonPath = Path.TrimEndingDirectorySeparator(databaseFolderPath) + $".{ModelName}.json";
+            var perceptualJsonPath = Path.TrimEndingDirectorySeparator(databaseFolderPath) + ".perceptual.json";
+
+            _output.WriteLine("Generating composite vectors for database...");
+            CompositeFrameVector.GenerateCompositeVectorsToJson(clipJsonPath, perceptualJsonPath, compositeJsonPath);
+        }
+
+        // Load database composite vectors
+        _output.WriteLine($"Loading composite vectors from: {compositeJsonPath}");
+        var databaseVectors = CompositeFrameVector.LoadFromJson(compositeJsonPath);
+        _output.WriteLine($"Loaded {databaseVectors.Count} composite vectors from database");
+
+        // Compute composite vector for query
+        _output.WriteLine($"Computing composite vector for query: {queryImagePath}");
+
+        // Get CLIP embedding for query (center crop)
+        var queryClipEmbeddings = ClipImageEmbeddings.GetEmbeddingsForFile(
+            modelPath: ModelPath,
+            imagePath: queryImagePath,
+            normalize: true,
+            includeFlip: false);
+        var queryClip = queryClipEmbeddings["center"];
+
+        // Get perceptual descriptor for query
+        var queryPerceptual = PerceptualFrameDescriptor.Compute(queryImagePath);
+
+        // Combine into composite vector
+        var queryComposite = CompositeFrameVector.Combine(queryClip, queryPerceptual);
+        _output.WriteLine($"Query composite dimension: {queryComposite.Length}");
+
+        // Rank database vectors by similarity
+        var results = new List<(string FileName, float Similarity)>();
+        foreach (var (fileName, vector) in databaseVectors)
+        {
+            var similarity = CompositeFrameVector.CosineSimilarity(queryComposite, vector);
+            results.Add((fileName, similarity));
+        }
+
+        // Sort by similarity descending
+        results.Sort((a, b) => b.Similarity.CompareTo(a.Similarity));
+        var topResults = results.Take(topK).ToList();
+
+        _output.WriteLine($"\n=== Top {topK} Composite Matches ===");
+        for (int i = 0; i < topResults.Count; i++)
+        {
+            var (fileName, similarity) = topResults[i];
+            _output.WriteLine($"  {i + 1}. {similarity:F4}  {fileName}");
+        }
+
+        // Generate result visualization
+        var queryDir = Path.GetDirectoryName(queryImagePath)!;
+        var queryName = Path.GetFileNameWithoutExtension(queryImagePath);
+        var resultImagePath = Path.Combine(queryDir, $"{queryName}.composite.{topK}.jpg");
+
+        GenerateConcatenatedResultImage(
+            queryImagePath,
+            databaseFolderPath,
+            topResults,
+            resultImagePath);
+
+        _output.WriteLine($"\nResult image saved to: {resultImagePath}");
+
+        // Basic assertions
+        Assert.NotEmpty(topResults);
+        Assert.True(topResults[0].Similarity >= topResults[^1].Similarity, "Results should be sorted descending");
+    }
 }
