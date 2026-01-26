@@ -26,6 +26,12 @@ public class ClipImageEmbeddingsTests
 
     public const string Root = @"Q:\bin\vidtest";
 
+    /// <summary>Default number of random projections for analysis.</summary>
+    public const int DefaultProjectionCount = 32;
+
+    /// <summary>Random seed for reproducible projections.</summary>
+    public const int ProjectionSeed = 42;
+
     private readonly ITestOutputHelper _output;
 
     public ClipImageEmbeddingsTests(ITestOutputHelper output)
@@ -126,6 +132,137 @@ public class ClipImageEmbeddingsTests
             resultImagePath);
 
         _output.WriteLine($"\nResult image saved to: {resultImagePath}");
+
+        // Projection analysis
+        WriteProjectionAnalysis(
+            databaseEmbeddings,
+            queryEmbeddings["center"],
+            bestFrames,
+            _output);
+    }
+
+    /// <summary>
+    /// Writes a projection analysis table showing how query and top-K frames rank across random projections.
+    /// </summary>
+    private static void WriteProjectionAnalysis(
+        Dictionary<string, float[]> databaseEmbeddings,
+        float[] queryVector,
+        List<(string FileName, float Similarity)> topKFrames,
+        ITestOutputHelper output,
+        int projectionCount = DefaultProjectionCount)
+    {
+        if (databaseEmbeddings.Count == 0 || topKFrames.Count == 0)
+            return;
+
+        var dimension = queryVector.Length;
+        var projections = new RandomOrthogonalProjections(dimension, projectionCount, ProjectionSeed);
+
+        // Project query vector
+        var queryProjections = projections.Project(queryVector);
+
+        // Build list of all unique filenames from database (strip crop suffix)
+        var fileToEmbedding = new Dictionary<string, float[]>();
+        foreach (var (key, embedding) in databaseEmbeddings)
+        {
+            var slashIndex = key.LastIndexOf('/');
+            var fileName = slashIndex >= 0 ? key[..slashIndex] : key;
+            // Use center crop if available, otherwise first encountered
+            if (!fileToEmbedding.ContainsKey(fileName) || key.EndsWith("/center"))
+            {
+                fileToEmbedding[fileName] = embedding;
+            }
+        }
+
+        // Project all database vectors and compute ranks per projection
+        var allFileNames = fileToEmbedding.Keys.ToList();
+        var allProjections = new float[allFileNames.Count][];
+        for (int i = 0; i < allFileNames.Count; i++)
+        {
+            allProjections[i] = projections.Project(fileToEmbedding[allFileNames[i]]);
+        }
+
+        // For each projection, compute sorted indices to get rank
+        // Also compute query's rank in each projection
+        var queryRanks = new int[projectionCount];
+        var frameRanks = new Dictionary<string, int[]>();
+        foreach (var (fileName, _) in topKFrames)
+        {
+            frameRanks[fileName] = new int[projectionCount];
+        }
+
+        for (int p = 0; p < projectionCount; p++)
+        {
+            // Build list of (fileName, projectionValue) and sort
+            var projValues = new List<(string FileName, float Value)>();
+            for (int i = 0; i < allFileNames.Count; i++)
+            {
+                projValues.Add((allFileNames[i], allProjections[i][p]));
+            }
+            // Add query as special entry
+            projValues.Add(("__QUERY__", queryProjections[p]));
+            projValues.Sort((a, b) => a.Value.CompareTo(b.Value));
+
+            // Find ranks
+            for (int sortedIdx = 0; sortedIdx < projValues.Count; sortedIdx++)
+            {
+                var (fileName, _) = projValues[sortedIdx];
+                if (fileName == "__QUERY__")
+                {
+                    queryRanks[p] = sortedIdx;
+                }
+                else if (frameRanks.ContainsKey(fileName))
+                {
+                    frameRanks[fileName][p] = sortedIdx;
+                }
+            }
+        }
+
+        // Build display table
+        output.WriteLine($"\n=== Projection Analysis ({projectionCount} projections) ===");
+        output.WriteLine($"Total frames: {allFileNames.Count}, Query ranks shown as reference");
+
+        // Header row: Rank, Sim, FileName, then P0, P1, ...
+        var table = new DisplayTable(3 + projectionCount);
+        table.SetHeader(0, "Rank");
+        table.SetHeader(1, "Sim");
+        table.SetHeader(2, "FileName");
+        for (int p = 0; p < projectionCount; p++)
+        {
+            table.SetHeader(3 + p, $"P{p}");
+        }
+
+        // Query row (rank 0)
+        for (int i = 0; i < 2; i++)
+        {
+            table.NextRow();
+            table.Set(0, "Q");
+            table.Set(1, "1.000");
+            table.Set(2, i == 0 ? "(query)" : "(qpvalues)");
+            for (int p = 0; p < projectionCount; p++)
+            {
+                table.Set(3 + p, i == 0 ? queryRanks[p] : queryProjections[p]);
+            }
+        }
+
+        // Top-K frame rows with delta from query
+        int rank = 1;
+        foreach (var (fileName, similarity) in topKFrames)
+        {
+            if (!frameRanks.TryGetValue(fileName, out var ranks))
+                continue;
+
+            table.NextRow();
+            table.Set(0, rank++);
+            table.Set(1, $"{similarity:F3}");
+            table.Set(2, fileName.Length > 15 ? fileName[..12] + "..." : fileName);
+            for (int p = 0; p < projectionCount; p++)
+            {
+                int delta = ranks[p] - queryRanks[p];
+                table.Set(3 + p, delta >= 0 ? $"+{delta}" : delta.ToString());
+            }
+        }
+
+        output.WriteLine(table.ToString());
     }
 
     /// <summary>
@@ -355,6 +492,13 @@ public class ClipImageEmbeddingsTests
             resultImagePath);
 
         _output.WriteLine($"\nResult image saved to: {resultImagePath}");
+
+        // Projection analysis
+        WriteProjectionAnalysis(
+            databaseEmbeddings,
+            queryEmbeddings["center"],
+            bestFrames,
+            _output);
     }
 
     /// <summary>
@@ -719,6 +863,14 @@ public class ClipImageEmbeddingsTests
 
         _output.WriteLine($"\nResult image saved to: {resultImagePath}");
 
+        // Projection analysis (convert to dictionary format for helper)
+        var dbAsDict = databaseDescriptors.ToDictionary(kv => kv.Key, kv => kv.Value);
+        WriteProjectionAnalysis(
+            dbAsDict,
+            queryDescriptor,
+            topResults,
+            _output);
+
         // Basic assertions
         Assert.NotEmpty(topResults);
         Assert.True(topResults[0].Similarity >= topResults[^1].Similarity, "Results should be sorted descending");
@@ -891,6 +1043,14 @@ public class ClipImageEmbeddingsTests
             resultImagePath);
 
         _output.WriteLine($"\nResult image saved to: {resultImagePath}");
+
+        // Projection analysis
+        var dbAsDict = databaseVectors.ToDictionary(kv => kv.Key, kv => kv.Value);
+        WriteProjectionAnalysis(
+            dbAsDict,
+            queryComposite,
+            topResults,
+            _output);
 
         // Basic assertions
         Assert.NotEmpty(topResults);
