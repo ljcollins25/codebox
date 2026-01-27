@@ -1,0 +1,17 @@
+name = "copilot-token"
+main = "src/index.ts"
+compatibility_date = "2024-01-29"
+
+# KV namespace for storing sessions (permanent API keys)
+# Create with: wrangler kv:namespace create SESSIONS
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "YOUR_SESSIONS_KV_ID"
+
+# KV namespace for device flow state (temporary, during auth)
+# Create with: wrangler kv:namespace create DEVICE_FLOWS
+[[kv_namespaces]]
+binding = "DEVICE_FLOWS"
+id = "YOUR_DEVICE_FLOWS_KV_ID"
+
+# No secrets needed! Uses GitHub's device flow with VS Code's public client ID.

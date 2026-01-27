@@ -1,0 +1,10 @@
+name = "copilot-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-01-29"
+
+# Uncomment to add environment variables
+# [vars]
+# ALLOWED_ORIGINS = "https://yourdomain.com"
+
+# For secrets (Copilot token), use: wrangler secret put COPILOT_TOKEN
+# But note: tokens expire in ~30 min, so client-provided tokens are preferred

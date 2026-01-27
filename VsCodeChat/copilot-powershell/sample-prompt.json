@@ -1,0 +1,13 @@
+{
+    "model": "gpt-4o",
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are a helpful coding assistant. Provide clear, concise explanations with code examples when appropriate. Use markdown formatting."
+        },
+        {
+            "role": "user",
+            "content": "Explain the difference between `async/await` and Promises in JavaScript. Include a practical example showing how to convert a Promise-based function to use async/await."
+        }
+    ]
+}
