@@ -1,0 +1,39 @@
+{
+    "version": "1.1",
+    "type": "query",
+    "conversation_id": "c-00000000000000000000000000000000000049w9s9lnmw5n6wfjqma2gehbemp0",
+    "user_id": "u-00000000000000000000000000000000000035jii8tcjo2wjhp2wnjplixbull4",
+    "message_id": "r-4uktzsgxy1l6xyh40hnof7euxhmov6drxiz8skinam2r8pwlffdgo-b698a6d513400759c3e47b07e7908267",
+    "query": [
+        {
+            "role": "user",
+            "sender_id": "u-00000000000000000000000000000000000035jii8tcjo2wjhp2wnjplixbull4",
+            "sender": {
+                "id": "u-00000000000000000000000000000000000035jii8tcjo2wjhp2wnjplixbull4",
+                "name": null
+            },
+            "content": "try me",
+            "parameters": {},
+            "content_type": "text/markdown",
+            "timestamp": 1769407730690371,
+            "message_id": "m-000000000000000000000000000000000000544p55sb6vid1lo3fp31iei7igbj",
+            "feedback": [],
+            "attachments": [],
+            "metadata": null,
+            "referenced_message": null,
+            "reactions": []
+        }
+    ],
+    "skip_system_prompt": false,
+    "logit_bias": {},
+    "language_code": "en",
+    "metadata": "",
+    "request_token": "r-4uktzsgxy1l6xyh40hnof7euxhmov6drxiz8skinam2r8pwlffdgo-b698a6d513400759c3e47b07e7908267",
+    "users": [
+        {
+            "id": "u-00000000000000000000000000000000000035jii8tcjo2wjhp2wnjplixbull4",
+            "name": null
+        }
+    ],
+    "bot_query_id": "b-00000000000000000000000000000000000046mm7ypffsnvfl303296x41bpfxv"
+}

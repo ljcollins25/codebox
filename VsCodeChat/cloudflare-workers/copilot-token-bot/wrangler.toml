@@ -15,3 +15,8 @@ id = "91ee783b8ba344628811a5f38fff1c2f"
 
 # Authorization secret - set via: wrangler secret put AUTH_SECRET
 # For local dev, create a .dev.vars file with: AUTH_SECRET=111111
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true

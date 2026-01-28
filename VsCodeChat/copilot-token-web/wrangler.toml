@@ -15,3 +15,8 @@ binding = "DEVICE_FLOWS"
 id = "YOUR_DEVICE_FLOWS_KV_ID"
 
 # No secrets needed! Uses GitHub's device flow with VS Code's public client ID.
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
