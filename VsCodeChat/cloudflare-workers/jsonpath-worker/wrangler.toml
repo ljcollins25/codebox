@@ -1,0 +1,6 @@
+name = "jsonpath-worker"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Uncomment to enable Node.js compatibility if needed
+# compatibility_flags = ["nodejs_compat"]

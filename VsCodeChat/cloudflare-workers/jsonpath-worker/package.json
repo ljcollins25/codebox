@@ -1,0 +1,14 @@
+{
+  "name": "jsonpath-worker",
+  "version": "1.0.0",
+  "description": "JSON extraction service - evaluates dot-path expressions from query parameters",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "curl -X POST 'http://localhost:8787/?j_title=store.book.0.title&j_price=store.book.0.price' -H 'Content-Type: application/json' -d '{\"store\":{\"book\":[{\"title\":\"1984\",\"price\":10}]}}'"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

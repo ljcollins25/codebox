@@ -335,3 +335,13 @@ ASALocalRun/
 
 # MFractors (Xamarin productivity tool) working folder 
 .mfractor/
+
+# Cloudflare Workers / Wrangler
+.wrangler/
+.dev.vars
+dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local

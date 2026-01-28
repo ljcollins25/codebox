@@ -1,0 +1,51 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "contentVersion": "1.0.0.0",
+        "triggers": {
+            "HTTP_Request": {
+                "type": "Request",
+                "kind": "Http",
+                "inputs": {
+                    "method": "POST",
+                    "schema": {}
+                }
+            }
+        },
+        "actions": {
+            "Execute_JavaScript_Code": {
+                "type": "JavaScriptCode",
+                "runAfter": {},
+                "inputs": {
+                    "code": "// JSON Extraction Service\n// Evaluates dot-path expressions from query parameters against the request body\n\nconst PREFIX = 'j_'; // Configurable prefix for query parameters\n\n// Get inputs from workflow\nconst body = workflowContext.trigger.outputs.body;\nconst queries = workflowContext.trigger.outputs.queries || {};\n\n// Helper: Evaluate a dot-path expression against data\nfunction evaluatePath(data, path) {\n    if (!path || typeof path !== 'string') return null;\n    \n    const parts = path.split('.');\n    let current = data;\n    \n    for (const part of parts) {\n        if (current === null || current === undefined) return null;\n        \n        // Handle array index (numeric)\n        if (/^\\d+$/.test(part)) {\n            const index = parseInt(part, 10);\n            if (!Array.isArray(current)) return null;\n            current = current[index];\n        } else {\n            // Handle object property\n            if (typeof current !== 'object') return null;\n            current = current[part];\n        }\n    }\n    \n    return current !== undefined ? current : null;\n}\n\n// Parse JSON body\nlet data;\ntry {\n    data = typeof body === 'string' ? JSON.parse(body) : body;\n} catch (e) {\n    return {\n        statusCode: 400,\n        body: { error: 'Invalid JSON in request body' }\n    };\n}\n\n// Build result object from prefixed query parameters\nconst result = {};\n\nfor (const [key, value] of Object.entries(queries)) {\n    if (key.startsWith(PREFIX)) {\n        const outputKey = key.slice(PREFIX.length);\n        if (outputKey) {\n            try {\n                result[outputKey] = evaluatePath(data, value);\n            } catch (e) {\n                result[outputKey] = null;\n            }\n        }\n    }\n}\n\nreturn {\n    statusCode: 200,\n    body: result\n};"
+                }
+            },
+            "Response_Success": {
+                "type": "Response",
+                "runAfter": {
+                    "Execute_JavaScript_Code": ["Succeeded"]
+                },
+                "inputs": {
+                    "statusCode": "@outputs('Execute_JavaScript_Code')?['body']?['statusCode']",
+                    "headers": {
+                        "Content-Type": "application/json"
+                    },
+                    "body": "@outputs('Execute_JavaScript_Code')?['body']?['body']"
+                }
+            }
+        },
+        "outputs": {},
+        "parameters": {
+            "$connections": {
+                "type": "Object",
+                "defaultValue": {}
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "type": "Object",
+            "value": {}
+        }
+    }
+}

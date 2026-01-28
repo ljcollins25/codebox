@@ -167,21 +167,48 @@ class OpenAIAPIBot:
         if model == "custom":
             model = get_param("custom_model", "gpt-4o")
 
-        proxy_ep = get_proxy_endpoint(api_key)
-        if proxy_ep and "api.githubcopilot.com" in api_url:
-            api_url = api_url.replace("api.githubcopilot.com", proxy_ep)
-
-        normalized_url = api_url.rstrip("/")
-        is_chat_endpoint = normalized_url.endswith("/chat/completions") or normalized_url.endswith("/v1/chat/completions")
+        # Determine model type
         is_codex_model = "codex" in model
+        is_internal_model = model.startswith("copilot-")
 
-        if is_codex_model and is_chat_endpoint:
-            if normalized_url.endswith("/v1/chat/completions"):
-                base_url = normalized_url[: -len("/v1/chat/completions")]
+        # Determine base host based on model type
+        proxy_ep = get_proxy_endpoint(api_key)
+        
+        if is_internal_model:
+            # Internal copilot- models need the enterprise proxy endpoint
+            if proxy_ep:
+                base_host = f"https://{proxy_ep}" if not proxy_ep.startswith("http") else proxy_ep
             else:
-                base_url = normalized_url[: -len("/chat/completions")]
-            api_url = f"{base_url}/completions"
+                base_host = "https://copilot-proxy.githubusercontent.com"
+        else:
+            # Standard models (gpt-4o, claude-sonnet-4, etc.) use the main API
+            # Do NOT use proxy for standard models - they must go to api.githubcopilot.com
+            base_host = None  # Use api_url as-is for standard models
+
+        # Determine endpoint based on model type
+        if is_codex_model:
+            # Codex models use /responses endpoint
+            if base_host:
+                api_url = f"{base_host}/responses"
+            else:
+                # Extract base from api_url and append /responses
+                normalized_url = api_url.rstrip("/")
+                if normalized_url.endswith("/chat/completions"):
+                    base_url = normalized_url[: -len("/chat/completions")]
+                elif normalized_url.endswith("/v1/chat/completions"):
+                    base_url = normalized_url[: -len("/v1/chat/completions")]
+                else:
+                    base_url = normalized_url
+                api_url = f"{base_url}/responses"
+            is_responses_endpoint = True
             is_chat_endpoint = False
+        else:
+            # Non-codex models use /chat/completions
+            if base_host:
+                api_url = f"{base_host}/chat/completions"
+            is_responses_endpoint = False
+            normalized_url = api_url.rstrip("/")
+            is_chat_endpoint = normalized_url.endswith("/chat/completions") or normalized_url.endswith("/v1/chat/completions")
 
         if not api_key:
             raise poe.BotError("Please provide an 'api_key' parameter to use this bot.")
@@ -215,13 +242,21 @@ class OpenAIAPIBot:
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": "GitHubCopilotChat/1.0.0",
-            "Editor-Version": "vscode/1.85.0",
-            "Editor-Plugin-Version": "copilot-chat/1.0.0",
+            "Editor-Version": "vscode/1.104.1",
+            "Editor-Plugin-Version": "copilot-chat/0.36.0",
             "Openai-Organization": "github-copilot",
             "Copilot-Integration-Id": "vscode-chat",
         }
 
-        if is_chat_endpoint:
+        if is_responses_endpoint:
+            # /responses endpoint uses {model, input, stream} format
+            input_text = messages_to_prompt(messages)
+            payload = {
+                "model": model,
+                "input": input_text,
+                "stream": True,
+            }
+        elif is_chat_endpoint:
             payload = {
                 "model": model,
                 "messages": messages,
@@ -232,6 +267,7 @@ class OpenAIAPIBot:
                 "presence_penalty": float(presence_penalty),
             }
         else:
+            # Legacy /completions endpoint (probably unused now)
             prompt = messages_to_prompt(messages)
             payload = {
                 "model": model,
@@ -256,22 +292,37 @@ class OpenAIAPIBot:
                             error_text = response.read().decode()
                             raise poe.BotError(f"API error ({response.status_code}): {error_text}")
 
+                        current_event = ""
                         for line in response.iter_lines():
+                            # Track event type for /responses endpoint
+                            if line.startswith("event: "):
+                                current_event = line[7:]
+                                continue
+                            
                             if line.startswith("data: "):
                                 data = line[6:]
                                 if data == "[DONE]":
                                     break
                                 try:
                                     chunk = json.loads(data)
-                                    choices = chunk.get("choices", [])
-                                    if choices:
-                                        if is_chat_endpoint:
-                                            delta = choices[0].get("delta", {})
-                                            content = delta.get("content", "")
-                                        else:
-                                            content = choices[0].get("text", "")
-                                        if content:
-                                            output_msg.write(content)
+                                    
+                                    if is_responses_endpoint:
+                                        # /responses endpoint: look for response.output_text.delta events
+                                        if current_event == "response.output_text.delta" and "delta" in chunk:
+                                            content = chunk.get("delta", "")
+                                            if content:
+                                                output_msg.write(content)
+                                    else:
+                                        # /chat/completions endpoint
+                                        choices = chunk.get("choices", [])
+                                        if choices:
+                                            if is_chat_endpoint:
+                                                delta = choices[0].get("delta", {})
+                                                content = delta.get("content", "")
+                                            else:
+                                                content = choices[0].get("text", "")
+                                            if content:
+                                                output_msg.write(content)
                                 except json.JSONDecodeError:
                                     continue
             except httpx.RequestError as e:
