@@ -35,7 +35,7 @@
     .\Invoke-CopilotChat.ps1 -TokenOnly
 
 .EXAMPLE
-    .\Invoke-CopilotChat.ps1 -PromptFile .\sample-prompt.json -Model "claude-3.5-sonnet"
+    .\Invoke-CopilotChat.ps1 -PromptFile .\sample-prompt.json -Model "claude-sonnet-4"
 
 .EXAMPLE
     .\Invoke-CopilotChat.ps1 -Prompt "Hello!" -Stream
