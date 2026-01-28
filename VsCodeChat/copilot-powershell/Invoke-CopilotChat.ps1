@@ -50,7 +50,7 @@ param(
     [string]$Prompt,
 
     [Parameter(Mandatory = $false)]
-    [string]$Model = "gpt-4o",
+    [string]$Model = "copilot-nes-oct",
 
     [Parameter(Mandatory = $false)]
     [string]$TokenFile = (Join-Path $env:USERPROFILE ".copilot-token.json"),
@@ -112,7 +112,9 @@ function Main {
     $githubToken = Get-GitHubToken -TokenFile $TokenFile
     
     # Get Copilot token
-    $copilotToken = Get-CopilotToken -GitHubToken $githubToken
+    $copilotTokenResponse = Get-CopilotToken -GitHubToken $githubToken
+    $copilotToken = $copilotTokenResponse.token
+    $proxyEndpoint = $copilotTokenResponse.proxyEndpoint
     
     # If TokenOnly, just print the token and exit
     if ($TokenOnly) {
@@ -123,7 +125,7 @@ function Main {
     }
     
     # Call API
-    $result = Invoke-ChatCompletion -CopilotToken $copilotToken -Messages $messages -Model $Model -Stream $Stream
+    $result = Invoke-ChatCompletion -CopilotToken $copilotToken -Messages $messages -Model $Model -Stream $Stream -ProxyEndpoint $proxyEndpoint
     
     Write-Success "Done!"
     
@@ -307,7 +309,20 @@ function Get-CopilotToken {
     try {
         $response = Invoke-RestMethod -Uri "https://api.github.com/copilot_internal/v2/token" -Method Get -Headers $headers
         Write-Success "Got Copilot token (expires in ~30 minutes)"
-        return $response.token
+
+        $proxyEndpoint = $null
+        if ($response.endpoints -and $response.endpoints.proxy) {
+            $proxyEndpoint = $response.endpoints.proxy
+        }
+        elseif ($response.token -match 'proxy-ep=([^;]+)') {
+            $proxyEndpoint = "https://$($Matches[1])"
+        }
+
+        return [pscustomobject]@{
+            token         = $response.token
+            proxyEndpoint = $proxyEndpoint
+            raw           = $response
+        }
     }
     catch {
         $statusCode = $_.Exception.Response.StatusCode.value__
@@ -332,21 +347,59 @@ function Invoke-ChatCompletion {
         [string]$CopilotToken,
         [array]$Messages,
         [string]$Model,
-        [bool]$Stream
+        [bool]$Stream,
+        [string]$ProxyEndpoint
     )
     
     Write-Status "Calling Copilot chat completions API..."
     Write-Status "Model: $Model" -Color DarkGray
     
-    $body = @{
-        model    = $Model
-        messages = $Messages
-        stream   = $Stream
-    } | ConvertTo-Json -Depth 10
+    function Convert-MessagesToPrompt {
+        param([array]$MessageList)
+        $lines = @()
+        foreach ($msg in $MessageList) {
+            $role = $msg.role
+            $content = $msg.content
+            $lines += "${role}: ${content}"
+        }
+        $lines += "assistant:"
+        return ($lines -join "`n")
+    }
+
+    $isCodexModel = $Model -match "codex"
+
+    if (-not $ProxyEndpoint -and $CopilotToken -match 'proxy-ep=([^;]+)') {
+        $ProxyEndpoint = "https://$($Matches[1])"
+    }
+
+    $baseHost = if ($ProxyEndpoint) {
+        if ($ProxyEndpoint -match '^https?://') { $ProxyEndpoint } else { "https://$ProxyEndpoint" }
+    }
+    else {
+        "https://copilot-proxy.githubusercontent.com"
+    }
+
+    $endpoint = if ($isCodexModel) { "$baseHost/v1/engines/$Model/completions" } else { "$baseHost/chat/completions" }
+
+    # Copilot API requires streaming - "stream": false is not supported
+    if ($isCodexModel) {
+        $prompt = Convert-MessagesToPrompt -MessageList $Messages
+        $body = @{
+            prompt = $prompt
+            stream = $true
+        } | ConvertTo-Json -Depth 10
+    }
+    else {
+        $body = @{
+            model    = $Model
+            messages = $Messages
+            stream   = $true
+        } | ConvertTo-Json -Depth 10
+    }
     
     try {
         # Use HttpWebRequest to properly handle Authorization header with semicolons
-        $request = [System.Net.HttpWebRequest]::Create("https://api.githubcopilot.com/chat/completions")
+        $request = [System.Net.HttpWebRequest]::Create($endpoint)
         $request.Method = "POST"
         $request.ContentType = "application/json"
         $request.Accept = "application/json"
@@ -369,62 +422,55 @@ function Invoke-ChatCompletion {
         $responseStream = $response.GetResponseStream()
         $reader = New-Object System.IO.StreamReader($responseStream)
         
-        if ($Stream) {
-            # Streaming response
-            Write-Host ""
-            Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-            
-            $fullContent = ""
-            while (-not $reader.EndOfStream) {
-                $line = $reader.ReadLine()
-                if ($line.StartsWith("data: ")) {
-                    $data = $line.Substring(6)
-                    if ($data -eq "[DONE]") {
-                        break
-                    }
-                    try {
-                        $chunk = $data | ConvertFrom-Json
-                        if ($chunk.choices -and $chunk.choices[0].delta.content) {
+        # Copilot API always requires streaming - process SSE response
+        Write-Host ""
+        Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+        
+        $fullContent = ""
+        while (-not $reader.EndOfStream) {
+            $line = $reader.ReadLine()
+            if ($line.StartsWith("data: ")) {
+                $data = $line.Substring(6)
+                if ($data -eq "[DONE]") {
+                    break
+                }
+                try {
+                    $chunk = $data | ConvertFrom-Json
+                    if ($chunk.choices -and $chunk.choices.Count -gt 0) {
+                        if ($isCodexModel) {
+                            $content = $chunk.choices[0].text
+                        }
+                        else {
                             $content = $chunk.choices[0].delta.content
-                            Write-Host $content -NoNewline
+                        }
+                        if ($content) {
+                            if ($Stream) {
+                                Write-Host $content -NoNewline
+                            }
                             $fullContent += $content
                         }
                     }
-                    catch {
-                        # Ignore JSON parse errors for incomplete chunks
-                    }
+                }
+                catch {
+                    # Ignore JSON parse errors for incomplete chunks
                 }
             }
-            
-            $reader.Close()
-            $responseStream.Close()
-            $response.Close()
-            
-            Write-Host ""
-            Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-            Write-Host ""
-            
-            return $fullContent
         }
-        else {
-            # Non-streaming response
-            $responseBody = $reader.ReadToEnd()
-            $reader.Close()
-            $responseStream.Close()
-            $response.Close()
-            
-            $result = $responseBody | ConvertFrom-Json
-            
-            Write-Host ""
-            Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-            Write-Host $result.choices[0].message.content
-            Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-            Write-Host ""
-            
-            Write-Status "Tokens: $($result.usage.prompt_tokens) prompt + $($result.usage.completion_tokens) completion = $($result.usage.total_tokens) total" -Color DarkGray
-            
-            return $result.choices[0].message.content
+        
+        $reader.Close()
+        $responseStream.Close()
+        $response.Close()
+        
+        # Print output if not streaming live
+        if (-not $Stream -and $fullContent) {
+            Write-Host $fullContent
         }
+        
+        Write-Host ""
+        Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+        Write-Host ""
+        
+        return $fullContent
     }
     catch [System.Net.WebException] {
         $errorResponse = $_.Exception.Response

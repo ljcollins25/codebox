@@ -138,17 +138,22 @@ _proxyBaseUrl = "https://copilot-proxy.githubusercontent.com"
 // e.g., https://api.your-enterprise.github.com
 ```
 
-### 2.2 Chat Completion Endpoints
+### 2.2 Chat + Completions Endpoints
 
 | Endpoint | URL | Purpose |
 |----------|-----|---------|
-| Chat Completions | `{capiBaseUrl}/chat/completions` | Main chat API (OpenAI-compatible) |
+| Chat Completions | `{proxyBaseUrl}/chat/completions` | Main chat API (OpenAI-compatible, streaming) |
+| Completions (ghost text) | `{proxyBaseUrl}/v1/engines/{engine}/completions` | Non-chat completions (code completion) |
 | Responses | `{capiBaseUrl}/responses` | Response handling |
 | Messages | `{capiBaseUrl}/v1/messages` | Anthropic-style messages API |
 | Embeddings | `{capiBaseUrl}/embeddings` | Code embeddings |
 | Models | `{capiBaseUrl}/models` | Available models list |
 | Auto Model | `{capiBaseUrl}/models/session` | Model selection |
 | MCP Server | `{capiBaseUrl}/mcp/` | Model Context Protocol |
+
+**Notes:**
+- The extension routes chat and completions through the **proxy endpoint** (from the Copilot token’s `endpoints.proxy`, default `https://copilot-proxy.githubusercontent.com`).
+- Chat is hardcoded to `/chat/completions`, while classic completions use `/v1/engines/{engine}/completions`.
 
 ### 2.3 Additional Endpoints
 

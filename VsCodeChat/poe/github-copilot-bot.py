@@ -11,7 +11,6 @@ from fastapi_poe.types import (
     TextField,
     DropDown,
     ValueNamePair,
-    Condition,
 )
 
 # Configure bot settings with parameter controls
@@ -62,20 +61,11 @@ poe.update_settings(SettingsResponse(
                             ValueNamePair(name="Custom...", value="custom"),
                         ],
                     ),
-                    Condition(
-                        condition={
-                            "comparator": "equals",
-                            "left": {"parameter_name": "model"},
-                            "right": {"literal": "custom"},
-                        },
-                        controls=[
-                            TextField(
-                                label="Custom Model",
-                                parameter_name="custom_model",
-                                description="Enter custom model name",
-                                placeholder="gpt-4-turbo",
-                            ),
-                        ],
+                    TextField(
+                        label="Custom Model",
+                        parameter_name="custom_model",
+                        description="Used when 'Custom...' is selected above",
+                        placeholder="gpt-4-turbo",
                     ),
                 ],
             ),
@@ -146,6 +136,28 @@ class OpenAIAPIBot:
                 return value.strip()
             return value
 
+        def messages_to_prompt(message_list):
+            lines = []
+            for msg in message_list:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                lines.append(f"{role}: {content}")
+            lines.append("assistant:")
+            return "\n".join(lines)
+
+        def get_proxy_endpoint(token_value):
+            if not token_value:
+                return None
+            marker = "proxy-ep="
+            start = token_value.find(marker)
+            if start == -1:
+                return None
+            start += len(marker)
+            end = token_value.find(";", start)
+            if end == -1:
+                end = len(token_value)
+            return token_value[start:end]
+
         # Connection parameters
         api_url = get_param("api_url", "https://api.githubcopilot.com/chat/completions")
         api_key = get_param("api_key")
@@ -154,6 +166,22 @@ class OpenAIAPIBot:
         # Use custom model if selected
         if model == "custom":
             model = get_param("custom_model", "gpt-4o")
+
+        proxy_ep = get_proxy_endpoint(api_key)
+        if proxy_ep and "api.githubcopilot.com" in api_url:
+            api_url = api_url.replace("api.githubcopilot.com", proxy_ep)
+
+        normalized_url = api_url.rstrip("/")
+        is_chat_endpoint = normalized_url.endswith("/chat/completions") or normalized_url.endswith("/v1/chat/completions")
+        is_codex_model = "codex" in model
+
+        if is_codex_model and is_chat_endpoint:
+            if normalized_url.endswith("/v1/chat/completions"):
+                base_url = normalized_url[: -len("/v1/chat/completions")]
+            else:
+                base_url = normalized_url[: -len("/chat/completions")]
+            api_url = f"{base_url}/completions"
+            is_chat_endpoint = False
 
         if not api_key:
             raise poe.BotError("Please provide an 'api_key' parameter to use this bot.")
@@ -193,15 +221,27 @@ class OpenAIAPIBot:
             "Copilot-Integration-Id": "vscode-chat",
         }
 
-        payload = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-            "temperature": float(temperature),
-            "top_p": float(top_p),
-            "frequency_penalty": float(frequency_penalty),
-            "presence_penalty": float(presence_penalty),
-        }
+        if is_chat_endpoint:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "temperature": float(temperature),
+                "top_p": float(top_p),
+                "frequency_penalty": float(frequency_penalty),
+                "presence_penalty": float(presence_penalty),
+            }
+        else:
+            prompt = messages_to_prompt(messages)
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": True,
+                "temperature": float(temperature),
+                "top_p": float(top_p),
+                "frequency_penalty": float(frequency_penalty),
+                "presence_penalty": float(presence_penalty),
+            }
 
         # Add max_tokens only if non-zero (0 means no limit)
         if max_tokens and int(max_tokens) > 0:
@@ -225,8 +265,11 @@ class OpenAIAPIBot:
                                     chunk = json.loads(data)
                                     choices = chunk.get("choices", [])
                                     if choices:
-                                        delta = choices[0].get("delta", {})
-                                        content = delta.get("content", "")
+                                        if is_chat_endpoint:
+                                            delta = choices[0].get("delta", {})
+                                            content = delta.get("content", "")
+                                        else:
+                                            content = choices[0].get("text", "")
                                         if content:
                                             output_msg.write(content)
                                 except json.JSONDecodeError:
