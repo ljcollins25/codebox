@@ -13,8 +13,8 @@ const GITHUB_SCOPES = "read:user";
 const GITHUB_TOKEN_LIFETIME_DAYS = 30;
 const COPILOT_TOKEN_LIFETIME_MINUTES = 25; // Copilot tokens expire in ~30 min, refresh early
 
-// Authorization secret (configure via environment variable)
-const DEFAULT_AUTH_SECRET = "111111";
+// Authorization secret (configure via wrangler secret put AUTH_SECRET)
+// No default - requires AUTH_SECRET to be set
 
 /**
  * Send a Poe SSE text event
@@ -24,10 +24,10 @@ function sseText(text) {
 }
 
 /**
- * Send a Poe SSE JSON event (for returning structured data)
+ * Send a Poe SSE data event (for storing metadata)
  */
-function sseJson(data) {
-    return `event: json\ndata: ${JSON.stringify({ text: JSON.stringify(data, null, 2) })}\n\n`;
+function sseData(metadata) {
+    return `event: data\ndata: ${JSON.stringify({ metadata: JSON.stringify(metadata) })}\n\n`;
 }
 
 /**
@@ -169,8 +169,11 @@ export default {
             return new Response("Not Found", { status: 404 });
         }
         
-        // Check authorization
-        const authSecret = env.AUTH_SECRET || DEFAULT_AUTH_SECRET;
+        // Check authorization - AUTH_SECRET must be configured
+        const authSecret = env.AUTH_SECRET;
+        if (!authSecret) {
+            return new Response("AUTH_SECRET not configured", { status: 500 });
+        }
         const authHeader = request.headers.get("Authorization");
         if (authHeader !== `Bearer ${authSecret}` && authHeader !== authSecret) {
             return new Response("Unauthorized", { status: 401 });
@@ -186,7 +189,6 @@ export default {
         
         const conversationId = poeBody.conversation_id || null;
         const userId = poeBody.user_id || null;
-        const queryText = poeBody.query?.[0]?.content?.toLowerCase() || "";
         
         // KV namespace binding
         const kv = env.TOKEN_CACHE;
@@ -195,86 +197,80 @@ export default {
         }
         
         try {
+            // Show request context first
+            const contextLines = [
+                sseText("📋 **Request Info**\n\n"),
+                sseText(`• Conversation ID: \`${conversationId || 'N/A'}\`\n`),
+                sseText(`• User ID: \`${userId || 'N/A'}\`\n\n`),
+            ];
+            
             // Check for pending device flow
             const pendingFlow = await getFromKV(kv, "device_flow_pending");
-            
-            // If user says "check" or "poll", try to complete pending device flow
-            if (pendingFlow && (queryText.includes("check") || queryText.includes("poll") || queryText.includes("done"))) {
-                const pollResult = await pollDeviceFlow(pendingFlow.device_code);
-                
-                if (pollResult.access_token) {
-                    // Success! Store the GitHub token
-                    const expiresAt = new Date();
-                    expiresAt.setDate(expiresAt.getDate() + GITHUB_TOKEN_LIFETIME_DAYS);
-                    
-                    await putToKV(kv, "github_token", {
-                        token: pollResult.access_token,
-                        expires_at: expiresAt.toISOString(),
-                        lifetime_days: GITHUB_TOKEN_LIFETIME_DAYS,
-                    }, GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60);
-                    
-                    // Clear pending flow
-                    await kv.delete("device_flow_pending");
-                    
-                    return poeResponse([
-                        sseText("✅ GitHub authorization successful! Token cached.\n\n"),
-                        sseText("Send any message to get your Copilot token."),
-                        sseDone()
-                    ]);
-                } else if (pollResult.error === "authorization_pending") {
-                    return poeResponse([
-                        sseText("⏳ Still waiting for authorization...\n\n"),
-                        sseText(`Please visit: ${pendingFlow.verification_uri}\n`),
-                        sseText(`Enter code: **${pendingFlow.user_code}**\n\n`),
-                        sseText("Say 'check' when done."),
-                        sseDone()
-                    ]);
-                } else if (pollResult.error === "expired_token") {
-                    await kv.delete("device_flow_pending");
-                    return poeResponse([
-                        sseText("❌ Device code expired. Starting new flow...\n\n"),
-                        sseText("Send any message to start fresh."),
-                        sseDone()
-                    ]);
-                } else {
-                    return poeError(`Authorization error: ${pollResult.error}`);
-                }
-            }
             
             // Check for cached GitHub token
             let githubData = await getFromKV(kv, "github_token");
             
-            // If no GitHub token, start device flow
+            // If no GitHub token, handle device flow
             if (!githubData) {
-                // Check if we already have a pending flow
+                // Check if we already have a pending flow - try to poll it
                 if (pendingFlow) {
+                    const pollResult = await pollDeviceFlow(pendingFlow.device_code);
+                    
+                    if (pollResult.access_token) {
+                        // Success! Store the GitHub token
+                        const expiresAt = new Date();
+                        expiresAt.setDate(expiresAt.getDate() + GITHUB_TOKEN_LIFETIME_DAYS);
+                        
+                        githubData = {
+                            token: pollResult.access_token,
+                            expires_at: expiresAt.toISOString(),
+                            lifetime_days: GITHUB_TOKEN_LIFETIME_DAYS,
+                        };
+                        
+                        await putToKV(kv, "github_token", githubData, GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60);
+                        
+                        // Clear pending flow
+                        await kv.delete("device_flow_pending");
+                        
+                        // Continue to get Copilot token below
+                    } else if (pollResult.error === "authorization_pending") {
+                        return poeResponse([
+                            ...contextLines,
+                            sseText("🔐 **Device Flow In Progress**\n\n"),
+                            sseText(`Visit: ${pendingFlow.verification_uri}\n`),
+                            sseText(`Enter code: **${pendingFlow.user_code}**\n\n`),
+                            sseText("Send another message after authorizing."),
+                            sseDone()
+                        ]);
+                    } else if (pollResult.error === "expired_token") {
+                        await kv.delete("device_flow_pending");
+                        // Fall through to start new device flow
+                    } else if (pollResult.error) {
+                        return poeError(`Authorization error: ${pollResult.error}`);
+                    }
+                }
+                
+                // Start new device flow if still no GitHub token
+                if (!githubData) {
+                    const deviceFlow = await startDeviceFlow();
+                    
+                    // Cache the pending flow (expires when device code expires)
+                    await putToKV(kv, "device_flow_pending", {
+                        device_code: deviceFlow.device_code,
+                        user_code: deviceFlow.user_code,
+                        verification_uri: deviceFlow.verification_uri,
+                        expires_at: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
+                    }, deviceFlow.expires_in);
+                    
                     return poeResponse([
-                        sseText("🔐 **Device Flow In Progress**\n\n"),
-                        sseText(`Visit: ${pendingFlow.verification_uri}\n`),
-                        sseText(`Enter code: **${pendingFlow.user_code}**\n\n`),
-                        sseText("Say **'check'** when you've authorized."),
+                        ...contextLines,
+                        sseText("🔐 **GitHub Authorization Required**\n\n"),
+                        sseText(`Visit: ${deviceFlow.verification_uri}\n`),
+                        sseText(`Enter code: **${deviceFlow.user_code}**\n\n`),
+                        sseText("Send another message after authorizing."),
                         sseDone()
                     ]);
                 }
-                
-                // Start new device flow
-                const deviceFlow = await startDeviceFlow();
-                
-                // Cache the pending flow (expires when device code expires)
-                await putToKV(kv, "device_flow_pending", {
-                    device_code: deviceFlow.device_code,
-                    user_code: deviceFlow.user_code,
-                    verification_uri: deviceFlow.verification_uri,
-                    expires_at: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
-                }, deviceFlow.expires_in);
-                
-                return poeResponse([
-                    sseText("🔐 **GitHub Authorization Required**\n\n"),
-                    sseText(`Visit: ${deviceFlow.verification_uri}\n`),
-                    sseText(`Enter code: **${deviceFlow.user_code}**\n\n`),
-                    sseText("Say **'check'** when you've authorized."),
-                    sseDone()
-                ]);
             }
             
             // We have a GitHub token, check for cached Copilot token
@@ -301,8 +297,9 @@ export default {
                         // GitHub token is invalid, clear it and start over
                         await kv.delete("github_token");
                         return poeResponse([
+                            ...contextLines,
                             sseText("⚠️ GitHub token expired or invalid. Cleared cache.\n\n"),
-                            sseText("Send any message to start device flow again."),
+                            sseText("Send another message to start device flow again."),
                             sseDone()
                         ]);
                     } else if (e.message === "NO_COPILOT_ACCESS") {
@@ -312,7 +309,7 @@ export default {
                 }
             }
             
-            // Return the token info
+            // Build the result object
             const result = {
                 copilot_token: copilotData.token,
                 copilot_expires_at: copilotData.expires_at,
@@ -321,11 +318,14 @@ export default {
                 github_token_expires_at: githubData.expires_at,
             };
             
+            // Return the token info with both text display and data event
             return poeResponse([
+                ...contextLines,
                 sseText("✅ **Copilot Token Ready**\n\n"),
                 sseText("```json\n"),
                 sseText(JSON.stringify(result, null, 2)),
                 sseText("\n```"),
+                sseData(result),
                 sseDone()
             ]);
             

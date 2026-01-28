@@ -7,12 +7,11 @@ compatibility_date = "2024-01-01"
 # Then update the id below with the returned ID
 [[kv_namespaces]]
 binding = "TOKEN_CACHE"
-id = "YOUR_KV_NAMESPACE_ID_HERE"
+id = "91ee783b8ba344628811a5f38fff1c2f"
 
 # For local development, create a preview namespace:
 # wrangler kv:namespace create TOKEN_CACHE --preview
 # preview_id = "YOUR_PREVIEW_KV_NAMESPACE_ID_HERE"
 
-[vars]
-# Authorization secret - change this!
-AUTH_SECRET = "111111"
+# Authorization secret - set via: wrangler secret put AUTH_SECRET
+# For local dev, create a .dev.vars file with: AUTH_SECRET=111111
