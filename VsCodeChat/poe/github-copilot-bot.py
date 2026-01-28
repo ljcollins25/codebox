@@ -1,4 +1,4 @@
-# poe: name=OpenAI-API-Bot
+# poe: name=Github-Copilot-Bot
 # poe: privacy_shield=half
 
 import json
@@ -9,11 +9,14 @@ from fastapi_poe.types import (
     Section,
     Slider,
     TextField,
+    DropDown,
+    ValueNamePair,
+    Condition,
 )
 
 # Configure bot settings with parameter controls
 poe.update_settings(SettingsResponse(
-    introduction_message="I'm an OpenAI-compatible API bot. Configure your API settings using the parameter controls.",
+    introduction_message="I'm a GitHub Copilot-compatible API bot. Configure your API settings using the parameter controls.",
     parameter_controls=ParameterControls(
         sections=[
             Section(
@@ -29,15 +32,50 @@ poe.update_settings(SettingsResponse(
                         label="API URL",
                         parameter_name="api_url",
                         description="OpenAI-compatible chat completions endpoint",
-                        default_value="https://api.openai.com/v1/chat/completions",
-                        placeholder="https://api.openai.com/v1/chat/completions",
+                        default_value="https://api.githubcopilot.com/chat/completions",
+                        placeholder="https://api.githubcopilot.com/chat/completions",
                     ),
-                    TextField(
+                    DropDown(
                         label="Model",
                         parameter_name="model",
-                        description="Model name to use",
+                        description="Model to use",
                         default_value="gpt-4o",
-                        placeholder="gpt-4o",
+                        options=[
+                            ValueNamePair(name="GPT-4.1", value="gpt-4.1"),
+                            ValueNamePair(name="GPT-4o", value="gpt-4o"),
+                            ValueNamePair(name="GPT-5 mini", value="gpt-5-mini"),
+                            ValueNamePair(name="Claude Haiku 4.5", value="claude-haiku-4.5"),
+                            ValueNamePair(name="Claude Opus 4.5", value="claude-opus-4.5"),
+                            ValueNamePair(name="Claude Sonnet 4", value="claude-sonnet-4"),
+                            ValueNamePair(name="Claude Sonnet 4.5", value="claude-sonnet-4.5"),
+                            ValueNamePair(name="Gemini 2.5 Pro", value="gemini-2.5-pro"),
+                            ValueNamePair(name="Gemini 3 Flash (Preview)", value="gemini-3-flash"),
+                            ValueNamePair(name="Gemini 3 Pro (Preview)", value="gemini-3-pro"),
+                            ValueNamePair(name="GPT-5", value="gpt-5"),
+                            ValueNamePair(name="GPT-5-Codex (Preview)", value="gpt-5-codex"),
+                            ValueNamePair(name="GPT-5.1", value="gpt-5.1"),
+                            ValueNamePair(name="GPT-5.1-Codex", value="gpt-5.1-codex"),
+                            ValueNamePair(name="GPT-5.1-Codex-Max", value="gpt-5.1-codex-max"),
+                            ValueNamePair(name="GPT-5.1-Codex-Mini (Preview)", value="gpt-5.1-codex-mini"),
+                            ValueNamePair(name="GPT-5.2", value="gpt-5.2"),
+                            ValueNamePair(name="GPT-5.2-Codex", value="gpt-5.2-codex"),
+                            ValueNamePair(name="Custom...", value="custom"),
+                        ],
+                    ),
+                    Condition(
+                        condition={
+                            "comparator": "equals",
+                            "left": {"parameter_name": "model"},
+                            "right": {"literal": "custom"},
+                        },
+                        controls=[
+                            TextField(
+                                label="Custom Model",
+                                parameter_name="custom_model",
+                                description="Enter custom model name",
+                                placeholder="gpt-4-turbo",
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -109,9 +147,13 @@ class OpenAIAPIBot:
             return value
 
         # Connection parameters
-        api_url = get_param("api_url", "https://api.openai.com/v1/chat/completions")
+        api_url = get_param("api_url", "https://api.githubcopilot.com/chat/completions")
         api_key = get_param("api_key")
         model = get_param("model", "gpt-4o")
+        
+        # Use custom model if selected
+        if model == "custom":
+            model = get_param("custom_model", "gpt-4o")
 
         if not api_key:
             raise poe.BotError("Please provide an 'api_key' parameter to use this bot.")
@@ -139,10 +181,16 @@ class OpenAIAPIBot:
         # Add current query
         messages.append({"role": "user", "content": poe.query.text})
 
-        # Prepare the API request
+        # Prepare the API request (matching VSCode Copilot headers)
         headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "GitHubCopilotChat/1.0.0",
+            "Editor-Version": "vscode/1.85.0",
+            "Editor-Plugin-Version": "copilot-chat/1.0.0",
+            "Openai-Organization": "github-copilot",
+            "Copilot-Integration-Id": "vscode-chat",
         }
 
         payload = {
@@ -159,7 +207,7 @@ class OpenAIAPIBot:
         if max_tokens and int(max_tokens) > 0:
             payload["max_tokens"] = int(max_tokens)
 
-        # Make streaming request to the OpenAI-compatible API
+        # Make streaming request to the GitHub Copilot-compatible API
         with poe.start_message() as output_msg:
             try:
                 with httpx.Client(timeout=120.0) as client:
@@ -175,10 +223,12 @@ class OpenAIAPIBot:
                                     break
                                 try:
                                     chunk = json.loads(data)
-                                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    if content:
-                                        output_msg.write(content)
+                                    choices = chunk.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        content = delta.get("content", "")
+                                        if content:
+                                            output_msg.write(content)
                                 except json.JSONDecodeError:
                                     continue
             except httpx.RequestError as e:
