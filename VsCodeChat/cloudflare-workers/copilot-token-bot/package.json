@@ -9,6 +9,9 @@
     "kv:create": "wrangler kv:namespace create TOKEN_CACHE",
     "kv:create:preview": "wrangler kv:namespace create TOKEN_CACHE --preview"
   },
+  "dependencies": {
+    "yaml": "^2.3.4"
+  },
   "devDependencies": {
     "wrangler": "^3.0.0"
   }
