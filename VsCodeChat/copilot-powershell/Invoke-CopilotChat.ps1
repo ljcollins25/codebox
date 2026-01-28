@@ -351,10 +351,10 @@ function Invoke-ChatCompletion {
         [string]$ProxyEndpoint
     )
     
-    Write-Status "Calling Copilot chat completions API..."
+    Write-Status "Calling Copilot API..."
     Write-Status "Model: $Model" -Color DarkGray
     
-    function Convert-MessagesToPrompt {
+    function Convert-MessagesToInput {
         param([array]$MessageList)
         $lines = @()
         foreach ($msg in $MessageList) {
@@ -362,9 +362,11 @@ function Invoke-ChatCompletion {
             $content = $msg.content
             $lines += "${role}: ${content}"
         }
-        $lines += "assistant:"
         return ($lines -join "`n")
     }
+    
+    # Check if this is a codex model (uses /responses endpoint)
+    $isCodexModel = $Model -match "codex"
     
     # Determine if this is an internal Copilot model (use enterprise proxy) or standard model (use api.githubcopilot.com)
     $isInternalModel = $Model -match "^copilot-"
@@ -386,17 +388,26 @@ function Invoke-ChatCompletion {
         $baseHost = "https://api.githubcopilot.com"
     }
 
-    # All models use /chat/completions (codex models require /responses which is not yet supported)
-    $endpoint = "$baseHost/chat/completions"
+    # Codex models use /responses endpoint, others use /chat/completions
+    if ($isCodexModel) {
+        $endpoint = "$baseHost/responses"
+        $inputText = Convert-MessagesToInput -MessageList $Messages
+        $body = @{
+            model  = $Model
+            input  = $inputText
+            stream = $true
+        } | ConvertTo-Json -Depth 10
+    }
+    else {
+        $endpoint = "$baseHost/chat/completions"
+        $body = @{
+            model    = $Model
+            messages = $Messages
+            stream   = $true
+        } | ConvertTo-Json -Depth 10
+    }
     
     Write-Status "Endpoint: $endpoint" -Color DarkGray
-
-    # Copilot API requires streaming - "stream": false is not supported
-    $body = @{
-        model    = $Model
-        messages = $Messages
-        stream   = $true
-    } | ConvertTo-Json -Depth 10
     
     try {
         # Use HttpWebRequest to properly handle Authorization header with semicolons
@@ -423,13 +434,21 @@ function Invoke-ChatCompletion {
         $responseStream = $response.GetResponseStream()
         $reader = New-Object System.IO.StreamReader($responseStream)
         
-        # Copilot API always requires streaming - process SSE response
+        # Process SSE response
         Write-Host ""
         Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
         
         $fullContent = ""
+        $currentEvent = ""
         while (-not $reader.EndOfStream) {
             $line = $reader.ReadLine()
+            
+            # Track event type for /responses endpoint
+            if ($line.StartsWith("event: ")) {
+                $currentEvent = $line.Substring(7)
+                continue
+            }
+            
             if ($line.StartsWith("data: ")) {
                 $data = $line.Substring(6)
                 if ($data -eq "[DONE]") {
@@ -437,13 +456,29 @@ function Invoke-ChatCompletion {
                 }
                 try {
                     $chunk = $data | ConvertFrom-Json
-                    if ($chunk.choices -and $chunk.choices.Count -gt 0) {
-                        $content = $chunk.choices[0].delta.content
-                        if ($content) {
-                            if ($Stream) {
-                                Write-Host $content -NoNewline
+                    
+                    if ($isCodexModel) {
+                        # /responses endpoint format - look for response.output_text.delta events
+                        if ($currentEvent -eq "response.output_text.delta" -and $chunk.delta) {
+                            $content = $chunk.delta
+                            if ($content) {
+                                if ($Stream) {
+                                    Write-Host $content -NoNewline
+                                }
+                                $fullContent += $content
                             }
-                            $fullContent += $content
+                        }
+                    }
+                    else {
+                        # /chat/completions endpoint format
+                        if ($chunk.choices -and $chunk.choices.Count -gt 0) {
+                            $content = $chunk.choices[0].delta.content
+                            if ($content) {
+                                if ($Stream) {
+                                    Write-Host $content -NoNewline
+                                }
+                                $fullContent += $content
+                            }
                         }
                     }
                 }
