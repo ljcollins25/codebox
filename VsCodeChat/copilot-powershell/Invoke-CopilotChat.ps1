@@ -25,8 +25,14 @@
 .PARAMETER Stream
     Enable streaming output.
 
+.PARAMETER TokenOnly
+    Just print the Copilot token and exit (for use with other tools).
+
 .EXAMPLE
     .\Invoke-CopilotChat.ps1 -Prompt "Explain async/await in JavaScript"
+
+.EXAMPLE
+    .\Invoke-CopilotChat.ps1 -TokenOnly
 
 .EXAMPLE
     .\Invoke-CopilotChat.ps1 -PromptFile .\sample-prompt.json -Model "claude-3.5-sonnet"
@@ -50,7 +56,10 @@ param(
     [string]$TokenFile = (Join-Path $env:USERPROFILE ".copilot-token.json"),
 
     [Parameter(Mandatory = $false)]
-    [switch]$Stream
+    [switch]$Stream,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$TokenOnly
 )
 
 # VS Code's public OAuth client ID
@@ -368,8 +377,8 @@ function Invoke-ChatCompletion {
 # Main execution
 try {
     # Validate input
-    if (-not $Prompt -and -not $PromptFile) {
-        Write-Error-Message "Please provide either -Prompt or -PromptFile"
+    if (-not $Prompt -and -not $PromptFile -and -not $TokenOnly) {
+        Write-Error-Message "Please provide either -Prompt, -PromptFile, or -TokenOnly"
         exit 1
     }
     
@@ -413,6 +422,13 @@ try {
     
     # Get Copilot token
     $copilotToken = Get-CopilotToken -GitHubToken $githubToken
+    
+    # If TokenOnly, just print the token and exit
+    if ($TokenOnly) {
+        Write-Host ""
+        Write-Host $copilotToken
+        return $copilotToken
+    }
     
     # Call API
     $result = Invoke-ChatCompletion -CopilotToken $copilotToken -Messages $messages -Model $Model -Stream $Stream
