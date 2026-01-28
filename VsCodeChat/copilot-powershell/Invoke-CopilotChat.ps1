@@ -50,7 +50,7 @@ param(
     [string]$Prompt,
 
     [Parameter(Mandatory = $false)]
-    [string]$Model = "copilot-nes-oct",
+    [string]$Model = "gpt-4o",
 
     [Parameter(Mandatory = $false)]
     [string]$TokenFile = (Join-Path $env:USERPROFILE ".copilot-token.json"),
@@ -367,19 +367,30 @@ function Invoke-ChatCompletion {
     }
 
     $isCodexModel = $Model -match "codex"
-
-    if (-not $ProxyEndpoint -and $CopilotToken -match 'proxy-ep=([^;]+)') {
-        $ProxyEndpoint = "https://$($Matches[1])"
-    }
-
-    $baseHost = if ($ProxyEndpoint) {
-        if ($ProxyEndpoint -match '^https?://') { $ProxyEndpoint } else { "https://$ProxyEndpoint" }
+    
+    # Determine if this is an internal Copilot model (use enterprise proxy) or standard model (use api.githubcopilot.com)
+    $isInternalModel = $Model -match "^copilot-"
+    
+    if ($isInternalModel) {
+        # Internal models need the enterprise proxy endpoint
+        if (-not $ProxyEndpoint -and $CopilotToken -match 'proxy-ep=([^;]+)') {
+            $ProxyEndpoint = "https://$($Matches[1])"
+        }
+        $baseHost = if ($ProxyEndpoint) {
+            if ($ProxyEndpoint -match '^https?://') { $ProxyEndpoint } else { "https://$ProxyEndpoint" }
+        }
+        else {
+            "https://copilot-proxy.githubusercontent.com"
+        }
     }
     else {
-        "https://copilot-proxy.githubusercontent.com"
+        # Standard models (gpt-4o, claude-3.5-sonnet, etc.) use the main API
+        $baseHost = "https://api.githubcopilot.com"
     }
 
     $endpoint = if ($isCodexModel) { "$baseHost/v1/engines/$Model/completions" } else { "$baseHost/chat/completions" }
+    
+    Write-Status "Endpoint: $endpoint" -Color DarkGray
 
     # Copilot API requires streaming - "stream": false is not supported
     if ($isCodexModel) {
