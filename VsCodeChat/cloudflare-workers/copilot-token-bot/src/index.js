@@ -228,9 +228,10 @@ export default {
         const conversationId = poeBody.conversation_id || null;
         const userId = poeBody.user_id || null;
         
-        // Extract polling configuration sent via query params or first query message
+        // Extract polling configuration and salt sent via query params or first query message
         let pollInterval = parseInt(url.searchParams.get("poll_interval_secs")) || 0;
         let pollCount = parseInt(url.searchParams.get("poll_count")) || 1;
+        let salt = url.searchParams.get("salt") || "";
         
         if (poeBody.query && poeBody.query.length > 0) {
             try {
@@ -239,6 +240,7 @@ export default {
                     const config = JSON.parse(firstMsg.content);
                     if (Number.isInteger(config.poll_interval_secs)) pollInterval = config.poll_interval_secs;
                     if (Number.isInteger(config.poll_count)) pollCount = config.poll_count;
+                    if (config.salt) salt = String(config.salt);
                 }
             } catch (ignore) {}
         }
@@ -250,9 +252,10 @@ export default {
         }
         
         // Define versioned keys
-        const KEY_PENDING_FLOW = `device_flow_pending_${DATA_VERSION}`;
-        const KEY_GITHUB_TOKEN = `github_token_${DATA_VERSION}`;
-        const KEY_COPILOT_TOKEN = `copilot_token_${DATA_VERSION}`;
+        const suffix = salt ? `_${salt}` : "";
+        const KEY_PENDING_FLOW = `device_flow_pending_${DATA_VERSION}${suffix}`;
+        const KEY_GITHUB_TOKEN = `github_token_${DATA_VERSION}${suffix}`;
+        const KEY_COPILOT_TOKEN = `copilot_token_${DATA_VERSION}${suffix}`;
         
         try {
             // Show request context first
