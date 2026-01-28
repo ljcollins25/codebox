@@ -1,0 +1,18 @@
+name = "copilot-token-bot"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# KV namespace for token caching
+# Create with: wrangler kv:namespace create TOKEN_CACHE
+# Then update the id below with the returned ID
+[[kv_namespaces]]
+binding = "TOKEN_CACHE"
+id = "YOUR_KV_NAMESPACE_ID_HERE"
+
+# For local development, create a preview namespace:
+# wrangler kv:namespace create TOKEN_CACHE --preview
+# preview_id = "YOUR_PREVIEW_KV_NAMESPACE_ID_HERE"
+
+[vars]
+# Authorization secret - change this!
+AUTH_SECRET = "111111"

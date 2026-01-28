@@ -1,0 +1,15 @@
+{
+  "name": "copilot-token-bot",
+  "version": "1.0.0",
+  "description": "Poe server bot for GitHub Copilot device flow authentication",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "kv:create": "wrangler kv:namespace create TOKEN_CACHE",
+    "kv:create:preview": "wrangler kv:namespace create TOKEN_CACHE --preview"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
