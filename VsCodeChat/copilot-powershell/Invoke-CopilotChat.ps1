@@ -62,6 +62,78 @@ param(
     [switch]$TokenOnly
 )
 
+# ============================================================================
+# MAIN LOGIC
+# ============================================================================
+
+function Main {
+    # Validate input
+    if (-not $Prompt -and -not $PromptFile -and -not $TokenOnly) {
+        Write-Error-Message "Please provide either -Prompt, -PromptFile, or -TokenOnly"
+        exit 1
+    }
+    
+    # Build messages array
+    if ($PromptFile) {
+        if (-not (Test-Path $PromptFile)) {
+            Write-Error-Message "Prompt file not found: $PromptFile"
+            exit 1
+        }
+        $promptData = Get-Content $PromptFile -Raw | ConvertFrom-Json
+        
+        if ($promptData.messages) {
+            $script:messages = $promptData.messages
+        }
+        else {
+            $script:messages = @($promptData)
+        }
+        
+        # Override model if specified in file
+        if ($promptData.model -and -not $PSBoundParameters.ContainsKey('Model')) {
+            $script:Model = $promptData.model
+        }
+    }
+    elseif ($Prompt) {
+        $script:messages = @(
+            @{
+                role    = "user"
+                content = $Prompt
+            }
+        )
+    }
+    
+    Write-Host ""
+    Write-Host "╔═══════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
+    Write-Host "║           GitHub Copilot Chat - PowerShell                ║" -ForegroundColor Magenta
+    Write-Host "╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
+    Write-Host ""
+    
+    # Get GitHub token (cached or via device flow)
+    $githubToken = Get-GitHubToken -TokenFile $TokenFile
+    
+    # Get Copilot token
+    $copilotToken = Get-CopilotToken -GitHubToken $githubToken
+    
+    # If TokenOnly, just print the token and exit
+    if ($TokenOnly) {
+        Write-Host "[Start Token]"
+        Write-Host $copilotToken
+        Write-Host "[End Token]"
+        return $copilotToken
+    }
+    
+    # Call API
+    $result = Invoke-ChatCompletion -CopilotToken $copilotToken -Messages $messages -Model $Model -Stream $Stream
+    
+    Write-Success "Done!"
+    
+    return $result
+}
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
 # VS Code's public OAuth client ID
 $GITHUB_CLIENT_ID = "01ab8ac9400c4e429b23"
 $GITHUB_SCOPES = "read:user"
@@ -374,68 +446,12 @@ function Invoke-ChatCompletion {
     }
 }
 
-# Main execution
+# ============================================================================
+# RUN
+# ============================================================================
+
 try {
-    # Validate input
-    if (-not $Prompt -and -not $PromptFile -and -not $TokenOnly) {
-        Write-Error-Message "Please provide either -Prompt, -PromptFile, or -TokenOnly"
-        exit 1
-    }
-    
-    # Build messages array
-    if ($PromptFile) {
-        if (-not (Test-Path $PromptFile)) {
-            Write-Error-Message "Prompt file not found: $PromptFile"
-            exit 1
-        }
-        $promptData = Get-Content $PromptFile -Raw | ConvertFrom-Json
-        
-        if ($promptData.messages) {
-            $messages = $promptData.messages
-        }
-        else {
-            $messages = @($promptData)
-        }
-        
-        # Override model if specified in file
-        if ($promptData.model -and -not $PSBoundParameters.ContainsKey('Model')) {
-            $Model = $promptData.model
-        }
-    }
-    else {
-        $messages = @(
-            @{
-                role    = "user"
-                content = $Prompt
-            }
-        )
-    }
-    
-    Write-Host ""
-    Write-Host "╔═══════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-    Write-Host "║           GitHub Copilot Chat - PowerShell                ║" -ForegroundColor Magenta
-    Write-Host "╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
-    Write-Host ""
-    
-    # Get GitHub token (cached or via device flow)
-    $githubToken = Get-GitHubToken -TokenFile $TokenFile
-    
-    # Get Copilot token
-    $copilotToken = Get-CopilotToken -GitHubToken $githubToken
-    
-    # If TokenOnly, just print the token and exit
-    if ($TokenOnly) {
-        Write-Host ""
-        Write-Host $copilotToken
-        return $copilotToken
-    }
-    
-    # Call API
-    $result = Invoke-ChatCompletion -CopilotToken $copilotToken -Messages $messages -Model $Model -Stream $Stream
-    
-    Write-Success "Done!"
-    
-    return $result
+    Main
 }
 catch {
     Write-Error-Message "Error: $_"
