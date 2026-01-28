@@ -365,8 +365,6 @@ function Invoke-ChatCompletion {
         $lines += "assistant:"
         return ($lines -join "`n")
     }
-
-    $isCodexModel = $Model -match "codex"
     
     # Determine if this is an internal Copilot model (use enterprise proxy) or standard model (use api.githubcopilot.com)
     $isInternalModel = $Model -match "^copilot-"
@@ -384,29 +382,21 @@ function Invoke-ChatCompletion {
         }
     }
     else {
-        # Standard models (gpt-4o, claude-3.5-sonnet, etc.) use the main API
+        # Standard models (gpt-4o, claude-sonnet-4, etc.) use the main API
         $baseHost = "https://api.githubcopilot.com"
     }
 
-    $endpoint = if ($isCodexModel) { "$baseHost/v1/engines/$Model/completions" } else { "$baseHost/chat/completions" }
+    # All models use /chat/completions (codex models require /responses which is not yet supported)
+    $endpoint = "$baseHost/chat/completions"
     
     Write-Status "Endpoint: $endpoint" -Color DarkGray
 
     # Copilot API requires streaming - "stream": false is not supported
-    if ($isCodexModel) {
-        $prompt = Convert-MessagesToPrompt -MessageList $Messages
-        $body = @{
-            prompt = $prompt
-            stream = $true
-        } | ConvertTo-Json -Depth 10
-    }
-    else {
-        $body = @{
-            model    = $Model
-            messages = $Messages
-            stream   = $true
-        } | ConvertTo-Json -Depth 10
-    }
+    $body = @{
+        model    = $Model
+        messages = $Messages
+        stream   = $true
+    } | ConvertTo-Json -Depth 10
     
     try {
         # Use HttpWebRequest to properly handle Authorization header with semicolons
@@ -418,8 +408,8 @@ function Invoke-ChatCompletion {
         
         # Set Authorization header directly (handles special characters properly)
         $request.Headers.Add("Authorization", "Bearer $CopilotToken")
-        $request.Headers.Add("Editor-Version", "vscode/1.85.0")
-        $request.Headers.Add("Editor-Plugin-Version", "copilot-chat/1.0.0")
+        $request.Headers.Add("Editor-Version", "vscode/1.104.1")
+        $request.Headers.Add("Editor-Plugin-Version", "copilot-chat/0.36.0")
         $request.Headers.Add("Openai-Organization", "github-copilot")
         $request.Headers.Add("Copilot-Integration-Id", "vscode-chat")
         
@@ -448,12 +438,7 @@ function Invoke-ChatCompletion {
                 try {
                     $chunk = $data | ConvertFrom-Json
                     if ($chunk.choices -and $chunk.choices.Count -gt 0) {
-                        if ($isCodexModel) {
-                            $content = $chunk.choices[0].text
-                        }
-                        else {
-                            $content = $chunk.choices[0].delta.content
-                        }
+                        $content = $chunk.choices[0].delta.content
                         if ($content) {
                             if ($Stream) {
                                 Write-Host $content -NoNewline
