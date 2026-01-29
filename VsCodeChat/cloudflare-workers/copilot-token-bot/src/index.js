@@ -261,7 +261,70 @@ export default {
             return new Response(JSON.stringify({
                 introduction_message: "I manage GitHub Device Flow authentication and provide Copilot tokens.",
                 allow_attachments: false,
-                enable_image_comprehension: false
+                enable_image_comprehension: false,
+                server_bot_dependencies: {},
+                parameter_controls: {
+                    api_version: "2",
+                    sections: [
+                        {
+                            name: "Token Settings",
+                            controls: [
+                                {
+                                    control: "text_field",
+                                    label: "Salt",
+                                    description: "Optional salt to create separate token namespaces",
+                                    parameter_name: "salt",
+                                    default_value: "",
+                                    placeholder: "my-namespace"
+                                },
+                                {
+                                    control: "drop_down",
+                                    label: "Mode",
+                                    description: "Response output mode",
+                                    parameter_name: "mode",
+                                    default_value: "",
+                                    options: [
+                                        { value: "", name: "Normal" },
+                                        { value: "query_token", name: "Query Token (JSON only)" }
+                                    ]
+                                },
+                                {
+                                    control: "toggle_switch",
+                                    label: "Markdown",
+                                    description: "Wrap JSON output in markdown code blocks",
+                                    parameter_name: "markdown",
+                                    default_value: false
+                                }
+                            ]
+                        },
+                        {
+                            name: "Polling",
+                            collapsed_by_default: true,
+                            controls: [
+                                {
+                                    control: "slider",
+                                    label: "Poll Interval (seconds)",
+                                    description: "Interval between device flow polls",
+                                    parameter_name: "poll_interval_secs",
+                                    default_value: 5,
+                                    min_value: 5,
+                                    max_value: 30,
+                                    step: 1
+                                },
+                                {
+                                    control: "slider",
+                                    label: "Poll Count",
+                                    description: "Number of times to poll for authorization",
+                                    parameter_name: "poll_count",
+                                    default_value: 1,
+                                    min_value: 1,
+                                    max_value: 60,
+                                    step: 1
+                                }
+                            ]
+                        }
+                    ]
+                }
             }), {
                 headers: { "Content-Type": "application/json" }
             });
@@ -290,6 +353,19 @@ export default {
         if (poeBody.query && poeBody.query.length > 0) {
             try {
                 const lastMsg = poeBody.query[poeBody.query.length - 1];
+                
+                // Extract config from message parameters (settings)
+                if (lastMsg.parameters) {
+                    const params = lastMsg.parameters;
+                    if (params.poll_interval_secs != null) pollInterval = parseInt(params.poll_interval_secs) || pollInterval;
+                    if (params.poll_count != null) pollCount = parseInt(params.poll_count) || pollCount;
+                    if (params.salt != null) salt = String(params.salt);
+                    if (params.mode != null) mode = String(params.mode);
+                    if (params.markdown === true || params.markdown === "true") markdown = true;
+                    if (params.refresh === true || params.refresh === "true") refresh = true;
+                    if (params.reset === true || params.reset === "true") reset = true;
+                }
+                
                 if (lastMsg.content && lastMsg.content.trim()) {
                     const content = lastMsg.content.trim();
                     
