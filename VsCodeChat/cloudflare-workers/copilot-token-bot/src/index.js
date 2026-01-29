@@ -34,6 +34,27 @@ function sseData(metadata) {
 }
 
 /**
+ * Send a Poe SSE data event with formatted JSON text display
+ * @param {object} metadata - The data to send
+ * @param {boolean} includeMarkdown - Whether to wrap JSON in markdown code block
+ */
+function sseDataAndJson(metadata, includeMarkdown = false) {
+    const jsonText = JSON.stringify(metadata, null, 2);
+    if (includeMarkdown) {
+        return [
+            sseText("```json\n"),
+            sseText(jsonText),
+            sseText("\n```"),
+            sseData(metadata)
+        ].join('');
+    }
+    return [
+        sseText(jsonText),
+        sseData(metadata)
+    ].join('');
+}
+
+/**
  * Send a Poe SSE done event
  */
 function sseDone() {
@@ -261,6 +282,8 @@ export default {
         let pollInterval = parseInt(url.searchParams.get("poll_interval_secs")) || 0;
         let pollCount = parseInt(url.searchParams.get("poll_count")) || 1;
         let salt = url.searchParams.get("salt") || "";
+        let mode = url.searchParams.get("mode") || "";
+        let markdown = url.searchParams.get("markdown") === "true";
         let refresh = false;
         let reset = false;
         
@@ -282,6 +305,8 @@ export default {
                             if (config.poll_interval_secs != null) pollInterval = parseInt(config.poll_interval_secs) || pollInterval;
                             if (config.poll_count != null) pollCount = parseInt(config.poll_count) || pollCount;
                             if (config.salt != null) salt = String(config.salt);
+                            if (config.mode != null) mode = String(config.mode);
+                            if (config.markdown === true) markdown = true;
                             if (config.refresh === true) refresh = true;
                             if (config.reset === true) reset = true;
                         }
@@ -289,6 +314,9 @@ export default {
                 }
             } catch (ignore) {}
         }
+        
+        // Enforce minimum poll interval of 5 seconds
+        if (pollInterval > 0 && pollInterval < 5) pollInterval = 5;
         
         // KV namespace binding
         const kv = env.TOKEN_CACHE;
@@ -328,117 +356,188 @@ export default {
             if (!githubData) {
                 // Check if we already have a pending flow - try to poll it
                 if (pendingFlow && pollCount > 0) {
-                    return poeStreamingResponse(async (write) => {
-                        // Send context first
-                        for (const line of contextLines) write(line);
-                        
-                        write(sseText("🔐 **Device Flow In Progress**\n\n"));
-                        write(sseText(`Visit: ${pendingFlow.verification_uri}\n`));
-                        write(sseText(`Enter code: **${pendingFlow.user_code}**\n\n`));
-                        write(sseText(`Polling for authorization (${pollCount} attempts, ${pollInterval}s interval)...\n\n`));
-                        
+                    // query_token mode: poll silently and return JSON only
+                    if (mode === "query_token") {
                         let pollResult;
                         let success = false;
                         
-                        // Poll with configured retries
                         for (let i = 0; i < pollCount; i++) {
-                            write(sseText(`⏳ Poll ${i + 1}/${pollCount}... `));
                             pollResult = await pollDeviceFlow(pendingFlow.device_code);
                             
                             if (pollResult.access_token) {
-                                write(sseText("✅ Authorized!\n\n"));
                                 success = true;
                                 break;
-                            } else if (pollResult.error === "authorization_pending") {
-                                write(sseText("⏸️ Pending\n"));
                             } else if (pollResult.error === "slow_down") {
-                                write(sseText("🐢 Rate limited, slowing down\n"));
                                 pollInterval = Math.max(pollInterval, 5) + 5;
-                            } else if (pollResult.error === "expired_token") {
-                                write(sseText("❌ Device code expired\n\n"));
-                                await kv.delete(KEY_PENDING_FLOW);
-                                write(sseText("Send another message to start a new device flow."));
-                                write(sseDone());
-                                return;
-                            } else if (pollResult.error) {
-                                write(sseText(`❌ Error: ${pollResult.error}\n`));
-                                write(sseDone());
-                                return;
+                            } else if (pollResult.error && pollResult.error !== "authorization_pending") {
+                                // Fatal error
+                                if (pollResult.error === "expired_token") {
+                                    await kv.delete(KEY_PENDING_FLOW);
+                                }
+                                return poeResponse([
+                                    sseDataAndJson({
+                                        status: pollResult.error,
+                                        user_code: pendingFlow.user_code,
+                                        verification_uri: pendingFlow.verification_uri
+                                    }, markdown),
+                                    sseDone()
+                                ]);
                             }
                             
-                            // Wait before next retry if not last attempt
                             if (i < pollCount - 1) {
                                 await new Promise(r => setTimeout(r, pollInterval * 1000));
                             }
                         }
                         
-                        if (success && pollResult.access_token) {
-                            // Store the GitHub token
-                            const expiresAt = new Date();
-                            expiresAt.setDate(expiresAt.getDate() + GITHUB_TOKEN_LIFETIME_DAYS);
-                            
-                            githubData = {
-                                token: pollResult.access_token,
-                                expires_at: expiresAt.toISOString(),
-                                acquired_at: new Date().toISOString(),
-                                lifetime_days: GITHUB_TOKEN_LIFETIME_DAYS,
-                            };
-                            
-                            await putToKV(kv, KEY_GITHUB_TOKEN, githubData, GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60);
-                            await kv.delete(KEY_PENDING_FLOW);
-                            
-                            // Now fetch Copilot token
-                            write(sseText("🔄 Fetching Copilot token...\n\n"));
-                            
-                            try {
-                                const copilotResponse = await getCopilotToken(githubData.token);
-                                
-                                const copilotExpiresAt = new Date();
-                                copilotExpiresAt.setMinutes(copilotExpiresAt.getMinutes() + COPILOT_TOKEN_LIFETIME_MINUTES);
-                                
-                                const copilotData = {
-                                    token: copilotResponse.token,
-                                    expires_at: copilotExpiresAt.toISOString(),
-                                    acquired_at: new Date().toISOString(),
-                                    lifetime_minutes: COPILOT_TOKEN_LIFETIME_MINUTES,
-                                    endpoints: copilotResponse.endpoints || null,
-                                };
-                                
-                                await putToKV(kv, KEY_COPILOT_TOKEN, copilotData, COPILOT_TOKEN_LIFETIME_MINUTES * 60);
-                                
-                                const result = {
-                                    version: DATA_VERSION,
-                                    copilot_token: copilotData.token,
-                                    copilot_expires_at: copilotData.expires_at,
-                                    copilot_acquired_at: copilotData.acquired_at,
-                                    conversation_id: conversationId,
-                                    user_id: userId,
-                                    github_token_expires_at: githubData.expires_at,
-                                    github_token_acquired_at: githubData.acquired_at,
-                                };
-                                
-                                write(sseText("✅ **Copilot Token Ready**\n\n"));
-                                write(sseText("```json\n"));
-                                write(sseText(JSON.stringify(result, null, 2)));
-                                write(sseText("\n```"));
-                                write(sseData(result));
-                                write(sseSuggestedReply("refresh"));
-                                write(sseSuggestedReply("reset"));
-                            } catch (e) {
-                                if (e.message === "NO_COPILOT_ACCESS") {
-                                    write(sseText("❌ Your GitHub account doesn't have Copilot access."));
-                                } else {
-                                    write(sseText(`❌ Error: ${e.message}`));
-                                }
-                            }
-                        } else {
-                            write(sseText("\n⏸️ Authorization still pending. Send another message to continue polling."));
+                        if (!success) {
+                            return poeResponse([
+                                sseDataAndJson({
+                                    status: "authorization_pending",
+                                    user_code: pendingFlow.user_code,
+                                    verification_uri: pendingFlow.verification_uri
+                                }, markdown),
+                                sseDone()
+                            ]);
                         }
                         
-                        write(sseDone());
-                    });
+                        // Success - store GitHub token and fetch Copilot token
+                        const expiresAt = new Date();
+                        expiresAt.setDate(expiresAt.getDate() + GITHUB_TOKEN_LIFETIME_DAYS);
+                        
+                        githubData = {
+                            token: pollResult.access_token,
+                            expires_at: expiresAt.toISOString(),
+                            acquired_at: new Date().toISOString(),
+                            lifetime_days: GITHUB_TOKEN_LIFETIME_DAYS,
+                        };
+                        
+                        await putToKV(kv, KEY_GITHUB_TOKEN, githubData, GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60);
+                        await kv.delete(KEY_PENDING_FLOW);
+                        
+                        // Fall through to fetch Copilot token below
+                    } else {
+                        // Normal streaming mode
+                        return poeStreamingResponse(async (write) => {
+                            // Send context first
+                            for (const line of contextLines) write(line);
+                            
+                            write(sseText("🔐 **Device Flow In Progress**\n\n"));
+                            write(sseText(`Visit: ${pendingFlow.verification_uri}\n`));
+                            write(sseText(`Enter code: **${pendingFlow.user_code}**\n\n`));
+                            write(sseText(`Polling for authorization (${pollCount} attempts, ${pollInterval}s interval)...\n\n`));
+                            
+                            let pollResult;
+                            let success = false;
+                            
+                            // Poll with configured retries
+                            for (let i = 0; i < pollCount; i++) {
+                                write(sseText(`⏳ Poll ${i + 1}/${pollCount}... `));
+                                pollResult = await pollDeviceFlow(pendingFlow.device_code);
+                                
+                                if (pollResult.access_token) {
+                                    write(sseText("✅ Authorized!\n\n"));
+                                    success = true;
+                                    break;
+                                } else if (pollResult.error === "authorization_pending") {
+                                    write(sseText("⏸️ Pending\n"));
+                                } else if (pollResult.error === "slow_down") {
+                                    write(sseText("🐢 Rate limited, slowing down\n"));
+                                    pollInterval = Math.max(pollInterval, 5) + 5;
+                                } else if (pollResult.error === "expired_token") {
+                                    write(sseText("❌ Device code expired\n\n"));
+                                    await kv.delete(KEY_PENDING_FLOW);
+                                    write(sseText("Send another message to start a new device flow."));
+                                    write(sseDone());
+                                    return;
+                                } else if (pollResult.error) {
+                                    write(sseText(`❌ Error: ${pollResult.error}\n`));
+                                    write(sseDone());
+                                    return;
+                                }
+                                
+                                // Wait before next retry if not last attempt
+                                if (i < pollCount - 1) {
+                                    await new Promise(r => setTimeout(r, pollInterval * 1000));
+                                }
+                            }
+                            
+                            if (success && pollResult.access_token) {
+                                // Store the GitHub token
+                                const expiresAt = new Date();
+                                expiresAt.setDate(expiresAt.getDate() + GITHUB_TOKEN_LIFETIME_DAYS);
+                                
+                                githubData = {
+                                    token: pollResult.access_token,
+                                    expires_at: expiresAt.toISOString(),
+                                    acquired_at: new Date().toISOString(),
+                                    lifetime_days: GITHUB_TOKEN_LIFETIME_DAYS,
+                                };
+                                
+                                await putToKV(kv, KEY_GITHUB_TOKEN, githubData, GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60);
+                                await kv.delete(KEY_PENDING_FLOW);
+                                
+                                // Now fetch Copilot token
+                                write(sseText("🔄 Fetching Copilot token...\n\n"));
+                                
+                                try {
+                                    const copilotResponse = await getCopilotToken(githubData.token);
+                                    
+                                    const copilotExpiresAt = new Date();
+                                    copilotExpiresAt.setMinutes(copilotExpiresAt.getMinutes() + COPILOT_TOKEN_LIFETIME_MINUTES);
+                                    
+                                    const copilotData = {
+                                        token: copilotResponse.token,
+                                        expires_at: copilotExpiresAt.toISOString(),
+                                        acquired_at: new Date().toISOString(),
+                                        lifetime_minutes: COPILOT_TOKEN_LIFETIME_MINUTES,
+                                        endpoints: copilotResponse.endpoints || null,
+                                    };
+                                    
+                                    await putToKV(kv, KEY_COPILOT_TOKEN, copilotData, COPILOT_TOKEN_LIFETIME_MINUTES * 60);
+                                    
+                                    const result = {
+                                        status: "acquired",
+                                        version: DATA_VERSION,
+                                        current_time_utc: new Date().toISOString(),
+                                        copilot_token: copilotData.token,
+                                        copilot_expires_at: copilotData.expires_at,
+                                        copilot_acquired_at: copilotData.acquired_at,
+                                        conversation_id: conversationId,
+                                        user_id: userId,
+                                        github_token_expires_at: githubData.expires_at,
+                                        github_token_acquired_at: githubData.acquired_at,
+                                    };
+                                    
+                                    write(sseText("✅ **Copilot Token Ready**\n\n"));
+                                    write(sseDataAndJson(result, markdown));
+                                    write(sseSuggestedReply("refresh"));
+                                    write(sseSuggestedReply("reset"));
+                                } catch (e) {
+                                    if (e.message === "NO_COPILOT_ACCESS") {
+                                        write(sseText("❌ Your GitHub account doesn't have Copilot access."));
+                                    } else {
+                                        write(sseText(`❌ Error: ${e.message}`));
+                                    }
+                                }
+                            } else {
+                                write(sseText("\n⏸️ Authorization still pending. Send another message to continue polling."));
+                            }
+                            
+                            write(sseDone());
+                        });
+                    }
                 } else if (pendingFlow) {
                     // No polling configured, just show the pending flow info
+                    if (mode === "query_token") {
+                        return poeResponse([
+                            sseDataAndJson({
+                                status: "authorization_pending",
+                                user_code: pendingFlow.user_code,
+                                verification_uri: pendingFlow.verification_uri
+                            }, markdown),
+                            sseDone()
+                        ]);
+                    }
                     return poeResponse([
                         ...contextLines,
                         sseText("🔐 **Device Flow In Progress**\n\n"),
@@ -460,6 +559,17 @@ export default {
                         verification_uri: deviceFlow.verification_uri,
                         expires_at: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
                     }, deviceFlow.expires_in);
+                    
+                    if (mode === "query_token") {
+                        return poeResponse([
+                            sseDataAndJson({
+                                status: "authorization_pending",
+                                user_code: deviceFlow.user_code,
+                                verification_uri: deviceFlow.verification_uri
+                            }, markdown),
+                            sseDone()
+                        ]);
+                    }
                     
                     return poeResponse([
                         ...contextLines,
@@ -517,7 +627,9 @@ export default {
             
             // Build the result object
             const result = {
+                status: "acquired",
                 version: DATA_VERSION,
+                current_time_utc: new Date().toISOString(),
                 copilot_token: copilotData.token,
                 copilot_expires_at: copilotData.expires_at,
                 copilot_acquired_at: copilotData.acquired_at,
@@ -527,14 +639,19 @@ export default {
                 github_token_acquired_at: githubData.acquired_at,
             };
             
+            // query_token mode: return data event only
+            if (mode === "query_token") {
+                return poeResponse([
+                    sseDataAndJson(result, markdown),
+                    sseDone()
+                ]);
+            }
+            
             // Return the token info with both text display and data event
             return poeResponse([
                 ...contextLines,
                 sseText("✅ **Copilot Token Ready**\n\n"),
-                sseText("```json\n"),
-                sseText(JSON.stringify(result, null, 2)),
-                sseText("\n```"),
-                sseData(result),
+                sseDataAndJson(result, markdown),
                 sseSuggestedReply("refresh"),
                 sseSuggestedReply("reset"),
                 sseDone()
