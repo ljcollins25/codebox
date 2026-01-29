@@ -160,26 +160,12 @@ class CopilotTokenHandler {
                                 label: "Mode",
                                 description: "Response output mode",
                                 parameter_name: "mode",
-                                default_value: "",
+                                default_value: "query_token",
                                 options: [
-                                    { value: "", name: "Normal" },
                                     { value: "query_token", name: "Query Token (JSON only)" },
-                                    { value: "poll_only", name: "Poll Only (device flow only)" }
+                                    { value: "auth_flow", name: "Auth Flow (user-friendly messages)" },
+                                    { value: "dev", name: "Dev (full debug output)" }
                                 ]
-                            },
-                            {
-                                control: "toggle_switch",
-                                label: "Markdown",
-                                description: "Wrap JSON output in markdown code blocks",
-                                parameter_name: "markdown",
-                                default_value: false
-                            },
-                            {
-                                control: "toggle_switch",
-                                label: "Data Only",
-                                description: "Only emit SSE data event without printing text",
-                                parameter_name: "data_only",
-                                default_value: false
                             }
                         ]
                     },
@@ -231,14 +217,12 @@ class CopilotTokenHandler {
         const url = this.url;
         const poeBody = this.poeBody;
 
-        // Start with defaults from query params
+        // Start with defaults from query params (query_token is default mode)
         const config = {
             pollInterval: parseInt(url.searchParams.get("poll_interval_secs")) || 0,
             pollCount: parseInt(url.searchParams.get("poll_count")) || 1,
             salt: url.searchParams.get("salt") || "",
-            mode: url.searchParams.get("mode") || "",
-            markdown: url.searchParams.get("markdown") === "true",
-            dataOnly: url.searchParams.get("data_only") === "true",
+            mode: url.searchParams.get("mode") || "query_token",
             refresh: false,
             reset: false,
             conversationId: poeBody.conversation_id || null,
@@ -268,8 +252,6 @@ class CopilotTokenHandler {
         if (params.poll_count != null) config.pollCount = parseInt(params.poll_count) || config.pollCount;
         if (params.salt != null) config.salt = String(params.salt);
         if (params.mode != null) config.mode = String(params.mode);
-        if (params.markdown === true || params.markdown === "true") config.markdown = true;
-        if (params.data_only === true || params.data_only === "true") config.dataOnly = true;
         if (params.refresh === true || params.refresh === "true") config.refresh = true;
         if (params.reset === true || params.reset === "true") config.reset = true;
     }
@@ -297,8 +279,6 @@ class CopilotTokenHandler {
                 if (parsed.poll_count != null) config.pollCount = parseInt(parsed.poll_count) || config.pollCount;
                 if (parsed.salt != null) config.salt = String(parsed.salt);
                 if (parsed.mode != null) config.mode = String(parsed.mode);
-                if (parsed.markdown === true) config.markdown = true;
-                if (parsed.data_only === true) config.dataOnly = true;
                 if (parsed.refresh === true) config.refresh = true;
                 if (parsed.reset === true) config.reset = true;
             }
@@ -358,9 +338,10 @@ class CopilotTokenHandler {
 
         // Have pending flow with polling configured
         if (pendingFlow && pollCount > 0) {
-            if (mode === "query_token" || mode === "poll_only") {
+            if (mode === "query_token") {
                 return this.pollDeviceFlowQuiet(pendingFlow);
             }
+            // auth_flow and dev modes use streaming
             return this.pollDeviceFlowStreaming(pendingFlow);
         }
 
@@ -374,7 +355,6 @@ class CopilotTokenHandler {
     }
 
     async pollDeviceFlowQuiet(pendingFlow) {
-        const { mode, dataOnly, markdown, conversationId, userId } = this.config;
         let { pollInterval, pollCount } = this.config;
 
         let pollResult;
@@ -392,7 +372,11 @@ class CopilotTokenHandler {
                 if (pollResult.error === "expired_token") {
                     await this.kv.delete(this.keys.pendingFlow);
                 }
-                return this.respondWithPendingStatus(pollResult.error, pendingFlow);
+                return this.respondWithJson({
+                    status: pollResult.error,
+                    user_code: pendingFlow.user_code,
+                    verification_uri: pendingFlow.verification_uri
+                });
             }
 
             if (i < pollCount - 1) {
@@ -401,28 +385,27 @@ class CopilotTokenHandler {
         }
 
         if (!success) {
-            return this.respondWithPendingStatus("authorization_pending", pendingFlow);
+            return this.respondWithJson({
+                status: "authorization_pending",
+                user_code: pendingFlow.user_code,
+                verification_uri: pendingFlow.verification_uri
+            });
         }
 
-        // Success - store GitHub token
+        // Success - store GitHub token and fetch Copilot token
         const githubData = await this.storeGitHubToken(pollResult.access_token);
-
-        // poll_only mode: return GitHub token only
-        if (mode === "poll_only") {
-            return this.respondWithGitHubToken(githubData);
-        }
-
-        // query_token mode: fetch and return Copilot token
         return this.handleTokenRetrieval(githubData);
     }
 
     async pollDeviceFlowStreaming(pendingFlow) {
-        const { dataOnly, markdown, conversationId, userId } = this.config;
+        const { mode } = this.config;
         let { pollInterval, pollCount } = this.config;
-        const contextLines = this.getContextLines();
 
         return poeStreamingResponse(async (write) => {
-            for (const line of contextLines) write(line);
+            // dev mode shows context info
+            if (mode === "dev") {
+                for (const line of this.getContextLines()) write(line);
+            }
 
             write(sseText("🔐 **Device Flow In Progress**\n\n"));
             write(sseText(`Visit: ${pendingFlow.verification_uri}\n`));
@@ -464,7 +447,14 @@ class CopilotTokenHandler {
 
             if (success && pollResult.access_token) {
                 const githubData = await this.storeGitHubToken(pollResult.access_token);
-                await this.fetchAndWriteCopilotToken(write, githubData);
+                
+                if (mode === "auth_flow") {
+                    // auth_flow: just confirm GitHub auth succeeded, don't fetch Copilot token
+                    write(sseText("✅ **GitHub Authorization Complete**"));
+                } else {
+                    // dev mode: fetch and show Copilot token
+                    await this.fetchAndWriteCopilotToken(write, githubData);
+                }
             } else {
                 write(sseText("\n⏸️ Authorization still pending. Send another message to continue polling."));
             }
@@ -474,18 +464,24 @@ class CopilotTokenHandler {
     }
 
     async fetchAndWriteCopilotToken(write, githubData) {
-        const { dataOnly, markdown, conversationId, userId } = this.config;
+        const { mode } = this.config;
 
         write(sseText("🔄 Fetching Copilot token...\n\n"));
 
         try {
             const copilotData = await this.fetchAndStoreCopilotToken(githubData.token);
-            const result = this.buildCopilotResult(copilotData, githubData);
-
-            write(sseText("✅ **Copilot Token Ready**\n\n"));
-            write(dataOnly ? sseData(result) : sseDataAndJson(result, markdown));
-            write(sseSuggestedReply("refresh"));
-            write(sseSuggestedReply("reset"));
+            
+            if (mode === "auth_flow") {
+                // auth_flow: just show success message, no JSON
+                write(sseText("✅ **Copilot Token Ready**\n\nToken has been cached. Use query_token mode to retrieve it."));
+            } else {
+                // dev mode: show full JSON output
+                const result = this.buildCopilotResult(copilotData, githubData);
+                write(sseText("✅ **Copilot Token Ready**\n\n"));
+                write(sseDataAndJson(result, false));
+                write(sseSuggestedReply("refresh"));
+                write(sseSuggestedReply("reset"));
+            }
         } catch (e) {
             if (e.message === "NO_COPILOT_ACCESS") {
                 write(sseText("❌ Your GitHub account doesn't have Copilot access."));
@@ -496,25 +492,33 @@ class CopilotTokenHandler {
     }
 
     showPendingFlowInfo(pendingFlow) {
-        const { mode, dataOnly, markdown } = this.config;
+        const { mode } = this.config;
 
-        if (mode === "query_token" || mode === "poll_only") {
-            return this.respondWithPendingStatus("authorization_pending", pendingFlow);
+        if (mode === "query_token") {
+            return this.respondWithJson({
+                status: "authorization_pending",
+                user_code: pendingFlow.user_code,
+                verification_uri: pendingFlow.verification_uri
+            });
         }
 
-        const contextLines = this.getContextLines();
-        return poeResponse([
-            ...contextLines,
+        // auth_flow and dev modes show user-friendly message
+        const messages = [];
+        if (mode === "dev") {
+            messages.push(...this.getContextLines());
+        }
+        messages.push(
             sseText("🔐 **Device Flow In Progress**\n\n"),
             sseText(`Visit: ${pendingFlow.verification_uri}\n`),
             sseText(`Enter code: **${pendingFlow.user_code}**\n\n`),
             sseText("Send another message after authorizing."),
             sseDone()
-        ]);
+        );
+        return poeResponse(messages);
     }
 
     async startNewDeviceFlow() {
-        const { mode, dataOnly, markdown } = this.config;
+        const { mode } = this.config;
 
         const deviceFlow = await startDeviceFlow();
 
@@ -525,19 +529,27 @@ class CopilotTokenHandler {
             expires_at: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
         }, deviceFlow.expires_in);
 
-        if (mode === "query_token" || mode === "poll_only") {
-            return this.respondWithPendingStatus("authorization_pending", deviceFlow);
+        if (mode === "query_token") {
+            return this.respondWithJson({
+                status: "authorization_pending",
+                user_code: deviceFlow.user_code,
+                verification_uri: deviceFlow.verification_uri
+            });
         }
 
-        const contextLines = this.getContextLines();
-        return poeResponse([
-            ...contextLines,
+        // auth_flow and dev modes show user-friendly message
+        const messages = [];
+        if (mode === "dev") {
+            messages.push(...this.getContextLines());
+        }
+        messages.push(
             sseText("🔐 **GitHub Authorization Required**\n\n"),
             sseText(`Visit: ${deviceFlow.verification_uri}\n`),
             sseText(`Enter code: **${deviceFlow.user_code}**\n\n`),
             sseText("Send another message after authorizing."),
             sseDone()
-        ]);
+        );
+        return poeResponse(messages);
     }
 
     // =========================================================================
@@ -545,12 +557,7 @@ class CopilotTokenHandler {
     // =========================================================================
 
     async handleTokenRetrieval(githubData) {
-        const { mode, refresh, dataOnly, markdown } = this.config;
-
-        // poll_only mode: return GitHub token only
-        if (mode === "poll_only") {
-            return this.respondWithGitHubToken(githubData);
-        }
+        const { mode, refresh } = this.config;
 
         // Get or refresh Copilot token
         let copilotData = await getFromKV(this.kv, this.keys.copilotToken);
@@ -566,14 +573,29 @@ class CopilotTokenHandler {
             } catch (e) {
                 if (e.message === "INVALID_GITHUB_TOKEN") {
                     await this.kv.delete(this.keys.githubToken);
-                    const contextLines = this.getContextLines();
-                    return poeResponse([
-                        ...contextLines,
+                    if (mode === "query_token") {
+                        return this.respondWithJson({
+                            status: "invalid_github_token",
+                            message: "GitHub token expired or invalid. Send another message to start device flow again."
+                        });
+                    }
+                    const messages = [];
+                    if (mode === "dev") {
+                        messages.push(...this.getContextLines());
+                    }
+                    messages.push(
                         sseText("⚠️ GitHub token expired or invalid. Cleared cache.\n\n"),
                         sseText("Send another message to start device flow again."),
                         sseDone()
-                    ]);
+                    );
+                    return poeResponse(messages);
                 } else if (e.message === "NO_COPILOT_ACCESS") {
+                    if (mode === "query_token") {
+                        return this.respondWithJson({
+                            status: "no_copilot_access",
+                            message: "Your GitHub account doesn't have Copilot access."
+                        });
+                    }
                     return poeError("Your GitHub account doesn't have Copilot access.");
                 }
                 throw e;
@@ -631,55 +653,38 @@ class CopilotTokenHandler {
         ];
     }
 
-    respondWithPendingStatus(status, flowInfo) {
-        const { dataOnly, markdown } = this.config;
-        const data = {
-            status,
-            user_code: flowInfo.user_code,
-            verification_uri: flowInfo.verification_uri
-        };
-
+    respondWithJson(data) {
+        // Returns JSON as text for user to see, plus data event for programmatic access
+        const jsonText = JSON.stringify(data, null, 2);
         return poeResponse([
-            dataOnly ? sseData(data) : sseDataAndJson(data, markdown),
-            sseDone()
-        ]);
-    }
-
-    respondWithGitHubToken(githubData) {
-        const { conversationId, userId } = this.config;
-        const result = {
-            status: "github_token_acquired",
-            version: DATA_VERSION,
-            current_time_utc: new Date().toISOString(),
-            github_token: githubData.token,
-            github_token_expires_at: githubData.expires_at,
-            github_token_acquired_at: githubData.acquired_at,
-            conversation_id: conversationId,
-            user_id: userId,
-        };
-
-        return poeResponse([
-            sseData(result),
+            sseText(jsonText),
+            sseData(data),
             sseDone()
         ]);
     }
 
     respondWithCopilotToken(copilotData, githubData) {
-        const { mode, dataOnly, markdown } = this.config;
+        const { mode } = this.config;
         const result = this.buildCopilotResult(copilotData, githubData);
 
         if (mode === "query_token") {
+            // query_token: plain JSON only
+            return this.respondWithJson(result);
+        }
+
+        if (mode === "auth_flow") {
+            // auth_flow: just show success message, no JSON
             return poeResponse([
-                dataOnly ? sseData(result) : sseDataAndJson(result, markdown),
+                sseText("✅ **Copilot Token Ready**\n\nToken has been cached."),
                 sseDone()
             ]);
         }
 
-        const contextLines = this.getContextLines();
+        // dev mode: full output with context and JSON
         return poeResponse([
-            ...contextLines,
+            ...this.getContextLines(),
             sseText("✅ **Copilot Token Ready**\n\n"),
-            dataOnly ? sseData(result) : sseDataAndJson(result, markdown),
+            sseDataAndJson(result, false),
             sseSuggestedReply("refresh"),
             sseSuggestedReply("reset"),
             sseDone()
@@ -687,19 +692,26 @@ class CopilotTokenHandler {
     }
 
     buildCopilotResult(copilotData, githubData) {
-        const { conversationId, userId } = this.config;
-        return {
+        const { mode, conversationId, userId } = this.config;
+        
+        const result = {
             status: "acquired",
             version: DATA_VERSION,
             current_time_utc: new Date().toISOString(),
             copilot_token: copilotData.token,
             copilot_expires_at: copilotData.expires_at,
             copilot_acquired_at: copilotData.acquired_at,
-            conversation_id: conversationId,
-            user_id: userId,
             github_token_expires_at: githubData.expires_at,
             github_token_acquired_at: githubData.acquired_at,
         };
+
+        // Only include debug info in dev mode
+        if (mode === "dev") {
+            result.conversation_id = conversationId;
+            result.user_id = userId;
+        }
+
+        return result;
     }
 }
 
