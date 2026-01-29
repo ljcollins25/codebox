@@ -15,7 +15,7 @@ from fastapi_poe.types import (
 
 # Configure bot settings with parameter controls
 poe.update_settings(SettingsResponse(
-    introduction_message="I'm a GitHub Copilot-compatible API bot. Configure your API settings using the parameter controls.",
+    introduction_message="I'm a GitHub Copilot-compatible API bot. Configure your API settings using the parameter controls, or leave the API key blank to authenticate via GitHub.",
     parameter_controls=ParameterControls(
         sections=[
             Section(
@@ -24,8 +24,8 @@ poe.update_settings(SettingsResponse(
                     TextField(
                         label="API Key",
                         parameter_name="api_key",
-                        description="Your API key (required)",
-                        placeholder="sk-...",
+                        description="Your API key (leave blank to auto-authenticate via GitHub)",
+                        placeholder="sk-... (optional)",
                     ),
                     TextField(
                         label="API URL",
@@ -125,6 +125,31 @@ poe.update_settings(SettingsResponse(
 
 
 class OpenAIAPIBot:
+    def _try_extract_token(self, response) -> str | None:
+        """Try to extract token from response. Returns token string or None."""
+        try:
+            result = json.loads(response.text)
+            if result.get("status") == "acquired":
+                return result.get("copilot_token")
+        except json.JSONDecodeError:
+            pass
+        return None
+
+    def _get_token(self) -> str | None:
+        """Get Copilot token from VSC-CPT. Returns token string or None."""
+        # Initial "fast" check
+        response = poe.call("VSC-CPT", "{ mode: query_token }")
+        token = self._try_extract_token(response)
+        if token:
+            return token
+
+        # Run auth flow with progress shown to user
+        poe.call("VSC-CPT", "{ mode: auth_flow, poll_interval_secs: 5, poll_count: 30 }", output=poe.default_chat)
+
+        # Get the token after auth flow
+        response = poe.call("VSC-CPT", "{ mode: query_token }")
+        return self._try_extract_token(response)
+
     def run(self):
         # Get parameters from the query
         params = poe.query.parameters or {}
@@ -162,10 +187,16 @@ class OpenAIAPIBot:
         api_url = get_param("api_url", "https://api.githubcopilot.com/chat/completions")
         api_key = get_param("api_key")
         model = get_param("model", "gpt-4o")
-        
+
         # Use custom model if selected
         if model == "custom":
             model = get_param("custom_model", "gpt-4o")
+
+        # If no API key provided, try to get one from VSC-CPT
+        if not api_key:
+            api_key = self._get_token()
+            if not api_key:
+                raise poe.BotError("Could not authenticate with GitHub Copilot. Please provide an API key or complete the GitHub authentication flow.")
 
         # Determine model type
         is_codex_model = "codex" in model
@@ -173,7 +204,7 @@ class OpenAIAPIBot:
 
         # Determine base host based on model type
         proxy_ep = get_proxy_endpoint(api_key)
-        
+
         if is_internal_model:
             # Internal copilot- models need the enterprise proxy endpoint
             if proxy_ep:
@@ -209,9 +240,6 @@ class OpenAIAPIBot:
             is_responses_endpoint = False
             normalized_url = api_url.rstrip("/")
             is_chat_endpoint = normalized_url.endswith("/chat/completions") or normalized_url.endswith("/v1/chat/completions")
-
-        if not api_key:
-            raise poe.BotError("Please provide an 'api_key' parameter to use this bot.")
 
         # Model parameters (use defaults that match slider defaults)
         temperature = params.get("temperature", 1.0)
@@ -298,14 +326,14 @@ class OpenAIAPIBot:
                             if line.startswith("event: "):
                                 current_event = line[7:]
                                 continue
-                            
+
                             if line.startswith("data: "):
                                 data = line[6:]
                                 if data == "[DONE]":
                                     break
                                 try:
                                     chunk = json.loads(data)
-                                    
+
                                     if is_responses_endpoint:
                                         # /responses endpoint: look for response.output_text.delta events
                                         if current_event == "response.output_text.delta" and "delta" in chunk:
