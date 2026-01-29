@@ -285,7 +285,8 @@ export default {
                                     default_value: "",
                                     options: [
                                         { value: "", name: "Normal" },
-                                        { value: "query_token", name: "Query Token (JSON only)" }
+                                        { value: "query_token", name: "Query Token (JSON only)" },
+                                        { value: "poll_only", name: "Poll Only (device flow only)" }
                                     ]
                                 },
                                 {
@@ -293,6 +294,13 @@ export default {
                                     label: "Markdown",
                                     description: "Wrap JSON output in markdown code blocks",
                                     parameter_name: "markdown",
+                                    default_value: false
+                                },
+                                {
+                                    control: "toggle_switch",
+                                    label: "Data Only",
+                                    description: "Only emit SSE data event without printing text",
+                                    parameter_name: "data_only",
                                     default_value: false
                                 }
                             ]
@@ -347,6 +355,7 @@ export default {
         let salt = url.searchParams.get("salt") || "";
         let mode = url.searchParams.get("mode") || "";
         let markdown = url.searchParams.get("markdown") === "true";
+        let dataOnly = url.searchParams.get("data_only") === "true";
         let refresh = false;
         let reset = false;
         
@@ -362,6 +371,7 @@ export default {
                     if (params.salt != null) salt = String(params.salt);
                     if (params.mode != null) mode = String(params.mode);
                     if (params.markdown === true || params.markdown === "true") markdown = true;
+                    if (params.data_only === true || params.data_only === "true") dataOnly = true;
                     if (params.refresh === true || params.refresh === "true") refresh = true;
                     if (params.reset === true || params.reset === "true") reset = true;
                 }
@@ -383,6 +393,7 @@ export default {
                             if (config.salt != null) salt = String(config.salt);
                             if (config.mode != null) mode = String(config.mode);
                             if (config.markdown === true) markdown = true;
+                            if (config.data_only === true) dataOnly = true;
                             if (config.refresh === true) refresh = true;
                             if (config.reset === true) reset = true;
                         }
@@ -432,8 +443,8 @@ export default {
             if (!githubData) {
                 // Check if we already have a pending flow - try to poll it
                 if (pendingFlow && pollCount > 0) {
-                    // query_token mode: poll silently and return JSON only
-                    if (mode === "query_token") {
+                    // query_token or poll_only mode: poll silently and return JSON only
+                    if (mode === "query_token" || mode === "poll_only") {
                         let pollResult;
                         let success = false;
                         
@@ -451,7 +462,11 @@ export default {
                                     await kv.delete(KEY_PENDING_FLOW);
                                 }
                                 return poeResponse([
-                                    sseDataAndJson({
+                                    dataOnly ? sseData({
+                                        status: pollResult.error,
+                                        user_code: pendingFlow.user_code,
+                                        verification_uri: pendingFlow.verification_uri
+                                    }) : sseDataAndJson({
                                         status: pollResult.error,
                                         user_code: pendingFlow.user_code,
                                         verification_uri: pendingFlow.verification_uri
@@ -467,7 +482,11 @@ export default {
                         
                         if (!success) {
                             return poeResponse([
-                                sseDataAndJson({
+                                dataOnly ? sseData({
+                                    status: "authorization_pending",
+                                    user_code: pendingFlow.user_code,
+                                    verification_uri: pendingFlow.verification_uri
+                                }) : sseDataAndJson({
                                     status: "authorization_pending",
                                     user_code: pendingFlow.user_code,
                                     verification_uri: pendingFlow.verification_uri
@@ -476,7 +495,7 @@ export default {
                             ]);
                         }
                         
-                        // Success - store GitHub token and fetch Copilot token
+                        // Success - store GitHub token
                         const expiresAt = new Date();
                         expiresAt.setDate(expiresAt.getDate() + GITHUB_TOKEN_LIFETIME_DAYS);
                         
@@ -490,7 +509,25 @@ export default {
                         await putToKV(kv, KEY_GITHUB_TOKEN, githubData, GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60);
                         await kv.delete(KEY_PENDING_FLOW);
                         
-                        // Fall through to fetch Copilot token below
+                        // poll_only mode: return GitHub token info only, don't fetch Copilot token
+                        if (mode === "poll_only") {
+                            const result = {
+                                status: "github_token_acquired",
+                                version: DATA_VERSION,
+                                current_time_utc: new Date().toISOString(),
+                                github_token: githubData.token,
+                                github_token_expires_at: githubData.expires_at,
+                                github_token_acquired_at: githubData.acquired_at,
+                                conversation_id: conversationId,
+                                user_id: userId,
+                            };
+                            return poeResponse([
+                                sseData(result),
+                                sseDone()
+                            ]);
+                        }
+                        
+                        // query_token mode: Fall through to fetch Copilot token below
                     } else {
                         // Normal streaming mode
                         return poeStreamingResponse(async (write) => {
@@ -585,7 +622,7 @@ export default {
                                     };
                                     
                                     write(sseText("✅ **Copilot Token Ready**\n\n"));
-                                    write(sseDataAndJson(result, markdown));
+                                    write(dataOnly ? sseData(result) : sseDataAndJson(result, markdown));
                                     write(sseSuggestedReply("refresh"));
                                     write(sseSuggestedReply("reset"));
                                 } catch (e) {
@@ -604,9 +641,13 @@ export default {
                     }
                 } else if (pendingFlow) {
                     // No polling configured, just show the pending flow info
-                    if (mode === "query_token") {
+                    if (mode === "query_token" || mode === "poll_only") {
                         return poeResponse([
-                            sseDataAndJson({
+                            dataOnly ? sseData({
+                                status: "authorization_pending",
+                                user_code: pendingFlow.user_code,
+                                verification_uri: pendingFlow.verification_uri
+                            }) : sseDataAndJson({
                                 status: "authorization_pending",
                                 user_code: pendingFlow.user_code,
                                 verification_uri: pendingFlow.verification_uri
@@ -636,9 +677,13 @@ export default {
                         expires_at: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
                     }, deviceFlow.expires_in);
                     
-                    if (mode === "query_token") {
+                    if (mode === "query_token" || mode === "poll_only") {
                         return poeResponse([
-                            sseDataAndJson({
+                            dataOnly ? sseData({
+                                status: "authorization_pending",
+                                user_code: deviceFlow.user_code,
+                                verification_uri: deviceFlow.verification_uri
+                            }) : sseDataAndJson({
                                 status: "authorization_pending",
                                 user_code: deviceFlow.user_code,
                                 verification_uri: deviceFlow.verification_uri
@@ -658,7 +703,27 @@ export default {
                 }
             }
             
-            // We have a GitHub token, check for cached Copilot token
+            // We have a GitHub token
+            
+            // poll_only mode: return GitHub token info only, don't fetch Copilot token
+            if (mode === "poll_only") {
+                const result = {
+                    status: "github_token_acquired",
+                    version: DATA_VERSION,
+                    current_time_utc: new Date().toISOString(),
+                    github_token: githubData.token,
+                    github_token_expires_at: githubData.expires_at,
+                    github_token_acquired_at: githubData.acquired_at,
+                    conversation_id: conversationId,
+                    user_id: userId,
+                };
+                return poeResponse([
+                    sseData(result),
+                    sseDone()
+                ]);
+            }
+            
+            // Check for cached Copilot token
             let copilotData = await getFromKV(kv, KEY_COPILOT_TOKEN);
             
             // Handle refresh command - delete cached Copilot token to force refresh
@@ -718,7 +783,7 @@ export default {
             // query_token mode: return data event only
             if (mode === "query_token") {
                 return poeResponse([
-                    sseDataAndJson(result, markdown),
+                    dataOnly ? sseData(result) : sseDataAndJson(result, markdown),
                     sseDone()
                 ]);
             }
@@ -727,7 +792,7 @@ export default {
             return poeResponse([
                 ...contextLines,
                 sseText("✅ **Copilot Token Ready**\n\n"),
-                sseDataAndJson(result, markdown),
+                dataOnly ? sseData(result) : sseDataAndJson(result, markdown),
                 sseSuggestedReply("refresh"),
                 sseSuggestedReply("reset"),
                 sseDone()
