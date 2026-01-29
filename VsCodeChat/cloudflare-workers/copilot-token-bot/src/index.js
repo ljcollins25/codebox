@@ -291,6 +291,7 @@ class CopilotTokenHandler {
             pendingFlow: `device_flow_pending_${DATA_VERSION}${suffix}`,
             githubToken: `github_token_${DATA_VERSION}${suffix}`,
             copilotToken: `copilot_token_${DATA_VERSION}${suffix}`,
+            lastPoll: `last_poll_${DATA_VERSION}${suffix}`,
         };
     }
 
@@ -333,6 +334,27 @@ class CopilotTokenHandler {
     // Device Flow Handling
     // =========================================================================
 
+    async shouldSkipPoll() {
+        const { pollInterval } = this.config;
+        const lastPollData = await getFromKV(this.kv, this.keys.lastPoll);
+        
+        if (lastPollData && lastPollData.timestamp) {
+            const elapsed = (Date.now() - lastPollData.timestamp) / 1000;
+            if (elapsed < pollInterval) {
+                return { skip: true, waitSeconds: Math.ceil(pollInterval - elapsed) };
+            }
+        }
+        return { skip: false };
+    }
+
+    async recordPollTimestamp() {
+        await putToKV(this.kv, this.keys.lastPoll, { timestamp: Date.now() }, 60);
+    }
+
+    async clearPollTimestamp() {
+        await this.kv.delete(this.keys.lastPoll);
+    }
+
     async handleDeviceFlow(pendingFlow) {
         const { mode, pollCount } = this.config;
 
@@ -359,18 +381,35 @@ class CopilotTokenHandler {
 
         let pollResult;
         let success = false;
+        let actuallyPolled = false;
 
         for (let i = 0; i < pollCount; i++) {
+            // Check if we polled too recently (but always allow at least one poll attempt)
+            const skipCheck = await this.shouldSkipPoll();
+            if (skipCheck.skip && actuallyPolled) {
+                // Already polled this request, skip remaining
+                if (i < pollCount - 1) {
+                    await new Promise(r => setTimeout(r, pollInterval * 1000));
+                }
+                continue;
+            }
+
+            actuallyPolled = true;
             pollResult = await pollDeviceFlow(pendingFlow.device_code);
 
             if (pollResult.access_token) {
                 success = true;
+                await this.clearPollTimestamp();
                 break;
             } else if (pollResult.error === "slow_down") {
                 pollInterval = Math.max(pollInterval, 5) + 5;
-            } else if (pollResult.error && pollResult.error !== "authorization_pending") {
+                await this.recordPollTimestamp();
+            } else if (pollResult.error === "authorization_pending") {
+                await this.recordPollTimestamp();
+            } else if (pollResult.error) {
                 if (pollResult.error === "expired_token") {
                     await this.kv.delete(this.keys.pendingFlow);
+                    await this.clearPollTimestamp();
                 }
                 return this.respondWithJson({
                     status: pollResult.error,
@@ -414,23 +453,39 @@ class CopilotTokenHandler {
 
             let pollResult;
             let success = false;
+            let actuallyPolled = false;
 
             for (let i = 0; i < pollCount; i++) {
+                // Check if we polled too recently (but always allow at least one poll attempt)
+                const skipCheck = await this.shouldSkipPoll();
+                if (skipCheck.skip && actuallyPolled) {
+                    write(sseText(`⏳ Poll ${i + 1}/${pollCount}... ⏸️ Skipped (wait ${skipCheck.waitSeconds}s)\n`));
+                    if (i < pollCount - 1) {
+                        await new Promise(r => setTimeout(r, pollInterval * 1000));
+                    }
+                    continue;
+                }
+
+                actuallyPolled = true;
                 write(sseText(`⏳ Poll ${i + 1}/${pollCount}... `));
                 pollResult = await pollDeviceFlow(pendingFlow.device_code);
 
                 if (pollResult.access_token) {
                     write(sseText("✅ Authorized!\n\n"));
                     success = true;
+                    await this.clearPollTimestamp();
                     break;
                 } else if (pollResult.error === "authorization_pending") {
                     write(sseText("⏸️ Pending\n"));
+                    await this.recordPollTimestamp();
                 } else if (pollResult.error === "slow_down") {
                     write(sseText("🐢 Rate limited, slowing down\n"));
                     pollInterval = Math.max(pollInterval, 5) + 5;
+                    await this.recordPollTimestamp();
                 } else if (pollResult.error === "expired_token") {
                     write(sseText("❌ Device code expired\n\n"));
                     await this.kv.delete(this.keys.pendingFlow);
+                    await this.clearPollTimestamp();
                     write(sseText("Send another message to start a new device flow."));
                     write(sseDone());
                     return;
