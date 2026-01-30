@@ -1,456 +1,250 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Copilot Proxy - Chat</title>
-	<style>
-		* { box-sizing: border-box; margin: 0; padding: 0; }
-		body {
-			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-			background: #0d1117;
-			color: #c9d1d9;
-			min-height: 100vh;
-			display: flex;
-			flex-direction: column;
-		}
-		.container { max-width: 900px; margin: 0 auto; padding: 1rem; flex: 1; display: flex; flex-direction: column; width: 100%; }
-		h1 { color: #58a6ff; margin-bottom: 1rem; font-size: 1.5rem; }
-		
-		/* Auth Section */
-		#auth-section {
-			background: #161b22;
-			border: 1px solid #30363d;
-			border-radius: 12px;
-			padding: 2rem;
-			text-align: center;
-			margin-bottom: 1rem;
-		}
-		#auth-section.hidden { display: none; }
-		.code-display {
-			font-family: monospace;
-			font-size: 2rem;
-			font-weight: bold;
-			letter-spacing: 0.2em;
-			color: #58a6ff;
-			background: #0d1117;
-			padding: 1rem 2rem;
-			border-radius: 8px;
-			margin: 1rem 0;
-			border: 2px dashed #30363d;
-		}
-		.btn {
-			display: inline-block;
-			background: #238636;
-			color: white;
-			padding: 12px 24px;
-			border-radius: 6px;
-			text-decoration: none;
-			font-weight: 600;
-			border: none;
-			cursor: pointer;
-			margin: 0.5rem;
-			font-size: 1rem;
-		}
-		.btn:hover { background: #2ea043; }
-		.btn:disabled { background: #484f58; cursor: not-allowed; }
-		.btn-secondary { background: #21262d; border: 1px solid #30363d; }
-		.btn-secondary:hover { background: #30363d; }
-		.status { margin-top: 1rem; padding: 0.5rem; color: #8b949e; }
-		.spinner {
-			display: inline-block;
-			width: 14px;
-			height: 14px;
-			border: 2px solid #8b949e;
-			border-radius: 50%;
-			border-top-color: transparent;
-			animation: spin 1s linear infinite;
-			margin-right: 8px;
-			vertical-align: middle;
-		}
-		@keyframes spin { to { transform: rotate(360deg); } }
-		
-		/* Chat Section */
-		#chat-section { flex: 1; display: flex; flex-direction: column; position: relative; }
-		#chat-section.hidden { display: none; }
-		
-		.header-row {
-			display: flex;
-			justify-content: space-between;
-			align-items: center;
-			margin-bottom: 1rem;
-		}
-		
-		.model-select {
-			display: flex;
-			align-items: center;
-			gap: 0.5rem;
-			padding: 0.5rem;
-			background: #161b22;
-			border-radius: 8px;
-		}
-		.model-select label { color: #8b949e; }
-		.model-select select {
-			background: #0d1117;
-			color: #c9d1d9;
-			border: 1px solid #30363d;
-			padding: 0.5rem;
-			border-radius: 4px;
-		}
-		
-		.logout-btn {
-			background: transparent;
-			border: 1px solid #30363d;
-			color: #8b949e;
-			padding: 0.5rem 1rem;
-			border-radius: 4px;
-			cursor: pointer;
-			font-size: 0.875rem;
-		}
-		.logout-btn:hover { background: #21262d; }
-		
-		#messages {
-			flex: 1;
-			overflow-y: auto;
-			padding: 1rem;
-			background: #161b22;
-			border: 1px solid #30363d;
-			border-radius: 12px;
-			margin-bottom: 1rem;
-			min-height: 300px;
-		}
-		.message {
-			margin-bottom: 1rem;
-			padding: 0.75rem 1rem;
-			border-radius: 8px;
-			max-width: 85%;
-			white-space: pre-wrap;
-			word-wrap: break-word;
-		}
-		.message.user {
-			background: #238636;
-			margin-left: auto;
-		}
-		.message.assistant {
-			background: #21262d;
-			border: 1px solid #30363d;
-		}
-		.message.system {
-			background: #1f2937;
-			color: #9ca3af;
-			font-style: italic;
-			max-width: 100%;
-			text-align: center;
-		}
-		.message pre {
-			background: #0d1117;
-			padding: 0.5rem;
-			border-radius: 4px;
-			overflow-x: auto;
-			margin: 0.5rem 0;
-		}
-		.message code {
-			font-family: 'SF Mono', Monaco, Consolas, monospace;
-			font-size: 0.9em;
-		}
-		
-		#input-area {
-			display: flex;
-			gap: 0.5rem;
-		}
-		#message-input {
-			flex: 1;
-			background: #0d1117;
-			color: #c9d1d9;
-			border: 1px solid #30363d;
-			padding: 0.75rem 1rem;
-			border-radius: 8px;
-			font-size: 1rem;
-			resize: none;
-			font-family: inherit;
-		}
-		#message-input:focus { outline: none; border-color: #58a6ff; }
-		#send-btn { min-width: 80px; }
-		
-		.error { color: #f85149; }
-		.success { color: #3fb950; }
-	</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Copilot Proxy - Login</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+background: #0d1117;
+color: #c9d1d9;
+min-height: 100vh;
+display: flex;
+align-items: center;
+justify-content: center;
+}
+.container { max-width: 500px; width: 100%; padding: 2rem; }
+h1 { color: #58a6ff; margin-bottom: 0.5rem; font-size: 1.75rem; text-align: center; }
+.subtitle { color: #8b949e; text-align: center; margin-bottom: 2rem; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 2rem; }
+.btn {
+display: inline-block; background: #238636; color: white; padding: 12px 24px;
+border-radius: 6px; text-decoration: none; font-weight: 600; border: none;
+cursor: pointer; font-size: 1rem; width: 100%;
+}
+.btn:hover { background: #2ea043; }
+.btn:disabled { background: #484f58; cursor: not-allowed; }
+.btn-secondary { background: #21262d; border: 1px solid #30363d; }
+.btn-secondary:hover { background: #30363d; }
+#device-flow { display: none; }
+#device-flow.active { display: block; }
+.code-display {
+font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 2rem; font-weight: bold;
+letter-spacing: 0.15em; color: #58a6ff; background: #0d1117; padding: 1rem 2rem;
+border-radius: 8px; margin: 1.5rem 0; border: 2px dashed #30363d; text-align: center;
+}
+.instructions { color: #8b949e; margin-bottom: 1rem; text-align: center; }
+.github-link { display: block; margin-bottom: 1.5rem; }
+.status { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem; color: #8b949e; font-size: 0.9rem; }
+.spinner { width: 16px; height: 16px; border: 2px solid #30363d; border-radius: 50%; border-top-color: #58a6ff; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#token-display { display: none; }
+#token-display.active { display: block; }
+.success-icon { font-size: 3rem; text-align: center; margin-bottom: 1rem; }
+.success-text { color: #3fb950; text-align: center; font-weight: 600; margin-bottom: 1.5rem; }
+.token-label { color: #8b949e; font-size: 0.85rem; margin-bottom: 0.5rem; }
+.token-box {
+background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 1rem;
+font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 0.75rem;
+word-break: break-all; margin-bottom: 1rem; max-height: 120px; overflow-y: auto;
+}
+.button-row { display: flex; gap: 0.5rem; }
+.button-row .btn { flex: 1; }
+.error { color: #f85149; text-align: center; padding: 1rem; }
+.footer { margin-top: 2rem; text-align: center; font-size: 0.85rem; }
+.footer a { color: #58a6ff; text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+</style>
 </head>
 <body>
-	<div class="container">
-		<h1>🤖 GitHub Copilot Proxy</h1>
-		
-		<!-- Auth Section -->
-		<div id="auth-section">
-			<div id="auth-start">
-				<p style="margin-bottom: 1rem;">Sign in with GitHub to chat with Copilot models.</p>
-				<button class="btn" onclick="startAuth()">Sign in with GitHub</button>
-			</div>
-			<div id="auth-pending" style="display: none;">
-				<p>Enter this code at GitHub:</p>
-				<div class="code-display" id="user-code"></div>
-				<a id="github-link" href="#" target="_blank" class="btn">Open GitHub →</a>
-				<div class="status" id="auth-status">
-					<span class="spinner"></span>Waiting for authorization...
-				</div>
-			</div>
-		</div>
-		
-		<!-- Chat Section -->
-		<div id="chat-section" class="hidden">
-			<div class="header-row">
-				<div class="model-select">
-					<label for="model">Model:</label>
-					<select id="model">
-						<option value="gpt-4o">GPT-4o</option>
-						<option value="gpt-4.1">GPT-4.1</option>
-						<option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-						<option value="claude-sonnet-4">Claude Sonnet 4</option>
-						<option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
-						<option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-						<option value="o3-mini">O3 Mini</option>
-						<option value="o4-mini">O4 Mini</option>
-					</select>
-				</div>
-				<button class="logout-btn" onclick="logout()">Logout</button>
-			</div>
-			
-			<div id="messages"></div>
-			
-			<div id="input-area">
-				<textarea id="message-input" rows="2" placeholder="Type a message... (Shift+Enter for new line)"></textarea>
-				<button id="send-btn" class="btn" onclick="sendMessage()">Send</button>
-			</div>
-		</div>
-	</div>
-	
-	<script>
-		let sessionId = localStorage.getItem('copilot_session_id');
-		let messages = [];
-		let isStreaming = false;
-		let pollInterval = null;
-		
-		// Check if already authenticated
-		if (sessionId) {
-			showChatSection();
-		}
-		
-		async function startAuth() {
-			document.getElementById('auth-start').style.display = 'none';
-			document.getElementById('auth-pending').style.display = 'block';
-			document.getElementById('auth-status').innerHTML = '<span class="spinner"></span>Starting authentication...';
-			
-			try {
-				const res = await fetch('/start-auth', { method: 'POST' });
-				const data = await res.json();
-				
-				if (data.error) {
-					document.getElementById('auth-status').innerHTML = '<span class="error">❌ ' + data.error + '</span>';
-					return;
-				}
-				
-				sessionId = data.session_id;
-				document.getElementById('user-code').textContent = data.user_code;
-				document.getElementById('github-link').href = data.verification_uri;
-				document.getElementById('auth-status').innerHTML = '<span class="spinner"></span>Waiting for authorization...';
-				
-				// Start polling
-				pollAuth();
-				
-			} catch (error) {
-				document.getElementById('auth-status').innerHTML = '<span class="error">❌ ' + error.message + '</span>';
-			}
-		}
-		
-		async function pollAuth() {
-			const maxAttempts = 60; // 5 minutes with 5s interval
-			let attempts = 0;
-			
-			const poll = async () => {
-				attempts++;
-				
-				try {
-					const res = await fetch('/poll-auth', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ session_id: sessionId })
-					});
-					const data = await res.json();
-					
-					if (data.status === 'complete') {
-						localStorage.setItem('copilot_session_id', sessionId);
-						showChatSection();
-						return;
-					}
-					
-					if (data.status === 'expired') {
-						document.getElementById('auth-status').innerHTML = '<span class="error">❌ Session expired. Please try again.</span>';
-						return;
-					}
-					
-					if (data.status === 'error') {
-						document.getElementById('auth-status').innerHTML = '<span class="error">❌ ' + (data.error || 'Unknown error') + '</span>';
-						return;
-					}
-					
-					if (attempts < maxAttempts) {
-						setTimeout(poll, 5000);
-					} else {
-						document.getElementById('auth-status').innerHTML = '<span class="error">❌ Timed out. Please try again.</span>';
-					}
-					
-				} catch (error) {
-					console.error('Poll error:', error);
-					if (attempts < maxAttempts) {
-						setTimeout(poll, 5000);
-					}
-				}
-			};
-			
-			poll();
-		}
-		
-		function showChatSection() {
-			document.getElementById('auth-section').classList.add('hidden');
-			document.getElementById('chat-section').classList.remove('hidden');
-			addSystemMessage('Connected to GitHub Copilot. Start chatting!');
-			document.getElementById('message-input').focus();
-		}
-		
-		function logout() {
-			localStorage.removeItem('copilot_session_id');
-			sessionId = null;
-			messages = [];
-			document.getElementById('messages').innerHTML = '';
-			document.getElementById('chat-section').classList.add('hidden');
-			document.getElementById('auth-section').classList.remove('hidden');
-			document.getElementById('auth-start').style.display = 'block';
-			document.getElementById('auth-pending').style.display = 'none';
-		}
-		
-		function addSystemMessage(text) {
-			const div = document.createElement('div');
-			div.className = 'message system';
-			div.textContent = text;
-			document.getElementById('messages').appendChild(div);
-			scrollToBottom();
-		}
-		
-		function addMessage(role, content) {
-			messages.push({ role, content });
-			const div = document.createElement('div');
-			div.className = 'message ' + role;
-			div.textContent = content;
-			document.getElementById('messages').appendChild(div);
-			scrollToBottom();
-			return div;
-		}
-		
-		function scrollToBottom() {
-			const container = document.getElementById('messages');
-			container.scrollTop = container.scrollHeight;
-		}
-		
-		async function sendMessage() {
-			if (isStreaming) return;
-			
-			const input = document.getElementById('message-input');
-			const text = input.value.trim();
-			if (!text) return;
-			
-			input.value = '';
-			addMessage('user', text);
-			
-			const model = document.getElementById('model').value;
-			const assistantDiv = addMessage('assistant', '');
-			
-			isStreaming = true;
-			document.getElementById('send-btn').disabled = true;
-			
-			try {
-				const chatMessages = messages.slice(0, -1).map(m => ({
-					role: m.role === 'assistant' ? 'assistant' : 'user',
-					content: m.content
-				}));
-				chatMessages.push({ role: 'user', content: text });
-				
-				const res = await fetch('/chat', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						session_id: sessionId,
-						model: model,
-						messages: chatMessages
-					})
-				});
-				
-				if (!res.ok) {
-					const error = await res.json();
-					assistantDiv.textContent = '❌ ' + (error.error || 'Request failed');
-					assistantDiv.classList.add('error');
-					messages.pop();
-					return;
-				}
-				
-				const reader = res.body.getReader();
-				const decoder = new TextDecoder();
-				let buffer = '';
-				let fullContent = '';
-				
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-					
-					buffer += decoder.decode(value, { stream: true });
-					const lines = buffer.split('\n');
-					buffer = lines.pop() || '';
-					
-					for (const line of lines) {
-						if (!line.startsWith('data: ')) continue;
-						const data = line.slice(6);
-						if (data === '[DONE]') continue;
-						
-						try {
-							const chunk = JSON.parse(data);
-							const content = chunk.choices?.[0]?.delta?.content;
-							if (content) {
-								fullContent += content;
-								assistantDiv.textContent = fullContent;
-								scrollToBottom();
-							}
-						} catch (e) {
-							// Ignore parse errors
-						}
-					}
-				}
-				
-				// Update the stored message with full content
-				if (fullContent) {
-					messages[messages.length - 1].content = fullContent;
-				} else {
-					messages.pop();
-					assistantDiv.textContent = '❌ No response received';
-					assistantDiv.classList.add('error');
-				}
-				
-			} catch (error) {
-				assistantDiv.textContent = '❌ ' + error.message;
-				assistantDiv.classList.add('error');
-				messages.pop();
-			} finally {
-				isStreaming = false;
-				document.getElementById('send-btn').disabled = false;
-				document.getElementById('message-input').focus();
-			}
-		}
-		
-		// Handle Enter key
-		document.getElementById('message-input').addEventListener('keydown', (e) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
-				e.preventDefault();
-				sendMessage();
-			}
-		});
-	</script>
+<div class="container">
+<h1>Copilot Proxy</h1>
+<p class="subtitle">Obtain a GitHub OAuth token for API access</p>
+<div class="card">
+<div id="start-section">
+<p style="color: #8b949e; margin-bottom: 1.5rem; text-align: center;">
+Sign in with GitHub to get an OAuth token for use with the Copilot proxy API.
+</p>
+<button class="btn" onclick="startLogin()">Sign in with GitHub</button>
+</div>
+<div id="device-flow">
+<p class="instructions">Enter this code at GitHub:</p>
+<div class="code-display" id="user-code">----</div>
+<a id="github-link" href="#" target="_blank" rel="noopener noreferrer" class="btn github-link">Open GitHub</a>
+<div class="status" id="status"><div class="spinner"></div><span>Waiting for authorization...</span></div>
+<button class="btn btn-secondary" onclick="reset()" style="margin-top: 1rem;">Cancel / Start Over</button>
+</div>
+<div id="token-display">
+<div class="success-icon">OK</div>
+<p class="success-text">Authorization successful!</p>
+<div class="token-label">Your GitHub OAuth Token:</div>
+<div class="token-box" id="token-value"></div>
+<div class="button-row">
+<button class="btn" onclick="copyToken()">Copy Token</button>
+<button class="btn btn-secondary" onclick="reset()">Get New Token</button>
+</div>
+</div>
+<div id="error-section" style="display: none;">
+<p class="error" id="error-message"></p>
+<button class="btn btn-secondary" onclick="reset()" style="margin-top: 1rem;">Try Again</button>
+</div>
+</div>
+<div class="footer">
+<p><a href="/health">Health Check</a> | <a href="https://github.com/settings/tokens">Manage Tokens</a></p>
+</div>
+</div>
+<script>
+const GITHUB_CLIENT_ID = "01ab8ac9400c4e429b23";
+const STORAGE_KEY = "copilot_device_flow";
+let pollTimer = null;
+
+document.addEventListener("DOMContentLoaded", () => {
+const saved = localStorage.getItem(STORAGE_KEY);
+if (saved) {
+try {
+const state = JSON.parse(saved);
+if (new Date(state.expires_at) > new Date()) {
+showDeviceFlow(state);
+startPolling(state);
+} else {
+localStorage.removeItem(STORAGE_KEY);
+}
+} catch (e) {
+localStorage.removeItem(STORAGE_KEY);
+}
+}
+});
+
+async function startLogin() {
+hideAll();
+showSection("device-flow");
+document.getElementById("status").innerHTML = "<div class=\"spinner\"></div><span>Initializing...</span>";
+try {
+const res = await fetch("/login", { method: "POST" });
+const data = await res.json();
+if (data.error) {
+showError(data.error.message || "Failed to start device flow");
+return;
+}
+const state = {
+device_code: data.device_code,
+user_code: data.user_code,
+verification_uri: data.verification_uri,
+verification_uri_complete: data.verification_uri_complete,
+expires_at: data.expires_at,
+interval: data.interval || 5,
+};
+localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+showDeviceFlow(state);
+startPolling(state);
+} catch (error) {
+showError("Network error: " + error.message);
+}
+}
+
+function showDeviceFlow(state) {
+document.getElementById("user-code").textContent = state.user_code;
+document.getElementById("github-link").href = state.verification_uri_complete || state.verification_uri;
+document.getElementById("status").innerHTML = "<div class=\"spinner\"></div><span>Waiting for authorization...</span>";
+}
+
+function startPolling(state) {
+if (pollTimer) clearInterval(pollTimer);
+const interval = Math.max(state.interval, 5) * 1000;
+pollTimer = setInterval(async () => {
+if (new Date(state.expires_at) <= new Date()) {
+stopPolling();
+localStorage.removeItem(STORAGE_KEY);
+showError("Device code expired. Please try again.");
+return;
+}
+try {
+const res = await fetch("https://github.com/login/oauth/access_token", {
+method: "POST",
+headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+body: "client_id=" + GITHUB_CLIENT_ID + "&device_code=" + state.device_code + "&grant_type=urn:ietf:params:oauth:grant-type:device_code",
+});
+const data = await res.json();
+if (data.access_token) {
+stopPolling();
+localStorage.removeItem(STORAGE_KEY);
+showToken(data.access_token);
+return;
+}
+if (data.error === "authorization_pending" || data.error === "slow_down") return;
+if (data.error === "expired_token") {
+stopPolling();
+localStorage.removeItem(STORAGE_KEY);
+showError("Device code expired. Please try again.");
+return;
+}
+if (data.error === "access_denied") {
+stopPolling();
+localStorage.removeItem(STORAGE_KEY);
+showError("Authorization was denied.");
+return;
+}
+if (data.error) {
+stopPolling();
+localStorage.removeItem(STORAGE_KEY);
+showError(data.error_description || data.error);
+}
+} catch (error) {
+console.error("Poll error:", error);
+}
+}, interval);
+}
+
+function stopPolling() {
+if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function showToken(token) {
+hideAll();
+showSection("token-display");
+document.getElementById("token-value").textContent = token;
+}
+
+function copyToken() {
+const token = document.getElementById("token-value").textContent;
+navigator.clipboard.writeText(token).then(() => {
+const btn = event.target;
+const orig = btn.textContent;
+btn.textContent = "Copied!";
+setTimeout(() => btn.textContent = orig, 2000);
+});
+}
+
+function showError(message) {
+hideAll();
+document.getElementById("error-message").textContent = message;
+document.getElementById("error-section").style.display = "block";
+}
+
+function reset() {
+stopPolling();
+localStorage.removeItem(STORAGE_KEY);
+hideAll();
+showSection("start-section");
+}
+
+function hideAll() {
+document.getElementById("start-section").style.display = "none";
+document.getElementById("device-flow").classList.remove("active");
+document.getElementById("token-display").classList.remove("active");
+document.getElementById("error-section").style.display = "none";
+}
+
+function showSection(id) {
+const el = document.getElementById(id);
+if (id === "device-flow" || id === "token-display") {
+el.classList.add("active");
+} else {
+el.style.display = "block";
+}
+}
+</script>
 </body>
 </html>

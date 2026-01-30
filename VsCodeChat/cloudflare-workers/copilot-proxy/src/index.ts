@@ -1,75 +1,70 @@
 /**
- * GitHub Copilot Proxy - Cloudflare Worker
+ * Copilot Proxy - Cloudflare Worker
  * 
- * A comprehensive Copilot API proxy that:
- * 1. Handles GitHub Device Flow authentication with streaming progress
- * 2. Caches GitHub and Copilot tokens in Workers KV
- * 3. Proxies chat requests to GitHub Copilot API
- * 4. Provides a web UI for testing (served as static asset)
+ * A layered proxy that:
+ * - /login          - Initiates GitHub OAuth device flow (stateless)
+ * - /copilot/v1/*   - OpenAI-compatible Copilot proxy (GitHub token -> Copilot token)
+ * - /poe/server     - Poe Server Bot <-> OpenAI translation
+ * - /               - Static UI served by Cloudflare static assets
  * 
- * Endpoints:
- *   GET  /              - Web UI for testing device flow and chat (static)
- *   POST /chat/completions - OpenAI-compatible chat proxy (auto device flow if no token)
- *   POST /completions   - Code completions proxy
- *   GET  /models        - List available models
- *   POST /start-auth    - Start device flow authentication
- *   POST /poll-auth     - Poll device flow status
- *   POST /chat          - Web UI chat endpoint (uses session)
- *   POST /token         - Exchange GitHub token for Copilot token
- *   GET  /health        - Health check
+ * See: copilot-proxy-spec.md for full specification
+ * 
+ * References:
+ * - https://creator.poe.com/docs/server-bots/quick-start
+ * - https://creator.poe.com/docs/server-bots/parameter-controls
+ * - https://creator.poe.com/docs/server-bots/function-calling
  */
 
 export interface Env {
-	// KV namespace for token caching
-	TOKEN_CACHE: KVNamespace;
-	// Optional: Store a default Copilot token
-	COPILOT_TOKEN?: string;
+TOKEN_CACHE: KVNamespace;
+SERVER_SECRET?: string;
 }
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const GITHUB_CLIENT_ID = "01ab8ac9400c4e429b23";
-const GITHUB_SCOPES = "read:user";
-const GITHUB_TOKEN_LIFETIME_DAYS = 30;
+const GITHUB_CLIENT_ID = '01ab8ac9400c4e429b23';
+const GITHUB_SCOPES = 'read:user';
 const COPILOT_TOKEN_LIFETIME_MINUTES = 25;
-const DATA_VERSION = "v1";
-
 const COPILOT_API_BASE = 'https://api.githubcopilot.com';
 
-// Headers required by Copilot API
-const COPILOT_HEADERS: Record<string, string> = {
-	'User-Agent': 'GitHubCopilotChat/1.0.0',
-	'Editor-Version': 'vscode/1.104.1',
-	'Editor-Plugin-Version': 'copilot-chat/0.36.0',
-	'Openai-Organization': 'github-copilot',
-	'Copilot-Integration-Id': 'vscode-chat',
-	'Content-Type': 'application/json',
+// VS Code emulation headers
+const VSCODE_HEADERS: Record<string, string> = {
+'User-Agent': 'GitHubCopilotChat/1.0.0',
+'Editor-Version': 'vscode/1.96.0',
+'Editor-Plugin-Version': 'copilot-chat/0.26.0',
+'Openai-Organization': 'github-copilot',
+'Copilot-Integration-Id': 'vscode-chat',
+'Content-Type': 'application/json',
 };
 
 // =============================================================================
-// CORS Headers
+// CORS Helpers
 // =============================================================================
 
 function corsHeaders(): Record<string, string> {
-	return {
-		'Access-Control-Allow-Origin': '*',
-		'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-		'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-Id',
-		'Access-Control-Max-Age': '86400',
-	};
+return {
+'Access-Control-Allow-Origin': '*',
+'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-Id, X-Poe-Access-Key',
+'Access-Control-Max-Age': '86400',
+};
 }
 
 function handleCORS(): Response {
-	return new Response(null, { status: 204, headers: corsHeaders() });
+return new Response(null, { status: 204, headers: corsHeaders() });
 }
 
-function jsonResponse(data: unknown, status = 200): Response {
-	return new Response(JSON.stringify(data, null, 2), {
-		status,
-		headers: { 'Content-Type': 'application/json', ...corsHeaders() },
-	});
+function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
+return new Response(JSON.stringify(data, null, 2), {
+status,
+headers: { 'Content-Type': 'application/json', ...corsHeaders(), ...extraHeaders },
+});
+}
+
+function errorResponse(message: string, status: number, type = 'error'): Response {
+return jsonResponse({ error: { message, type } }, status);
 }
 
 // =============================================================================
@@ -77,878 +72,617 @@ function jsonResponse(data: unknown, status = 200): Response {
 // =============================================================================
 
 export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		// Handle CORS preflight
-		if (request.method === 'OPTIONS') {
-			return handleCORS();
-		}
+async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+if (request.method === 'OPTIONS') {
+return handleCORS();
+}
 
-		const url = new URL(request.url);
-		const path = url.pathname;
+const url = new URL(request.url);
+const path = url.pathname;
 
-		try {
-			// GET requests (static assets serve / and /index.html automatically)
-			if (request.method === 'GET') {
-				if (path === '/health') {
-					return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() });
-				}
-				if (path === '/models') {
-					return await handleModelsRequest(request, env);
-				}
-			}
+try {
+// /login - Device flow initiation (stateless)
+if (path === '/login' && (request.method === 'POST' || request.method === 'GET')) {
+return await handleLogin(request, env);
+}
 
-			// POST endpoints for device flow (Web UI)
-			if (request.method === 'POST' && path === '/start-auth') {
-				return await handleStartAuth(request, env);
-			}
-			if (request.method === 'POST' && path === '/poll-auth') {
-				return await handlePollAuth(request, env);
-			}
-			if (request.method === 'POST' && path === '/chat') {
-				return await handleWebChat(request, env);
-			}
+// /copilot/v1/* - OpenAI-compatible Copilot proxy
+if (path.startsWith('/copilot/v1/')) {
+return await handleCopilotProxy(request, env, path);
+}
 
-			// Direct proxy endpoints (require Copilot token in Authorization header)
-			if (request.method === 'POST' && path === '/chat/completions') {
-				return await proxyChatCompletions(request, env);
-			}
-			if (request.method === 'POST' && path === '/completions') {
-				return await proxyCompletions(request, env);
-			}
-			if (request.method === 'POST' && path === '/v1/messages') {
-				return await proxyMessages(request, env);
-			}
-			if (request.method === 'POST' && path === '/token') {
-				return await exchangeToken(request, env);
-			}
+// /poe/server - Poe Server Bot translation
+if (path === '/poe/server' && request.method === 'POST') {
+return await handlePoeServer(request, env, url);
+}
 
-			return jsonResponse({ 
-				error: 'Not found', 
-				endpoints: [
-					'GET  /',
-					'POST /chat/completions',
-					'POST /completions',
-					'GET  /models',
-					'POST /start-auth',
-					'POST /poll-auth',
-					'POST /chat',
-					'POST /token',
-					'GET  /health'
-				] 
-			}, 404);
+// /poe/settings - Poe parameter controls
+if (path === '/poe/settings' && request.method === 'POST') {
+return await handlePoeSettings(request, env);
+}
 
-		} catch (error) {
-			console.error('Worker error:', error);
-			return jsonResponse({ error: 'Internal server error', message: String(error) }, 500);
-		}
-	},
+// /health - Health check
+if (path === '/health' && request.method === 'GET') {
+return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() });
+}
+
+// Static assets handle / automatically
+return jsonResponse({
+error: 'Not found',
+endpoints: [
+'GET|POST /login',
+'POST /copilot/v1/chat/completions',
+'POST /copilot/v1/completions',
+'GET  /copilot/v1/models',
+'POST /poe/server',
+'POST /poe/settings',
+'GET  /health',
+]
+}, 404);
+
+} catch (error) {
+console.error('Worker error:', error);
+return errorResponse(String(error), 500, 'internal_error');
+}
+},
 };
 
 // =============================================================================
-// Types
+// /login - Device Flow Initiation
 // =============================================================================
-
-interface DeviceFlowState {
-	device_code: string;
-	user_code: string;
-	verification_uri: string;
-	expires_at: string;
-	interval: number;
-}
-
-interface Session {
-	github_token: string;
-	github_expires_at: string;
-	copilot_token?: string;
-	copilot_expires_at?: string;
-}
 
 interface DeviceFlowResponse {
-	device_code: string;
-	user_code: string;
-	verification_uri: string;
-	expires_in: number;
-	interval: number;
+device_code: string;
+user_code: string;
+verification_uri: string;
+verification_uri_complete?: string;
+expires_in: number;
+interval: number;
 }
 
-interface PollResponse {
-	access_token?: string;
-	error?: string;
+async function handleLogin(request: Request, env: Env): Promise<Response> {
+const response = await fetch('https://github.com/login/device/code', {
+method: 'POST',
+headers: {
+'Accept': 'application/json',
+'Content-Type': 'application/x-www-form-urlencoded',
+},
+body: `client_id=${GITHUB_CLIENT_ID}&scope=${GITHUB_SCOPES}`,
+});
+
+if (!response.ok) {
+const text = await response.text();
+return errorResponse(`GitHub device flow failed: ${text}`, response.status);
 }
 
-interface CopilotTokenResponse {
-	token: string;
-}
+const data: DeviceFlowResponse = await response.json();
 
-// =============================================================================
-// Device Flow Handlers (Web UI)
-// =============================================================================
-
-async function handleStartAuth(request: Request, env: Env): Promise<Response> {
-	try {
-		const deviceFlow = await startDeviceFlow();
-		
-		// Generate a session ID for the web UI
-		const sessionId = crypto.randomUUID();
-		const pendingFlowKey = `webui_pending_${DATA_VERSION}_${sessionId}`;
-		
-		const pendingState: DeviceFlowState = {
-			device_code: deviceFlow.device_code,
-			user_code: deviceFlow.user_code,
-			verification_uri: deviceFlow.verification_uri,
-			expires_at: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
-			interval: deviceFlow.interval || 5,
-		};
-		
-		await env.TOKEN_CACHE.put(pendingFlowKey, JSON.stringify(pendingState), {
-			expirationTtl: deviceFlow.expires_in,
-		});
-		
-		return jsonResponse({
-			session_id: sessionId,
-			user_code: deviceFlow.user_code,
-			verification_uri: deviceFlow.verification_uri,
-			expires_in: deviceFlow.expires_in,
-			interval: deviceFlow.interval,
-		});
-		
-	} catch (error) {
-		return jsonResponse({ error: String(error) }, 500);
-	}
-}
-
-async function handlePollAuth(request: Request, env: Env): Promise<Response> {
-	const body = await request.json() as { session_id?: string };
-	const sessionId = body.session_id;
-	
-	if (!sessionId) {
-		return jsonResponse({ error: 'Missing session_id' }, 400);
-	}
-	
-	const pendingFlowKey = `webui_pending_${DATA_VERSION}_${sessionId}`;
-	const pendingFlow = await env.TOKEN_CACHE.get(pendingFlowKey, 'json') as DeviceFlowState | null;
-	
-	if (!pendingFlow) {
-		return jsonResponse({ status: 'expired' });
-	}
-	
-	const pollResult = await pollDeviceFlowOnce(pendingFlow.device_code);
-	
-	if (pollResult.access_token) {
-		// Get Copilot token
-		try {
-			const copilotData = await getCopilotToken(pollResult.access_token);
-			
-			// Store session for web UI
-			const sessionKey = `webui_session_${DATA_VERSION}_${sessionId}`;
-			const session: Session = {
-				github_token: pollResult.access_token,
-				github_expires_at: new Date(Date.now() + GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60 * 1000).toISOString(),
-				copilot_token: copilotData.token,
-				copilot_expires_at: new Date(Date.now() + COPILOT_TOKEN_LIFETIME_MINUTES * 60 * 1000).toISOString(),
-			};
-			
-			await env.TOKEN_CACHE.put(sessionKey, JSON.stringify(session), {
-				expirationTtl: GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60,
-			});
-			await env.TOKEN_CACHE.delete(pendingFlowKey);
-			
-			return jsonResponse({ 
-				status: 'complete',
-				session_id: sessionId,
-			});
-			
-		} catch (error) {
-			const errorMsg = String(error);
-			if (errorMsg.includes('NO_COPILOT_ACCESS')) {
-				return jsonResponse({ status: 'error', error: 'Your GitHub account does not have Copilot access.' });
-			}
-			return jsonResponse({ status: 'error', error: errorMsg });
-		}
-	}
-	
-	if (pollResult.error === 'expired_token') {
-		await env.TOKEN_CACHE.delete(pendingFlowKey);
-		return jsonResponse({ status: 'expired' });
-	}
-	
-	if (pollResult.error === 'authorization_pending' || pollResult.error === 'slow_down') {
-		return jsonResponse({ status: 'pending' });
-	}
-	
-	return jsonResponse({ status: 'error', error: pollResult.error });
-}
-
-async function handleWebChat(request: Request, env: Env): Promise<Response> {
-	const body = await request.json() as { 
-		session_id?: string; 
-		messages?: Array<{ role: string; content: string }>; 
-		model?: string;
-	};
-	const { session_id, messages, model = 'gpt-4o' } = body;
-	
-	if (!session_id) {
-		return jsonResponse({ error: 'Missing session_id' }, 400);
-	}
-	
-	if (!messages || messages.length === 0) {
-		return jsonResponse({ error: 'Missing messages' }, 400);
-	}
-	
-	const sessionKey = `webui_session_${DATA_VERSION}_${session_id}`;
-	let session = await env.TOKEN_CACHE.get(sessionKey, 'json') as Session | null;
-	
-	if (!session?.copilot_token) {
-		return jsonResponse({ error: 'Not authenticated. Please sign in first.' }, 401);
-	}
-	
-	// Refresh token if expired
-	if (isTokenExpired(session.copilot_expires_at)) {
-		try {
-			const copilotData = await getCopilotToken(session.github_token);
-			session.copilot_token = copilotData.token;
-			session.copilot_expires_at = new Date(Date.now() + COPILOT_TOKEN_LIFETIME_MINUTES * 60 * 1000).toISOString();
-			await env.TOKEN_CACHE.put(sessionKey, JSON.stringify(session), {
-				expirationTtl: GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60,
-			});
-		} catch (error) {
-			return jsonResponse({ error: 'Token refresh failed: ' + String(error) }, 401);
-		}
-	}
-	
-	const payload = {
-		model,
-		messages,
-		stream: true,
-	};
-	
-	const response = await fetch(`${COPILOT_API_BASE}/chat/completions`, {
-		method: 'POST',
-		headers: {
-			...COPILOT_HEADERS,
-			'Authorization': `Bearer ${session.copilot_token}`,
-		},
-		body: JSON.stringify(payload),
-	});
-	
-	if (!response.ok) {
-		const error = await response.text();
-		return jsonResponse({ error: `Copilot API error: ${error}` }, response.status);
-	}
-	
-	// Return streaming response
-	return new Response(response.body, {
-		headers: {
-			'Content-Type': 'text/event-stream',
-			'Cache-Control': 'no-cache',
-			...corsHeaders(),
-		},
-	});
+return jsonResponse({
+device_code: data.device_code,
+user_code: data.user_code,
+verification_uri: data.verification_uri,
+verification_uri_complete: data.verification_uri_complete || `${data.verification_uri}?user_code=${data.user_code}`,
+expires_in: data.expires_in,
+expires_at: new Date(Date.now() + data.expires_in * 1000).toISOString(),
+interval: data.interval || 5,
+});
 }
 
 // =============================================================================
-// Direct Proxy Handlers (OpenAI-compatible with auto device flow)
+// /copilot/v1/* - OpenAI-Compatible Copilot Proxy
 // =============================================================================
 
-/**
- * Proxy chat completions to Copilot API.
- * If no token provided, initiates device flow with streaming SSE events.
- * Uses X-Session-Id header to track auth sessions across requests.
- */
-async function proxyChatCompletions(request: Request, env: Env): Promise<Response> {
-	const authHeader = request.headers.get('Authorization');
-	const token = authHeader?.replace(/^Bearer\s+/i, '');
-	const sessionId = request.headers.get('X-Session-Id');
-	
-	// If we have a token, proxy directly
-	if (token) {
-		return await doProxyChatCompletions(request, token, env);
-	}
-	
-	// If we have a session ID, check for cached token
-	if (sessionId) {
-		const sessionKey = `openai_session_${DATA_VERSION}_${sessionId}`;
-		const session = await env.TOKEN_CACHE.get(sessionKey, 'json') as Session | null;
-		
-		if (session?.copilot_token && !isTokenExpired(session.copilot_expires_at)) {
-			return await doProxyChatCompletions(request, session.copilot_token, env);
-		}
-		
-		// Try to refresh if github token is valid
-		if (session?.github_token && !isTokenExpired(session.github_expires_at)) {
-			try {
-				const copilotData = await getCopilotToken(session.github_token);
-				session.copilot_token = copilotData.token;
-				session.copilot_expires_at = new Date(Date.now() + COPILOT_TOKEN_LIFETIME_MINUTES * 60 * 1000).toISOString();
-				await env.TOKEN_CACHE.put(sessionKey, JSON.stringify(session), {
-					expirationTtl: GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60,
-				});
-				return await doProxyChatCompletions(request, session.copilot_token, env);
-			} catch {
-				// Fall through to device flow
-			}
-		}
-		
-		// Check for pending device flow
-		const pendingFlowKey = `openai_pending_${DATA_VERSION}_${sessionId}`;
-		const pendingFlow = await env.TOKEN_CACHE.get(pendingFlowKey, 'json') as DeviceFlowState | null;
-		
-		if (pendingFlow) {
-			return await pollDeviceFlowStreaming(env, sessionId, pendingFlowKey, sessionKey, pendingFlow, request);
-		}
-	}
-	
-	// No token and no valid session - start device flow with streaming events
-	return await startDeviceFlowStreaming(env, sessionId, request);
+interface CopilotTokenCache {
+copilot_token: string;
+expires_at: string;
 }
 
-/**
- * Start device flow and stream SSE events in OpenAI format
- */
-async function startDeviceFlowStreaming(env: Env, existingSessionId: string | null, request: Request): Promise<Response> {
-	const body = await request.clone().json() as Record<string, unknown>;
-	const isStreaming = body.stream === true;
-	
-	// Generate or use existing session ID
-	const sessionId = existingSessionId || crypto.randomUUID();
-	
-	try {
-		const deviceFlow = await startDeviceFlow();
-		
-		// Store pending flow
-		const pendingFlowKey = `openai_pending_${DATA_VERSION}_${sessionId}`;
-		const pendingState: DeviceFlowState = {
-			device_code: deviceFlow.device_code,
-			user_code: deviceFlow.user_code,
-			verification_uri: deviceFlow.verification_uri,
-			expires_at: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
-			interval: deviceFlow.interval || 5,
-		};
-		
-		await env.TOKEN_CACHE.put(pendingFlowKey, JSON.stringify(pendingState), {
-			expirationTtl: deviceFlow.expires_in,
-		});
-		
-		if (isStreaming) {
-			// Return streaming response with device flow info
-			return streamingResponse((write) => {
-				write(sseChunk(`🔐 GitHub Authorization Required\n\n`));
-				write(sseChunk(`Visit: ${deviceFlow.verification_uri}\n`));
-				write(sseChunk(`Enter code: ${deviceFlow.user_code}\n\n`));
-				write(sseChunk(`Session ID: ${sessionId}\n`));
-				write(sseChunk(`Include header "X-Session-Id: ${sessionId}" in your next request.\n`));
-				write(sseDone());
-			}, sessionId);
-		} else {
-			// Non-streaming: return JSON with device flow info
-			return new Response(JSON.stringify({
-				error: {
-					message: 'Authorization required',
-					type: 'auth_required',
-					code: 'device_flow_required',
-					device_flow: {
-						session_id: sessionId,
-						user_code: deviceFlow.user_code,
-						verification_uri: deviceFlow.verification_uri,
-						expires_in: deviceFlow.expires_in,
-						interval: deviceFlow.interval,
-					}
-				}
-			}, null, 2), {
-				status: 401,
-				headers: {
-					'Content-Type': 'application/json',
-					'X-Session-Id': sessionId,
-					...corsHeaders(),
-				},
-			});
-		}
-	} catch (error) {
-		return jsonResponse({ error: { message: `Failed to start device flow: ${error}`, type: 'server_error' } }, 500);
-	}
+function extractGitHubToken(request: Request): string | null {
+const auth = request.headers.get('Authorization');
+if (!auth) return null;
+if (auth.toLowerCase().startsWith('bearer ')) {
+return auth.slice(7).trim();
+}
+return auth.trim();
 }
 
-/**
- * Poll device flow and stream SSE events in OpenAI format
- */
-async function pollDeviceFlowStreaming(
-	env: Env,
-	sessionId: string,
-	pendingFlowKey: string,
-	sessionKey: string,
-	pendingFlow: DeviceFlowState,
-	request: Request
-): Promise<Response> {
-	const body = await request.clone().json() as Record<string, unknown>;
-	const isStreaming = body.stream === true;
-	
-	// Poll up to 6 times (30 seconds with 5s interval)
-	const maxPolls = 6;
-	const pollInterval = Math.max(pendingFlow.interval, 5);
-	
-	if (isStreaming) {
-		return streamingResponseAsync(async (write) => {
-			write(sseChunk(`🔐 Checking authorization for code: ${pendingFlow.user_code}\n\n`));
-			
-			for (let i = 0; i < maxPolls; i++) {
-				write(sseChunk(`⏳ Checking... (${i + 1}/${maxPolls})\n`));
-				
-				const pollResult = await pollDeviceFlowOnce(pendingFlow.device_code);
-				
-				if (pollResult.access_token) {
-					write(sseChunk(`\n✅ Authorization successful!\n`));
-					write(sseChunk(`🔄 Getting Copilot token...\n`));
-					
-					try {
-						const copilotData = await getCopilotToken(pollResult.access_token);
-						
-						const session: Session = {
-							github_token: pollResult.access_token,
-							github_expires_at: new Date(Date.now() + GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60 * 1000).toISOString(),
-							copilot_token: copilotData.token,
-							copilot_expires_at: new Date(Date.now() + COPILOT_TOKEN_LIFETIME_MINUTES * 60 * 1000).toISOString(),
-						};
-						
-						await env.TOKEN_CACHE.put(sessionKey, JSON.stringify(session), {
-							expirationTtl: GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60,
-						});
-						await env.TOKEN_CACHE.delete(pendingFlowKey);
-						
-						write(sseChunk(`✅ Ready! Retry your request with header "X-Session-Id: ${sessionId}"\n`));
-						
-					} catch (error) {
-						const errorMsg = String(error);
-						if (errorMsg.includes('NO_COPILOT_ACCESS')) {
-							write(sseChunk(`\n❌ Your GitHub account does not have Copilot access.\n`));
-						} else {
-							write(sseChunk(`\n❌ Failed to get Copilot token: ${errorMsg}\n`));
-						}
-					}
-					
-					write(sseDone());
-					return;
-				}
-				
-				if (pollResult.error === 'expired_token') {
-					await env.TOKEN_CACHE.delete(pendingFlowKey);
-					write(sseChunk(`\n❌ Device code expired. Please start a new request.\n`));
-					write(sseDone());
-					return;
-				}
-				
-				if (pollResult.error && pollResult.error !== 'authorization_pending' && pollResult.error !== 'slow_down') {
-					write(sseChunk(`\n❌ Error: ${pollResult.error}\n`));
-					write(sseDone());
-					return;
-				}
-				
-				if (i < maxPolls - 1) {
-					await sleep(pollInterval * 1000);
-				}
-			}
-			
-			write(sseChunk(`\n⏸️ Still waiting. Send another request to continue polling.\n`));
-			write(sseChunk(`Include header "X-Session-Id: ${sessionId}"\n`));
-			write(sseDone());
-		}, sessionId);
-	} else {
-		// Non-streaming: single poll attempt
-		const pollResult = await pollDeviceFlowOnce(pendingFlow.device_code);
-		
-		if (pollResult.access_token) {
-			try {
-				const copilotData = await getCopilotToken(pollResult.access_token);
-				
-				const session: Session = {
-					github_token: pollResult.access_token,
-					github_expires_at: new Date(Date.now() + GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60 * 1000).toISOString(),
-					copilot_token: copilotData.token,
-					copilot_expires_at: new Date(Date.now() + COPILOT_TOKEN_LIFETIME_MINUTES * 60 * 1000).toISOString(),
-				};
-				
-				await env.TOKEN_CACHE.put(sessionKey, JSON.stringify(session), {
-					expirationTtl: GITHUB_TOKEN_LIFETIME_DAYS * 24 * 60 * 60,
-				});
-				await env.TOKEN_CACHE.delete(pendingFlowKey);
-				
-				return new Response(JSON.stringify({
-					error: {
-						message: 'Authorization complete. Retry your request.',
-						type: 'auth_complete',
-						code: 'retry_request',
-						session_id: sessionId,
-					}
-				}, null, 2), {
-					status: 401,
-					headers: {
-						'Content-Type': 'application/json',
-						'X-Session-Id': sessionId,
-						...corsHeaders(),
-					},
-				});
-				
-			} catch (error) {
-				const errorMsg = String(error);
-				return jsonResponse({
-					error: {
-						message: errorMsg.includes('NO_COPILOT_ACCESS') 
-							? 'Your GitHub account does not have Copilot access'
-							: `Failed to get Copilot token: ${errorMsg}`,
-						type: 'auth_error',
-					}
-				}, 403);
-			}
-		}
-		
-		if (pollResult.error === 'expired_token') {
-			await env.TOKEN_CACHE.delete(pendingFlowKey);
-			return jsonResponse({
-				error: {
-					message: 'Device code expired. Start a new request.',
-					type: 'auth_expired',
-				}
-			}, 401);
-		}
-		
-		// Still pending
-		return new Response(JSON.stringify({
-			error: {
-				message: 'Authorization pending',
-				type: 'auth_pending',
-				code: 'device_flow_pending',
-				device_flow: {
-					session_id: sessionId,
-					user_code: pendingFlow.user_code,
-					verification_uri: pendingFlow.verification_uri,
-				}
-			}
-		}, null, 2), {
-			status: 401,
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Session-Id': sessionId,
-				...corsHeaders(),
-			},
-		});
-	}
+async function getCacheKey(githubToken: string, env: Env): Promise<string> {
+const encoder = new TextEncoder();
+
+if (env.SERVER_SECRET) {
+const key = await crypto.subtle.importKey(
+'raw',
+encoder.encode(env.SERVER_SECRET),
+{ name: 'HMAC', hash: 'SHA-256' },
+false,
+['sign']
+);
+const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(githubToken));
+const hash = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+return `copilot_v1:${hash.slice(0, 32)}`;
 }
 
-/**
- * Actually proxy the chat completions request
- */
-async function doProxyChatCompletions(request: Request, token: string, env: Env): Promise<Response> {
-	const body = await request.json() as Record<string, unknown>;
-	const requestId = crypto.randomUUID();
-	
-	const response = await fetch(`${COPILOT_API_BASE}/chat/completions`, {
-		method: 'POST',
-		headers: {
-			...COPILOT_HEADERS,
-			'Authorization': `Bearer ${token}`,
-			'X-Request-Id': requestId,
-		},
-		body: JSON.stringify(body),
-	});
-	
-	// Handle streaming responses
-	if (body.stream && response.body) {
-		return new Response(response.body, {
-			status: response.status,
-			headers: {
-				'Content-Type': 'text/event-stream',
-				'Cache-Control': 'no-cache',
-				...corsHeaders(),
-			},
-		});
-	}
-	
-	const data = await response.json();
-	return jsonResponse(data, response.status);
+const hash = await crypto.subtle.digest('SHA-256', encoder.encode(githubToken));
+const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+return `copilot_v1:${hex.slice(0, 32)}`;
 }
 
-async function proxyCompletions(request: Request, env: Env): Promise<Response> {
-	const authHeader = request.headers.get('Authorization');
-	const token = authHeader?.replace(/^Bearer\s+/i, '') || env.COPILOT_TOKEN;
-	
-	if (!token) {
-		return jsonResponse({ error: 'Missing Copilot token. Provide via Authorization: Bearer <token>' }, 401);
-	}
-	
-	const body = await request.json();
-	const requestId = crypto.randomUUID();
-	
-	const response = await fetch(`${COPILOT_API_BASE}/completions`, {
-		method: 'POST',
-		headers: {
-			...COPILOT_HEADERS,
-			'Authorization': `Bearer ${token}`,
-			'X-Request-Id': requestId,
-			'OpenAI-Intent': 'completion',
-		},
-		body: JSON.stringify(body),
-	});
-	
-	// Handle streaming
-	if (response.headers.get('content-type')?.includes('event-stream') && response.body) {
-		return new Response(response.body, {
-			status: response.status,
-			headers: {
-				'Content-Type': 'text/event-stream',
-				'Cache-Control': 'no-cache',
-				...corsHeaders(),
-			},
-		});
-	}
-	
-	const data = await response.json();
-	return jsonResponse(data, response.status);
+async function getCopilotToken(githubToken: string, env: Env): Promise<string> {
+const cacheKey = await getCacheKey(githubToken, env);
+
+const cached = await env.TOKEN_CACHE.get(cacheKey, 'json') as CopilotTokenCache | null;
+if (cached && new Date(cached.expires_at) > new Date()) {
+return cached.copilot_token;
 }
 
-async function proxyMessages(request: Request, env: Env): Promise<Response> {
-	const authHeader = request.headers.get('Authorization');
-	const token = authHeader?.replace(/^Bearer\s+/i, '') || env.COPILOT_TOKEN;
-	
-	if (!token) {
-		return jsonResponse({ error: 'Missing Copilot token. Provide via Authorization: Bearer <token>' }, 401);
-	}
-	
-	const body = await request.json() as Record<string, unknown>;
-	const requestId = crypto.randomUUID();
-	
-	const response = await fetch(`${COPILOT_API_BASE}/v1/messages`, {
-		method: 'POST',
-		headers: {
-			...COPILOT_HEADERS,
-			'Authorization': `Bearer ${token}`,
-			'X-Request-Id': requestId,
-		},
-		body: JSON.stringify(body),
-	});
-	
-	if (body.stream && response.body) {
-		return new Response(response.body, {
-			status: response.status,
-			headers: {
-				'Content-Type': 'text/event-stream',
-				'Cache-Control': 'no-cache',
-				...corsHeaders(),
-			},
-		});
-	}
-	
-	const data = await response.json();
-	return jsonResponse(data, response.status);
+const response = await fetch('https://api.github.com/copilot_internal/v2/token', {
+method: 'GET',
+headers: {
+'Authorization': `token ${githubToken}`,
+'Accept': 'application/json',
+...VSCODE_HEADERS,
+},
+});
+
+if (response.status === 401) {
+throw new Error('INVALID_GITHUB_TOKEN');
+}
+if (response.status === 403) {
+throw new Error('NO_COPILOT_ACCESS');
+}
+if (!response.ok) {
+const text = await response.text();
+throw new Error(`Copilot token request failed: ${response.status} - ${text}`);
 }
 
-async function handleModelsRequest(request: Request, env: Env): Promise<Response> {
-	const authHeader = request.headers.get('Authorization');
-	const token = authHeader?.replace(/^Bearer\s+/i, '') || env.COPILOT_TOKEN;
-	
-	if (!token) {
-		// Return a static list if no token
-		return jsonResponse({
-			data: [
-				{ id: 'gpt-4o', object: 'model', created: Date.now() },
-				{ id: 'gpt-4.1', object: 'model', created: Date.now() },
-				{ id: 'gpt-4.1-mini', object: 'model', created: Date.now() },
-				{ id: 'claude-sonnet-4', object: 'model', created: Date.now() },
-				{ id: 'claude-sonnet-4.5', object: 'model', created: Date.now() },
-				{ id: 'gemini-2.5-pro', object: 'model', created: Date.now() },
-				{ id: 'o3-mini', object: 'model', created: Date.now() },
-				{ id: 'o4-mini', object: 'model', created: Date.now() },
-			]
-		});
-	}
-	
-	const response = await fetch(`${COPILOT_API_BASE}/models`, {
-		headers: { 'Authorization': `Bearer ${token}` },
-	});
-	
-	const data = await response.json();
-	return jsonResponse(data, response.status);
+const data = await response.json() as { token: string; expires_at?: number };
+
+const expiresAt = new Date(Date.now() + (COPILOT_TOKEN_LIFETIME_MINUTES - 2) * 60 * 1000);
+await env.TOKEN_CACHE.put(cacheKey, JSON.stringify({
+copilot_token: data.token,
+expires_at: expiresAt.toISOString(),
+}), {
+expirationTtl: (COPILOT_TOKEN_LIFETIME_MINUTES - 2) * 60,
+});
+
+return data.token;
 }
 
-async function exchangeToken(request: Request, env: Env): Promise<Response> {
-	const body = await request.json() as { github_token?: string };
-	
-	if (!body.github_token) {
-		return jsonResponse({ error: 'Missing github_token in request body' }, 400);
-	}
-	
-	try {
-		const copilotData = await getCopilotToken(body.github_token);
-		return jsonResponse(copilotData);
-	} catch (error) {
-		const errorMsg = String(error);
-		if (errorMsg.includes('INVALID_GITHUB_TOKEN')) {
-			return jsonResponse({ error: 'Invalid GitHub token' }, 401);
-		}
-		if (errorMsg.includes('NO_COPILOT_ACCESS')) {
-			return jsonResponse({ error: 'GitHub account does not have Copilot access' }, 403);
-		}
-		return jsonResponse({ error: errorMsg }, 500);
-	}
+async function handleCopilotProxy(request: Request, env: Env, path: string): Promise<Response> {
+const githubToken = extractGitHubToken(request);
+if (!githubToken) {
+return errorResponse('Missing Authorization header. Provide GitHub OAuth token.', 401, 'auth_required');
+}
+
+let copilotToken: string;
+try {
+copilotToken = await getCopilotToken(githubToken, env);
+} catch (error) {
+const msg = String(error);
+if (msg.includes('INVALID_GITHUB_TOKEN')) {
+return errorResponse('Invalid GitHub token', 401, 'invalid_token');
+}
+if (msg.includes('NO_COPILOT_ACCESS')) {
+return errorResponse('GitHub account does not have Copilot access', 403, 'no_access');
+}
+return errorResponse(msg, 500, 'token_error');
+}
+
+const copilotPath = path.replace('/copilot/v1', '');
+const targetUrl = `${COPILOT_API_BASE}${copilotPath}`;
+
+const headers: Record<string, string> = {
+...VSCODE_HEADERS,
+'Authorization': `Bearer ${copilotToken}`,
+};
+
+let body: string | null = null;
+let isStreaming = false;
+
+if (request.method === 'POST') {
+const bodyData = await request.json() as Record<string, unknown>;
+isStreaming = bodyData.stream === true;
+body = JSON.stringify(bodyData);
+}
+
+const response = await fetch(targetUrl, {
+method: request.method,
+headers,
+body,
+});
+
+if (isStreaming && response.body) {
+return new Response(response.body, {
+status: response.status,
+headers: {
+'Content-Type': 'text/event-stream',
+'Cache-Control': 'no-cache',
+...corsHeaders(),
+},
+});
+}
+
+const data = await response.json();
+return jsonResponse(data, response.status);
 }
 
 // =============================================================================
-// GitHub API Helpers
+// /poe/server - Poe Server Bot Translation
 // =============================================================================
 
-async function startDeviceFlow(): Promise<DeviceFlowResponse> {
-	const response = await fetch('https://github.com/login/device/code', {
-		method: 'POST',
-		headers: {
-			'Accept': 'application/json',
-			'Content-Type': 'application/x-www-form-urlencoded',
-		},
-		body: `client_id=${GITHUB_CLIENT_ID}&scope=${GITHUB_SCOPES}`,
-	});
-	
-	if (!response.ok) {
-		throw new Error(`Failed to start device flow: ${response.status}`);
-	}
-	
-	return response.json();
+interface PoeMessage {
+role: 'system' | 'user' | 'bot' | 'tool';
+content: string;
+content_type?: string;
+attachments?: PoeAttachment[];
+tool_call_id?: string;
+tool_calls?: PoeToolCall[];
 }
 
-async function pollDeviceFlowOnce(deviceCode: string): Promise<PollResponse> {
-	const response = await fetch('https://github.com/login/oauth/access_token', {
-		method: 'POST',
-		headers: {
-			'Accept': 'application/json',
-			'Content-Type': 'application/x-www-form-urlencoded',
-		},
-		body: `client_id=${GITHUB_CLIENT_ID}&device_code=${deviceCode}&grant_type=urn:ietf:params:oauth:grant-type:device_code`,
-	});
-	
-	if (!response.ok) {
-		return { error: `HTTP ${response.status}` };
-	}
-	
-	return response.json();
+interface PoeAttachment {
+url: string;
+content_type: string;
+name?: string;
+parsed_content?: string;
 }
 
-async function getCopilotToken(githubToken: string): Promise<CopilotTokenResponse> {
-	const response = await fetch('https://api.github.com/copilot_internal/v2/token', {
-		method: 'GET',
-		headers: {
-			'Authorization': `token ${githubToken}`,
-			'Accept': 'application/json',
-			'Editor-Version': 'vscode/1.104.1',
-			'Editor-Plugin-Version': 'copilot/1.0.0',
-			'User-Agent': 'GitHubCopilotChat/1.0.0',
-		},
-	});
-	
-	if (response.status === 401) {
-		throw new Error('INVALID_GITHUB_TOKEN');
-	}
-	
-	if (response.status === 403) {
-		throw new Error('NO_COPILOT_ACCESS');
-	}
-	
-	if (!response.ok) {
-		const text = await response.text();
-		throw new Error(`Failed to get Copilot token: ${response.status} - ${text}`);
-	}
-	
-	return response.json();
+interface PoeToolCall {
+id: string;
+type: 'function';
+function: {
+name: string;
+arguments: string;
+};
+}
+
+interface PoeTool {
+type: 'function';
+function: {
+name: string;
+description?: string;
+parameters?: Record<string, unknown>;
+};
+}
+
+interface PoeQueryRequest {
+version: string;
+type: 'query';
+query: PoeMessage[];
+user_id: string;
+conversation_id: string;
+message_id: string;
+metadata?: string;
+api_key?: string;
+access_key?: string;
+temperature?: number;
+skip_system_prompt?: boolean;
+logit_bias?: Record<string, number>;
+stop_sequences?: string[];
+language_code?: string;
+tools?: PoeTool[];
+tool_calls?: PoeToolCall[];
+tool_results?: Array<{
+role: 'tool';
+tool_call_id: string;
+content: string;
+}>;
+}
+
+interface OpenAIMessage {
+role: 'system' | 'user' | 'assistant' | 'tool';
+content: string | null;
+tool_calls?: Array<{
+id: string;
+type: 'function';
+function: {
+name: string;
+arguments: string;
+};
+}>;
+tool_call_id?: string;
+}
+
+interface OpenAITool {
+type: 'function';
+function: {
+name: string;
+description: string;
+parameters: Record<string, unknown>;
+};
+}
+
+interface OpenAIRequest {
+model: string;
+messages: OpenAIMessage[];
+stream: boolean;
+temperature?: number;
+stop?: string[];
+tools?: OpenAITool[];
+tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+}
+
+function validateTargetUrl(target: string): boolean {
+try {
+const url = new URL(target);
+if (url.protocol !== 'https:') return false;
+const hostname = url.hostname.toLowerCase();
+if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return false;
+if (hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.')) return false;
+if (hostname.endsWith('.local') || hostname.endsWith('.internal')) return false;
+return true;
+} catch {
+return false;
+}
+}
+
+function translatePoeToOpenAI(poeRequest: PoeQueryRequest, model: string): OpenAIRequest {
+const messages: OpenAIMessage[] = [];
+
+for (const msg of poeRequest.query) {
+const openaiMessage: OpenAIMessage = {
+role: msg.role === 'bot' ? 'assistant' : msg.role,
+content: msg.content,
+};
+
+if (msg.attachments && msg.attachments.length > 0) {
+const attachmentText = msg.attachments
+.filter(a => a.parsed_content)
+.map(a => `\n\n[Attachment: ${a.name || 'file'}]\n${a.parsed_content}`)
+.join('');
+if (attachmentText && openaiMessage.content) {
+openaiMessage.content += attachmentText;
+}
+}
+
+if (msg.role === 'bot' && msg.tool_calls) {
+openaiMessage.tool_calls = msg.tool_calls.map(tc => ({
+id: tc.id,
+type: 'function' as const,
+function: {
+name: tc.function.name,
+arguments: tc.function.arguments,
+},
+}));
+if (!openaiMessage.content) {
+openaiMessage.content = null;
+}
+}
+
+if (msg.role === 'tool' && msg.tool_call_id) {
+openaiMessage.tool_call_id = msg.tool_call_id;
+}
+
+messages.push(openaiMessage);
+}
+
+if (poeRequest.tool_results) {
+for (const result of poeRequest.tool_results) {
+messages.push({
+role: 'tool',
+content: result.content,
+tool_call_id: result.tool_call_id,
+});
+}
+}
+
+const openaiRequest: OpenAIRequest = {
+model,
+messages,
+stream: true,
+};
+
+if (poeRequest.temperature !== undefined && poeRequest.temperature !== null) {
+openaiRequest.temperature = poeRequest.temperature;
+}
+
+if (poeRequest.stop_sequences && poeRequest.stop_sequences.length > 0) {
+openaiRequest.stop = poeRequest.stop_sequences;
+}
+
+if (poeRequest.tools && poeRequest.tools.length > 0) {
+openaiRequest.tools = poeRequest.tools.map(tool => ({
+type: 'function' as const,
+function: {
+name: tool.function.name,
+description: tool.function.description || '',
+parameters: tool.function.parameters || { type: 'object', properties: {} },
+},
+}));
+openaiRequest.tool_choice = 'auto';
+}
+
+return openaiRequest;
+}
+
+async function translateOpenAIStreamToPoe(
+openaiStream: ReadableStream<Uint8Array>,
+writer: WritableStreamDefaultWriter<Uint8Array>,
+encoder: TextEncoder
+): Promise<void> {
+const reader = openaiStream.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+
+const toolCallAccumulator: Map<number, {
+id: string;
+name: string;
+arguments: string;
+}> = new Map();
+
+const sendEvent = async (event: string, data: unknown) => {
+await writer.write(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+};
+
+try {
+while (true) {
+const { done, value } = await reader.read();
+if (done) break;
+
+buffer += decoder.decode(value, { stream: true });
+const lines = buffer.split('\n');
+buffer = lines.pop() || '';
+
+for (const line of lines) {
+if (!line.startsWith('data: ')) continue;
+const data = line.slice(6);
+if (data === '[DONE]') continue;
+
+try {
+const json = JSON.parse(data);
+const choice = json.choices?.[0];
+if (!choice) continue;
+
+const content = choice.delta?.content;
+if (content) {
+await sendEvent('text', { text: content });
+}
+
+const toolCalls = choice.delta?.tool_calls;
+if (toolCalls) {
+for (const tc of toolCalls) {
+const idx = tc.index ?? 0;
+let accumulated = toolCallAccumulator.get(idx);
+
+if (!accumulated) {
+accumulated = { id: '', name: '', arguments: '' };
+toolCallAccumulator.set(idx, accumulated);
+}
+
+if (tc.id) accumulated.id = tc.id;
+if (tc.function?.name) accumulated.name = tc.function.name;
+if (tc.function?.arguments) accumulated.arguments += tc.function.arguments;
+}
+}
+
+if (choice.finish_reason === 'tool_calls') {
+for (const [, tc] of toolCallAccumulator) {
+await sendEvent('tool_call', {
+id: tc.id,
+function: {
+name: tc.name,
+arguments: tc.arguments,
+},
+});
+}
+toolCallAccumulator.clear();
+}
+} catch {
+// Ignore parse errors
+}
+}
+}
+
+await sendEvent('done', {});
+} catch (error) {
+await sendEvent('error', {
+text: String(error),
+allow_retry: true,
+});
+}
+}
+
+async function handlePoeServer(request: Request, env: Env, url: URL): Promise<Response> {
+const poeRequest = await request.json() as PoeQueryRequest;
+
+let targetUrl: string;
+const targetParam = url.searchParams.get('target');
+
+if (targetParam) {
+if (!validateTargetUrl(targetParam)) {
+return errorResponse('Invalid target URL. Must be https and not a private address.', 400, 'invalid_target');
+}
+targetUrl = targetParam;
+} else {
+const base = new URL(request.url);
+targetUrl = `${base.origin}/copilot/v1/chat/completions`;
+}
+
+const model = url.searchParams.get('model') || 'gpt-4o';
+const openaiRequest = translatePoeToOpenAI(poeRequest, model);
+
+const headers: Record<string, string> = {
+'Content-Type': 'application/json',
+};
+
+const authHeader = request.headers.get('Authorization');
+if (authHeader) {
+headers['Authorization'] = authHeader;
+}
+
+const response = await fetch(targetUrl, {
+method: 'POST',
+headers,
+body: JSON.stringify(openaiRequest),
+});
+
+if (!response.ok) {
+const error = await response.text();
+return poeErrorResponse(`Backend error: ${error}`, true);
+}
+
+const { readable, writable } = new TransformStream();
+const writer = writable.getWriter();
+const encoder = new TextEncoder();
+
+(async () => {
+try {
+if (response.body) {
+await translateOpenAIStreamToPoe(response.body, writer, encoder);
+}
+} finally {
+await writer.close();
+}
+})();
+
+return new Response(readable, {
+headers: {
+'Content-Type': 'text/event-stream',
+'Cache-Control': 'no-cache',
+...corsHeaders(),
+},
+});
+}
+
+function poeErrorResponse(message: string, allowRetry: boolean): Response {
+const encoder = new TextEncoder();
+const body = encoder.encode(
+`event: error\ndata: ${JSON.stringify({ text: message, allow_retry: allowRetry })}\n\n` +
+`event: done\ndata: {}\n\n`
+);
+
+return new Response(body, {
+headers: {
+'Content-Type': 'text/event-stream',
+'Cache-Control': 'no-cache',
+...corsHeaders(),
+},
+});
 }
 
 // =============================================================================
-// Utility Functions
+// /poe/settings - Poe Parameter Controls
 // =============================================================================
 
-function isTokenExpired(expiresAt?: string): boolean {
-	if (!expiresAt) return true;
-	return new Date(expiresAt) < new Date();
+interface PoeSettingsResponse {
+server_bot_dependencies?: Record<string, number>;
+allow_attachments?: boolean;
+expand_text_attachments?: boolean;
+enable_image_comprehension?: boolean;
+introduction_message?: string;
+enforce_author_role_alternation?: boolean;
+enable_multi_bot_chat_prompting?: boolean;
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise(resolve => setTimeout(resolve, ms));
+async function handlePoeSettings(request: Request, env: Env): Promise<Response> {
+const settings: PoeSettingsResponse = {
+server_bot_dependencies: {},
+allow_attachments: true,
+expand_text_attachments: true,
+enable_image_comprehension: false,
+introduction_message: "Hello! I'm a GitHub Copilot proxy bot. Send me a message to get started.",
+enforce_author_role_alternation: false,
+enable_multi_bot_chat_prompting: false,
+};
+
+return jsonResponse(settings);
 }
-
-// =============================================================================
-// OpenAI SSE Helpers
-// =============================================================================
-
-/**
- * Create an SSE chunk in OpenAI format
- */
-function sseChunk(content: string): string {
-	const chunk = {
-		id: `chatcmpl-${crypto.randomUUID()}`,
-		object: 'chat.completion.chunk',
-		created: Math.floor(Date.now() / 1000),
-		model: 'system',
-		choices: [{
-			index: 0,
-			delta: { content },
-			finish_reason: null,
-		}],
-	};
-	return `data: ${JSON.stringify(chunk)}\n\n`;
-}
-
-/**
- * Create the final SSE done message
- */
-function sseDone(): string {
-	return `data: [DONE]\n\n`;
-}
-
-/**
- * Create a streaming response (sync)
- */
-function streamingResponse(fn: (write: (msg: string) => void) => void, sessionId?: string): Response {
-	const encoder = new TextEncoder();
-	const stream = new ReadableStream({
-		start(controller) {
-			const write = (msg: string) => controller.enqueue(encoder.encode(msg));
-			fn(write);
-			controller.close();
-		}
-	});
-	
-	const headers: Record<string, string> = {
-		'Content-Type': 'text/event-stream',
-		'Cache-Control': 'no-cache',
-		...corsHeaders(),
-	};
-	if (sessionId) {
-		headers['X-Session-Id'] = sessionId;
-	}
-	
-	return new Response(stream, { headers });
-}
-
-/**
- * Create a streaming response (async)
- */
-function streamingResponseAsync(fn: (write: (msg: string) => void) => Promise<void>, sessionId?: string): Response {
-	const encoder = new TextEncoder();
-	const stream = new ReadableStream({
-		async start(controller) {
-			const write = (msg: string) => controller.enqueue(encoder.encode(msg));
-			try {
-				await fn(write);
-			} finally {
-				controller.close();
-			}
-		}
-	});
-	
-	const headers: Record<string, string> = {
-		'Content-Type': 'text/event-stream',
-		'Cache-Control': 'no-cache',
-		...corsHeaders(),
-	};
-	if (sessionId) {
-		headers['X-Session-Id'] = sessionId;
-	}
-	
-	return new Response(stream, { headers });
-}
-
-
