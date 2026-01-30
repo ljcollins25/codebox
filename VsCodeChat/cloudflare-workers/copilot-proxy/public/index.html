@@ -1,250 +1,469 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Copilot Proxy - Login</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-background: #0d1117;
-color: #c9d1d9;
-min-height: 100vh;
-display: flex;
-align-items: center;
-justify-content: center;
-}
-.container { max-width: 500px; width: 100%; padding: 2rem; }
-h1 { color: #58a6ff; margin-bottom: 0.5rem; font-size: 1.75rem; text-align: center; }
-.subtitle { color: #8b949e; text-align: center; margin-bottom: 2rem; }
-.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 2rem; }
-.btn {
-display: inline-block; background: #238636; color: white; padding: 12px 24px;
-border-radius: 6px; text-decoration: none; font-weight: 600; border: none;
-cursor: pointer; font-size: 1rem; width: 100%;
-}
-.btn:hover { background: #2ea043; }
-.btn:disabled { background: #484f58; cursor: not-allowed; }
-.btn-secondary { background: #21262d; border: 1px solid #30363d; }
-.btn-secondary:hover { background: #30363d; }
-#device-flow { display: none; }
-#device-flow.active { display: block; }
-.code-display {
-font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 2rem; font-weight: bold;
-letter-spacing: 0.15em; color: #58a6ff; background: #0d1117; padding: 1rem 2rem;
-border-radius: 8px; margin: 1.5rem 0; border: 2px dashed #30363d; text-align: center;
-}
-.instructions { color: #8b949e; margin-bottom: 1rem; text-align: center; }
-.github-link { display: block; margin-bottom: 1.5rem; }
-.status { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem; color: #8b949e; font-size: 0.9rem; }
-.spinner { width: 16px; height: 16px; border: 2px solid #30363d; border-radius: 50%; border-top-color: #58a6ff; animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-#token-display { display: none; }
-#token-display.active { display: block; }
-.success-icon { font-size: 3rem; text-align: center; margin-bottom: 1rem; }
-.success-text { color: #3fb950; text-align: center; font-weight: 600; margin-bottom: 1.5rem; }
-.token-label { color: #8b949e; font-size: 0.85rem; margin-bottom: 0.5rem; }
-.token-box {
-background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 1rem;
-font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 0.75rem;
-word-break: break-all; margin-bottom: 1rem; max-height: 120px; overflow-y: auto;
-}
-.button-row { display: flex; gap: 0.5rem; }
-.button-row .btn { flex: 1; }
-.error { color: #f85149; text-align: center; padding: 1rem; }
-.footer { margin-top: 2rem; text-align: center; font-size: 0.85rem; }
-.footer a { color: #58a6ff; text-decoration: none; }
-.footer a:hover { text-decoration: underline; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Copilot Proxy - Login</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 500px;
+            width: 100%;
+            padding: 2rem;
+        }
+
+        h1 {
+            color: #58a6ff;
+            margin-bottom: 0.5rem;
+            font-size: 1.75rem;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: #8b949e;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .btn {
+            display: inline-block;
+            background: #238636;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+            width: 100%;
+        }
+
+        .btn:hover {
+            background: #2ea043;
+        }
+
+        .btn:disabled {
+            background: #484f58;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #21262d;
+            border: 1px solid #30363d;
+        }
+
+        .btn-secondary:hover {
+            background: #30363d;
+        }
+
+        #device-flow {
+            display: none;
+        }
+
+        #device-flow.active {
+            display: block;
+        }
+
+        .code-display-wrapper {
+            position: relative;
+            margin: 1.5rem 0;
+        }
+
+        .code-display {
+            font-family: "SF Mono", Monaco, Consolas, monospace;
+            font-size: 2rem;
+            font-weight: bold;
+            letter-spacing: 0.15em;
+            color: #58a6ff;
+            background: #0d1117;
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            border: 2px dashed #30363d;
+            text-align: center;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 50%;
+            right: 8px;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            color: #8b949e;
+            padding: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .copy-btn:hover {
+            background: #30363d;
+            color: #c9d1d9;
+        }
+
+        .copy-btn.copied {
+            color: #3fb950;
+        }
+
+        .copy-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        .instructions {
+            color: #8b949e;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .github-link {
+            display: block;
+            margin-bottom: 1.5rem;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            color: #8b949e;
+            font-size: 0.9rem;
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid #30363d;
+            border-radius: 50%;
+            border-top-color: #58a6ff;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        #token-display {
+            display: none;
+        }
+
+        #token-display.active {
+            display: block;
+        }
+
+        .success-icon {
+            font-size: 3rem;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .success-text {
+            color: #3fb950;
+            text-align: center;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+        }
+
+        .token-label {
+            color: #8b949e;
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .token-box {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 1rem;
+            font-family: "SF Mono", Monaco, Consolas, monospace;
+            font-size: 0.75rem;
+            word-break: break-all;
+            margin-bottom: 1rem;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .button-row .btn {
+            flex: 1;
+        }
+
+        .error {
+            color: #f85149;
+            text-align: center;
+            padding: 1rem;
+        }
+
+        .footer {
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 0.85rem;
+        }
+
+        .footer a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
+
 <body>
-<div class="container">
-<h1>Copilot Proxy</h1>
-<p class="subtitle">Obtain a GitHub OAuth token for API access</p>
-<div class="card">
-<div id="start-section">
-<p style="color: #8b949e; margin-bottom: 1.5rem; text-align: center;">
-Sign in with GitHub to get an OAuth token for use with the Copilot proxy API.
-</p>
-<button class="btn" onclick="startLogin()">Sign in with GitHub</button>
-</div>
-<div id="device-flow">
-<p class="instructions">Enter this code at GitHub:</p>
-<div class="code-display" id="user-code">----</div>
-<a id="github-link" href="#" target="_blank" rel="noopener noreferrer" class="btn github-link">Open GitHub</a>
-<div class="status" id="status"><div class="spinner"></div><span>Waiting for authorization...</span></div>
-<button class="btn btn-secondary" onclick="reset()" style="margin-top: 1rem;">Cancel / Start Over</button>
-</div>
-<div id="token-display">
-<div class="success-icon">OK</div>
-<p class="success-text">Authorization successful!</p>
-<div class="token-label">Your GitHub OAuth Token:</div>
-<div class="token-box" id="token-value"></div>
-<div class="button-row">
-<button class="btn" onclick="copyToken()">Copy Token</button>
-<button class="btn btn-secondary" onclick="reset()">Get New Token</button>
-</div>
-</div>
-<div id="error-section" style="display: none;">
-<p class="error" id="error-message"></p>
-<button class="btn btn-secondary" onclick="reset()" style="margin-top: 1rem;">Try Again</button>
-</div>
-</div>
-<div class="footer">
-<p><a href="/health">Health Check</a> | <a href="https://github.com/settings/tokens">Manage Tokens</a></p>
-</div>
-</div>
-<script>
-const GITHUB_CLIENT_ID = "01ab8ac9400c4e429b23";
-const STORAGE_KEY = "copilot_device_flow";
-let pollTimer = null;
+    <div class="container">
+        <h1>Copilot Proxy</h1>
+        <p class="subtitle">Obtain a GitHub OAuth token for API access</p>
+        <div class="card">
+            <div id="start-section">
+                <p style="color: #8b949e; margin-bottom: 1.5rem; text-align: center;">
+                    Sign in with GitHub to get an OAuth token for use with the Copilot proxy API.
+                </p>
+                <button class="btn" onclick="startLogin()">Sign in with GitHub</button>
+            </div>
+            <div id="device-flow">
+                <p class="instructions">Enter this code at GitHub:</p>
+                <div class="code-display-wrapper">
+                    <div class="code-display" id="user-code">----</div>
+                    <button class="copy-btn" onclick="copyCode(this)" title="Copy code">
+                        <svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        <svg class="icon-check" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    </button>
+                </div>
+                <a id="github-link" href="#" target="_blank" rel="noopener noreferrer" class="btn github-link">Open
+                    GitHub</a>
+                <div class="status" id="status">
+                    <div class="spinner"></div><span>Waiting for authorization...</span>
+                </div>
+                <button class="btn btn-secondary" onclick="reset()" style="margin-top: 1rem;">Cancel / Start
+                    Over</button>
+            </div>
+            <div id="token-display">
+                <div class="success-icon">OK</div>
+                <p class="success-text">Authorization successful!</p>
+                <div class="token-label">Your GitHub OAuth Token:</div>
+                <div class="token-box" id="token-value"></div>
+                <div class="button-row">
+                    <button class="btn" onclick="copyToken()">Copy Token</button>
+                    <button class="btn btn-secondary" onclick="reset()">Get New Token</button>
+                </div>
+            </div>
+            <div id="error-section" style="display: none;">
+                <p class="error" id="error-message"></p>
+                <button class="btn btn-secondary" onclick="reset()" style="margin-top: 1rem;">Try Again</button>
+            </div>
+        </div>
+        <div class="footer">
+            <p><a href="/health">Health Check</a> | <a href="https://github.com/settings/tokens">Manage Tokens</a></p>
+        </div>
+    </div>
+    <script>
+        const GITHUB_CLIENT_ID = "01ab8ac9400c4e429b23";
+        const STORAGE_KEY = "copilot_device_flow";
+        let pollTimer = null;
 
-document.addEventListener("DOMContentLoaded", () => {
-const saved = localStorage.getItem(STORAGE_KEY);
-if (saved) {
-try {
-const state = JSON.parse(saved);
-if (new Date(state.expires_at) > new Date()) {
-showDeviceFlow(state);
-startPolling(state);
-} else {
-localStorage.removeItem(STORAGE_KEY);
-}
-} catch (e) {
-localStorage.removeItem(STORAGE_KEY);
-}
-}
-});
+        document.addEventListener("DOMContentLoaded", () => {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                try {
+                    const state = JSON.parse(saved);
+                    if (new Date(state.expires_at) > new Date()) {
+                        hideAll();
+                        showSection("device-flow");
+                        showDeviceFlow(state);
+                        startPolling(state);
+                    } else {
+                        localStorage.removeItem(STORAGE_KEY);
+                    }
+                } catch (e) {
+                    localStorage.removeItem(STORAGE_KEY);
+                }
+            }
+        });
 
-async function startLogin() {
-hideAll();
-showSection("device-flow");
-document.getElementById("status").innerHTML = "<div class=\"spinner\"></div><span>Initializing...</span>";
-try {
-const res = await fetch("/login", { method: "POST" });
-const data = await res.json();
-if (data.error) {
-showError(data.error.message || "Failed to start device flow");
-return;
-}
-const state = {
-device_code: data.device_code,
-user_code: data.user_code,
-verification_uri: data.verification_uri,
-verification_uri_complete: data.verification_uri_complete,
-expires_at: data.expires_at,
-interval: data.interval || 5,
-};
-localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-showDeviceFlow(state);
-startPolling(state);
-} catch (error) {
-showError("Network error: " + error.message);
-}
-}
+        async function startLogin() {
+            hideAll();
+            showSection("device-flow");
+            document.getElementById("status").innerHTML = "<div class=\"spinner\"></div><span>Initializing...</span>";
+            try {
+                const res = await fetch("/login", { method: "POST" });
+                const data = await res.json();
+                if (data.error) {
+                    showError(data.error.message || "Failed to start device flow");
+                    return;
+                }
+                const state = {
+                    device_code: data.device_code,
+                    user_code: data.user_code,
+                    verification_uri: data.verification_uri,
+                    verification_uri_complete: data.verification_uri_complete,
+                    expires_at: data.expires_at,
+                    interval: data.interval || 5,
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+                showDeviceFlow(state);
+                startPolling(state);
+            } catch (error) {
+                showError("Network error: " + error.message);
+            }
+        }
 
-function showDeviceFlow(state) {
-document.getElementById("user-code").textContent = state.user_code;
-document.getElementById("github-link").href = state.verification_uri_complete || state.verification_uri;
-document.getElementById("status").innerHTML = "<div class=\"spinner\"></div><span>Waiting for authorization...</span>";
-}
+        function showDeviceFlow(state) {
+            document.getElementById("user-code").textContent = state.user_code;
+            document.getElementById("github-link").href = state.verification_uri_complete || state.verification_uri;
+            document.getElementById("status").innerHTML = "<div class=\"spinner\"></div><span>Waiting for authorization...</span>";
+        }
 
-function startPolling(state) {
-if (pollTimer) clearInterval(pollTimer);
-const interval = Math.max(state.interval, 5) * 1000;
-pollTimer = setInterval(async () => {
-if (new Date(state.expires_at) <= new Date()) {
-stopPolling();
-localStorage.removeItem(STORAGE_KEY);
-showError("Device code expired. Please try again.");
-return;
-}
-try {
-const res = await fetch("https://github.com/login/oauth/access_token", {
-method: "POST",
-headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" },
-body: "client_id=" + GITHUB_CLIENT_ID + "&device_code=" + state.device_code + "&grant_type=urn:ietf:params:oauth:grant-type:device_code",
-});
-const data = await res.json();
-if (data.access_token) {
-stopPolling();
-localStorage.removeItem(STORAGE_KEY);
-showToken(data.access_token);
-return;
-}
-if (data.error === "authorization_pending" || data.error === "slow_down") return;
-if (data.error === "expired_token") {
-stopPolling();
-localStorage.removeItem(STORAGE_KEY);
-showError("Device code expired. Please try again.");
-return;
-}
-if (data.error === "access_denied") {
-stopPolling();
-localStorage.removeItem(STORAGE_KEY);
-showError("Authorization was denied.");
-return;
-}
-if (data.error) {
-stopPolling();
-localStorage.removeItem(STORAGE_KEY);
-showError(data.error_description || data.error);
-}
-} catch (error) {
-console.error("Poll error:", error);
-}
-}, interval);
-}
+        function startPolling(state) {
+            if (pollTimer) clearInterval(pollTimer);
+            const interval = Math.max(state.interval, 5) * 1000;
+            pollTimer = setInterval(async () => {
+                if (new Date(state.expires_at) <= new Date()) {
+                    stopPolling();
+                    localStorage.removeItem(STORAGE_KEY);
+                    showError("Device code expired. Please try again.");
+                    return;
+                }
+                try {
+                    const res = await fetch("/login?device_code=" + encodeURIComponent(state.device_code), {
+                        method: "POST",
+                    });
+                    const data = await res.json();
+                    if (data.access_token) {
+                        stopPolling();
+                        localStorage.removeItem(STORAGE_KEY);
+                        showToken(data.access_token);
+                        return;
+                    }
+                    if (data.error === "authorization_pending" || data.error === "slow_down") return;
+                    if (data.error === "expired_token") {
+                        stopPolling();
+                        localStorage.removeItem(STORAGE_KEY);
+                        showError("Device code expired. Please try again.");
+                        return;
+                    }
+                    if (data.error === "access_denied") {
+                        stopPolling();
+                        localStorage.removeItem(STORAGE_KEY);
+                        showError("Authorization was denied.");
+                        return;
+                    }
+                    if (data.error) {
+                        stopPolling();
+                        localStorage.removeItem(STORAGE_KEY);
+                        showError(data.error_description || data.error);
+                    }
+                } catch (error) {
+                    console.error("Poll error:", error);
+                }
+            }, interval);
+        }
 
-function stopPolling() {
-if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
+        function stopPolling() {
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        }
 
-function showToken(token) {
-hideAll();
-showSection("token-display");
-document.getElementById("token-value").textContent = token;
-}
+        function showToken(token) {
+            hideAll();
+            showSection("token-display");
+            document.getElementById("token-value").textContent = token;
+        }
 
-function copyToken() {
-const token = document.getElementById("token-value").textContent;
-navigator.clipboard.writeText(token).then(() => {
-const btn = event.target;
-const orig = btn.textContent;
-btn.textContent = "Copied!";
-setTimeout(() => btn.textContent = orig, 2000);
-});
-}
+        function copyToken() {
+            const token = document.getElementById("token-value").textContent;
+            navigator.clipboard.writeText(token).then(() => {
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = "Copied!";
+                setTimeout(() => btn.textContent = orig, 2000);
+            });
+        }
 
-function showError(message) {
-hideAll();
-document.getElementById("error-message").textContent = message;
-document.getElementById("error-section").style.display = "block";
-}
+        function copyCode(btn) {
+            const code = document.getElementById("user-code").textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                const iconCopy = btn.querySelector('.icon-copy');
+                const iconCheck = btn.querySelector('.icon-check');
+                btn.classList.add("copied");
+                iconCopy.style.display = 'none';
+                iconCheck.style.display = 'block';
+                setTimeout(() => {
+                    iconCopy.style.display = 'block';
+                    iconCheck.style.display = 'none';
+                    btn.classList.remove("copied");
+                }, 2000);
+            });
+        }
 
-function reset() {
-stopPolling();
-localStorage.removeItem(STORAGE_KEY);
-hideAll();
-showSection("start-section");
-}
+        function showError(message) {
+            hideAll();
+            document.getElementById("error-message").textContent = message;
+            document.getElementById("error-section").style.display = "block";
+        }
 
-function hideAll() {
-document.getElementById("start-section").style.display = "none";
-document.getElementById("device-flow").classList.remove("active");
-document.getElementById("token-display").classList.remove("active");
-document.getElementById("error-section").style.display = "none";
-}
+        function reset() {
+            stopPolling();
+            localStorage.removeItem(STORAGE_KEY);
+            hideAll();
+            showSection("start-section");
+        }
 
-function showSection(id) {
-const el = document.getElementById(id);
-if (id === "device-flow" || id === "token-display") {
-el.classList.add("active");
-} else {
-el.style.display = "block";
-}
-}
-</script>
+        function hideAll() {
+            document.getElementById("start-section").style.display = "none";
+            document.getElementById("device-flow").classList.remove("active");
+            document.getElementById("token-display").classList.remove("active");
+            document.getElementById("error-section").style.display = "none";
+        }
+
+        function showSection(id) {
+            const el = document.getElementById(id);
+            if (id === "device-flow" || id === "token-display") {
+                el.classList.add("active");
+            } else {
+                el.style.display = "block";
+            }
+        }
+    </script>
 </body>
+
 </html>
