@@ -2,9 +2,30 @@ name = "copilot-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-01-29"
 
+# Bundle HTML files as text modules
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+# KV namespace for token caching
+# Create with: wrangler kv:namespace create "TOKEN_CACHE"
+# Then add the binding ID below
+[[kv_namespaces]]
+binding = "TOKEN_CACHE"
+id = "91ee783b8ba344628811a5f38fff1c2f"
+
+# For local development, you can use a preview namespace
+# preview_id = "YOUR_PREVIEW_KV_NAMESPACE_ID"
+
 # Uncomment to add environment variables
 # [vars]
 # ALLOWED_ORIGINS = "https://yourdomain.com"
 
-# For secrets (Copilot token), use: wrangler secret put COPILOT_TOKEN
-# But note: tokens expire in ~30 min, so client-provided tokens are preferred
+# For secrets, use: wrangler secret put AUTH_SECRET
+# Optional: wrangler secret put COPILOT_TOKEN (but client tokens are preferred)
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
