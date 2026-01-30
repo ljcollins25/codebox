@@ -5,10 +5,10 @@
  * 1. Handles GitHub Device Flow authentication with streaming progress
  * 2. Caches GitHub and Copilot tokens in Workers KV
  * 3. Proxies chat requests to GitHub Copilot API
- * 4. Provides a web UI for testing
+ * 4. Provides a web UI for testing (served as static asset)
  * 
  * Endpoints:
- *   GET  /              - Web UI for testing device flow and chat
+ *   GET  /              - Web UI for testing device flow and chat (static)
  *   POST /chat/completions - OpenAI-compatible chat proxy (auto device flow if no token)
  *   POST /completions   - Code completions proxy
  *   GET  /models        - List available models
@@ -18,9 +18,6 @@
  *   POST /token         - Exchange GitHub token for Copilot token
  *   GET  /health        - Health check
  */
-
-// Import HTML as text asset
-import HTML_CONTENT from './ui.html';
 
 export interface Env {
 	// KV namespace for token caching
@@ -90,11 +87,8 @@ export default {
 		const path = url.pathname;
 
 		try {
-			// GET requests
+			// GET requests (static assets serve / and /index.html automatically)
 			if (request.method === 'GET') {
-				if (path === '/' || path === '/ui') {
-					return renderWebUI();
-				}
 				if (path === '/health') {
 					return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() });
 				}
@@ -957,12 +951,4 @@ function streamingResponseAsync(fn: (write: (msg: string) => void) => Promise<vo
 	return new Response(stream, { headers });
 }
 
-// =============================================================================
-// Web UI
-// =============================================================================
 
-function renderWebUI(): Response {
-	return new Response(HTML_CONTENT, {
-		headers: { 'Content-Type': 'text/html', ...corsHeaders() },
-	});
-}

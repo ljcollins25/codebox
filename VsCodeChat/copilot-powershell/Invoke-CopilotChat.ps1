@@ -118,9 +118,12 @@ function Main {
     
     # If TokenOnly, just print the token and exit
     if ($TokenOnly) {
-        Write-Host "[Start Token]"
+        Write-Host "[Start Github Token]"
+        Write-Host $githubToken
+        Write-Host "[End Github Token]"
+        Write-Host "[Start Copilot Token]"
         Write-Host $copilotToken
-        Write-Host "[End Token]"
+        Write-Host "[End Copilot Token]"
         return $copilotToken
     }
     
