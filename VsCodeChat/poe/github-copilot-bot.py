@@ -27,13 +27,6 @@ poe.update_settings(SettingsResponse(
                         description="Your API key (leave blank to auto-authenticate via GitHub)",
                         placeholder="sk-... (optional)",
                     ),
-                    TextField(
-                        label="API URL",
-                        parameter_name="api_url",
-                        description="OpenAI-compatible chat completions endpoint",
-                        default_value="https://api.githubcopilot.com/chat/completions",
-                        placeholder="https://api.githubcopilot.com/chat/completions",
-                    ),
                     DropDown(
                         label="Model",
                         parameter_name="model",
@@ -48,8 +41,8 @@ poe.update_settings(SettingsResponse(
                             ValueNamePair(name="Claude Sonnet 4", value="claude-sonnet-4"),
                             ValueNamePair(name="Claude Sonnet 4.5", value="claude-sonnet-4.5"),
                             ValueNamePair(name="Gemini 2.5 Pro", value="gemini-2.5-pro"),
-                            ValueNamePair(name="Gemini 3 Flash (Preview)", value="gemini-3-flash"),
-                            ValueNamePair(name="Gemini 3 Pro (Preview)", value="gemini-3-pro"),
+                            ValueNamePair(name="Gemini 3 Flash (Preview)", value="gemini-3-flash-preview"),
+                            ValueNamePair(name="Gemini 3 Pro (Preview)", value="gemini-3-pro-preview"),
                             ValueNamePair(name="GPT-5", value="gpt-5"),
                             ValueNamePair(name="GPT-5-Codex (Preview)", value="gpt-5-codex"),
                             ValueNamePair(name="GPT-5.1", value="gpt-5.1"),
@@ -184,7 +177,6 @@ class OpenAIAPIBot:
             return token_value[start:end]
 
         # Connection parameters
-        api_url = get_param("api_url", "https://api.githubcopilot.com/chat/completions")
         api_key = get_param("api_key")
         model = get_param("model", "gpt-4o")
 
@@ -198,13 +190,14 @@ class OpenAIAPIBot:
             if not api_key:
                 raise poe.BotError("Could not authenticate with GitHub Copilot. Please provide an API key or complete the GitHub authentication flow.")
 
-        # Determine model type
-        is_codex_model = "codex" in model
+        # Determine model type (matching PowerShell logic)
+        is_codex_model = "codex" in model.lower()
         is_internal_model = model.startswith("copilot-")
 
-        # Determine base host based on model type
+        # Get proxy endpoint from token
         proxy_ep = get_proxy_endpoint(api_key)
 
+        # Determine base host based on model type (matching PowerShell logic exactly)
         if is_internal_model:
             # Internal copilot- models need the enterprise proxy endpoint
             if proxy_ep:
@@ -212,34 +205,20 @@ class OpenAIAPIBot:
             else:
                 base_host = "https://copilot-proxy.githubusercontent.com"
         else:
-            # Standard models (gpt-4o, claude-sonnet-4, etc.) use the main API
-            # Do NOT use proxy for standard models - they must go to api.githubcopilot.com
-            base_host = None  # Use api_url as-is for standard models
+            # Standard models (gpt-4o, claude-sonnet-4, gemini-3-pro, etc.) use the main API
+            base_host = "https://api.githubcopilot.com"
 
-        # Determine endpoint based on model type
+        # Determine endpoint based on model type (matching PowerShell logic exactly)
         if is_codex_model:
             # Codex models use /responses endpoint
-            if base_host:
-                api_url = f"{base_host}/responses"
-            else:
-                # Extract base from api_url and append /responses
-                normalized_url = api_url.rstrip("/")
-                if normalized_url.endswith("/chat/completions"):
-                    base_url = normalized_url[: -len("/chat/completions")]
-                elif normalized_url.endswith("/v1/chat/completions"):
-                    base_url = normalized_url[: -len("/v1/chat/completions")]
-                else:
-                    base_url = normalized_url
-                api_url = f"{base_url}/responses"
+            api_url = f"{base_host}/responses"
             is_responses_endpoint = True
             is_chat_endpoint = False
         else:
             # Non-codex models use /chat/completions
-            if base_host:
-                api_url = f"{base_host}/chat/completions"
+            api_url = f"{base_host}/chat/completions"
             is_responses_endpoint = False
-            normalized_url = api_url.rstrip("/")
-            is_chat_endpoint = normalized_url.endswith("/chat/completions") or normalized_url.endswith("/v1/chat/completions")
+            is_chat_endpoint = True
 
         # Model parameters (use defaults that match slider defaults)
         temperature = params.get("temperature", 1.0)
@@ -284,22 +263,11 @@ class OpenAIAPIBot:
                 "input": input_text,
                 "stream": True,
             }
-        elif is_chat_endpoint:
+        else:
+            # /chat/completions endpoint
             payload = {
                 "model": model,
                 "messages": messages,
-                "stream": True,
-                "temperature": float(temperature),
-                "top_p": float(top_p),
-                "frequency_penalty": float(frequency_penalty),
-                "presence_penalty": float(presence_penalty),
-            }
-        else:
-            # Legacy /completions endpoint (probably unused now)
-            prompt = messages_to_prompt(messages)
-            payload = {
-                "model": model,
-                "prompt": prompt,
                 "stream": True,
                 "temperature": float(temperature),
                 "top_p": float(top_p),
@@ -344,11 +312,8 @@ class OpenAIAPIBot:
                                         # /chat/completions endpoint
                                         choices = chunk.get("choices", [])
                                         if choices:
-                                            if is_chat_endpoint:
-                                                delta = choices[0].get("delta", {})
-                                                content = delta.get("content", "")
-                                            else:
-                                                content = choices[0].get("text", "")
+                                            delta = choices[0].get("delta", {})
+                                            content = delta.get("content", "")
                                             if content:
                                                 output_msg.write(content)
                                 except json.JSONDecodeError:
