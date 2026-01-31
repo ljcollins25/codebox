@@ -67,6 +67,12 @@ async function pollForToken(deviceCode: string): Promise<Response> {
 		body: `client_id=${GITHUB_CLIENT_ID}&device_code=${deviceCode}&grant_type=urn:ietf:params:oauth:grant-type:device_code`,
 	});
 
-	const data = await response.json();
-	return jsonResponse(data);
+	const data = await response.json() as { access_token?: string };
+	
+	// Only cache successful responses (with access_token) for 5 minutes in browser
+	const cacheControl = data.access_token 
+		? 'private, max-age=300' 
+		: 'no-store';
+	
+	return jsonResponse(data, 200, { 'Cache-Control': cacheControl });
 }

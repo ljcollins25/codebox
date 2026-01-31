@@ -294,7 +294,7 @@
             </div>
         </div>
         <div class="footer">
-            <p><a href="/health">Health Check</a> | <a href="https://github.com/settings/tokens">Manage Tokens</a></p>
+            <p><a href="/health">Health Check</a></p>
         </div>
     </div>
     <script>
@@ -355,9 +355,18 @@
         }
 
         function startPolling(state) {
-            if (pollTimer) clearInterval(pollTimer);
-            const interval = Math.max(state.interval, 5) * 1000;
-            pollTimer = setInterval(async () => {
+            if (pollTimer) clearTimeout(pollTimer);
+            let interval = Math.max(state.interval, 5) * 1000;
+            
+            function updateInterval(data) {
+                if (data.interval && data.interval !== state.interval) {
+                    interval = Math.max(data.interval, 5) * 1000;
+                    state.interval = data.interval;
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+                }
+            }
+            
+            async function poll() {
                 if (new Date(state.expires_at) <= new Date()) {
                     stopPolling();
                     localStorage.removeItem(STORAGE_KEY);
@@ -365,17 +374,22 @@
                     return;
                 }
                 try {
-                    const res = await fetch("/login?device_code=" + encodeURIComponent(state.device_code), {
-                        method: "POST",
-                    });
+                    const res = await fetch("/login?device_code=" + encodeURIComponent(state.device_code));
                     const data = await res.json();
+                    
+                    // Update interval from any response that includes it
+                    updateInterval(data);
+                    
                     if (data.access_token) {
                         stopPolling();
                         localStorage.removeItem(STORAGE_KEY);
                         showToken(data.access_token);
                         return;
                     }
-                    if (data.error === "authorization_pending" || data.error === "slow_down") return;
+                    if (data.error === "slow_down" || data.error === "authorization_pending") {
+                        pollTimer = setTimeout(poll, interval);
+                        return;
+                    }
                     if (data.error === "expired_token") {
                         stopPolling();
                         localStorage.removeItem(STORAGE_KEY);
@@ -392,15 +406,22 @@
                         stopPolling();
                         localStorage.removeItem(STORAGE_KEY);
                         showError(data.error_description || data.error);
+                        return;
                     }
+                    // No recognized response, keep polling
+                    pollTimer = setTimeout(poll, interval);
                 } catch (error) {
                     console.error("Poll error:", error);
+                    // Network error - retry after interval
+                    pollTimer = setTimeout(poll, interval);
                 }
-            }, interval);
+            }
+            
+            pollTimer = setTimeout(poll, interval);
         }
 
         function stopPolling() {
-            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
         }
 
         function showToken(token) {
