@@ -48,7 +48,7 @@ export default {
 
 			// /poe/settings - Poe parameter controls
 			if (path === '/poe/settings' && request.method === 'POST') {
-				return await handlePoeSettings(request, env);
+				return await handlePoeSettings(request, env, url);
 			}
 
 			// /health - Health check

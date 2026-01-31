@@ -364,7 +364,7 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 
 	// Handle settings request
 	if (poeRequest.type === 'settings') {
-		return handlePoeSettingsRequest(env);
+		return handlePoeSettingsRequest(env, url);
 	}
 
 	// Handle query request
@@ -475,118 +475,124 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 /**
  * Build settings response with parameter controls
  */
-function handlePoeSettingsRequest(env: Env): Response {
+function handlePoeSettingsRequest(env: Env, url: URL): Response {
 	const defaultModel = env.DEFAULT_MODEL || 'gpt-4o';
+	const modelFromQuery = url.searchParams.get('model');
+	
+	// Build sections array - only include Connection section if model not specified in query
+	const sections: Array<Record<string, unknown>> = [];
+	
+	if (!modelFromQuery) {
+		sections.push({
+			name: "Connection",
+			controls: [
+				{
+					control: "drop_down",
+					label: "Model",
+					parameter_name: "model",
+					description: "Model to use",
+					default_value: defaultModel,
+					options: [
+						{ value: "gpt-4.1", name: "GPT-4.1" },
+						{ value: "gpt-4o", name: "GPT-4o" },
+						{ value: "gpt-5-mini", name: "GPT-5 mini" },
+						{ value: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
+						{ value: "claude-opus-4.5", name: "Claude Opus 4.5" },
+						{ value: "claude-sonnet-4", name: "Claude Sonnet 4" },
+						{ value: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+						{ value: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+						{ value: "gemini-3-flash-preview", name: "Gemini 3 Flash (Preview)" },
+						{ value: "gemini-3-pro-preview", name: "Gemini 3 Pro (Preview)" },
+						{ value: "gpt-5", name: "GPT-5" },
+						{ value: "gpt-5-codex", name: "GPT-5-Codex (Preview)" },
+						{ value: "gpt-5.1", name: "GPT-5.1" },
+						{ value: "gpt-5.1-codex", name: "GPT-5.1-Codex" },
+						{ value: "gpt-5.1-codex-max", name: "GPT-5.1-Codex-Max" },
+						{ value: "gpt-5.1-codex-mini", name: "GPT-5.1-Codex-Mini (Preview)" },
+						{ value: "gpt-5.2", name: "GPT-5.2" },
+						{ value: "gpt-5.2-codex", name: "GPT-5.2-Codex" },
+						{ value: "custom", name: "Custom..." },
+					],
+				},
+				{
+					control: "text_field",
+					label: "Custom Model",
+					parameter_name: "custom_model",
+					description: "Used when 'Custom...' is selected above",
+					placeholder: "gpt-4-turbo",
+				},
+			],
+			collapsed_by_default: false,
+		});
+	}
+	
+	sections.push({
+	name: "Model Parameters",
+		controls: [
+			{
+				control: "slider",
+				label: "Temperature",
+				parameter_name: "temperature",
+				description: "Controls randomness (0 = deterministic, 2 = creative)",
+				default_value: 1.0,
+				min_value: 0.0,
+				max_value: 2.0,
+				step: 0.1,
+			},
+			{
+				control: "slider",
+				label: "Max Tokens",
+				parameter_name: "max_tokens",
+				description: "Maximum tokens in response (0 = no limit)",
+				default_value: 0,
+				min_value: 0,
+				max_value: 16384,
+				step: 256,
+			},
+			{
+				control: "slider",
+				label: "Top P",
+				parameter_name: "top_p",
+				description: "Nucleus sampling threshold",
+				default_value: 1.0,
+				min_value: 0.0,
+				max_value: 1.0,
+				step: 0.05,
+			},
+			{
+				control: "slider",
+				label: "Frequency Penalty",
+				parameter_name: "frequency_penalty",
+				description: "Penalizes repeated tokens based on frequency",
+				default_value: 0.0,
+				min_value: -2.0,
+				max_value: 2.0,
+				step: 0.1,
+			},
+			{
+				control: "slider",
+				label: "Presence Penalty",
+				parameter_name: "presence_penalty",
+				description: "Penalizes tokens based on presence in text",
+				default_value: 0.0,
+				min_value: -2.0,
+				max_value: 2.0,
+				step: 0.1,
+			},
+		],
+		collapsed_by_default: true,
+	});
 	
 	const settings: PoeSettingsResponse = {
 		response_version: 2,
 		server_bot_dependencies: {},
 		parameter_controls: {
 			api_version: "2",
-			sections: [
-				{
-					name: "Connection",
-					controls: [
-						{
-							control: "drop_down",
-							label: "Model",
-							parameter_name: "model",
-							description: "Model to use",
-							default_value: defaultModel,
-							options: [
-								{ value: "gpt-4.1", name: "GPT-4.1" },
-								{ value: "gpt-4o", name: "GPT-4o" },
-								{ value: "gpt-5-mini", name: "GPT-5 mini" },
-								{ value: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
-								{ value: "claude-opus-4.5", name: "Claude Opus 4.5" },
-								{ value: "claude-sonnet-4", name: "Claude Sonnet 4" },
-								{ value: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
-								{ value: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-								{ value: "gemini-3-flash-preview", name: "Gemini 3 Flash (Preview)" },
-								{ value: "gemini-3-pro-preview", name: "Gemini 3 Pro (Preview)" },
-								{ value: "gpt-5", name: "GPT-5" },
-								{ value: "gpt-5-codex", name: "GPT-5-Codex (Preview)" },
-								{ value: "gpt-5.1", name: "GPT-5.1" },
-								{ value: "gpt-5.1-codex", name: "GPT-5.1-Codex" },
-								{ value: "gpt-5.1-codex-max", name: "GPT-5.1-Codex-Max" },
-								{ value: "gpt-5.1-codex-mini", name: "GPT-5.1-Codex-Mini (Preview)" },
-								{ value: "gpt-5.2", name: "GPT-5.2" },
-								{ value: "gpt-5.2-codex", name: "GPT-5.2-Codex" },
-								{ value: "custom", name: "Custom..." },
-							],
-						},
-						{
-							control: "text_field",
-							label: "Custom Model",
-							parameter_name: "custom_model",
-							description: "Used when 'Custom...' is selected above",
-							placeholder: "gpt-4-turbo",
-						},
-					],
-					collapsed_by_default: false,
-				},
-				{
-					name: "Model Parameters",
-					controls: [
-						{
-							control: "slider",
-							label: "Temperature",
-							parameter_name: "temperature",
-							description: "Controls randomness (0 = deterministic, 2 = creative)",
-							default_value: 1.0,
-							min_value: 0.0,
-							max_value: 2.0,
-							step: 0.1,
-						},
-						{
-							control: "slider",
-							label: "Max Tokens",
-							parameter_name: "max_tokens",
-							description: "Maximum tokens in response (0 = no limit)",
-							default_value: 0,
-							min_value: 0,
-							max_value: 16384,
-							step: 256,
-						},
-						{
-							control: "slider",
-							label: "Top P",
-							parameter_name: "top_p",
-							description: "Nucleus sampling threshold",
-							default_value: 1.0,
-							min_value: 0.0,
-							max_value: 1.0,
-							step: 0.05,
-						},
-						{
-							control: "slider",
-							label: "Frequency Penalty",
-							parameter_name: "frequency_penalty",
-							description: "Penalizes repeated tokens based on frequency",
-							default_value: 0.0,
-							min_value: -2.0,
-							max_value: 2.0,
-							step: 0.1,
-						},
-						{
-							control: "slider",
-							label: "Presence Penalty",
-							parameter_name: "presence_penalty",
-							description: "Penalizes tokens based on presence in text",
-							default_value: 0.0,
-							min_value: -2.0,
-							max_value: 2.0,
-							step: 0.1,
-						},
-					],
-					collapsed_by_default: false,
-				},
-			],
+			sections,
 		},
 		allow_attachments: true,
 		expand_text_attachments: true,
 		enable_image_comprehension: false,
-		introduction_message: "Hello! I'm a GitHub Copilot proxy bot. Configure your settings using the parameter controls below.",
 		enforce_author_role_alternation: false,
 		enable_multi_entity_prompting: true,
 	};
@@ -597,6 +603,6 @@ function handlePoeSettingsRequest(env: Env): Response {
 /**
  * Handle POST /poe/settings (legacy endpoint)
  */
-export async function handlePoeSettings(request: Request, env: Env): Promise<Response> {
-	return handlePoeSettingsRequest(env);
+export async function handlePoeSettings(request: Request, env: Env, url: URL): Promise<Response> {
+	return handlePoeSettingsRequest(env, url);
 }
