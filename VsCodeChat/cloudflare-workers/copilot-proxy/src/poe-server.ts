@@ -113,13 +113,11 @@ interface OpenAIRequest {
 }
 
 interface PoeSettingsResponse {
+	// Protocol version to use for default values
+	response_version?: number;
+	// Bot dependencies for bot query API
 	server_bot_dependencies?: Record<string, number>;
-	allow_attachments?: boolean;
-	expand_text_attachments?: boolean;
-	enable_image_comprehension?: boolean;
-	introduction_message?: string;
-	enforce_author_role_alternation?: boolean;
-	enable_multi_bot_chat_prompting?: boolean;
+	// Parameter controls UI
 	parameter_controls?: {
 		api_version: string;
 		sections: Array<{
@@ -128,6 +126,15 @@ interface PoeSettingsResponse {
 			collapsed_by_default?: boolean;
 		}>;
 	};
+	// Attachment settings
+	allow_attachments?: boolean;
+	expand_text_attachments?: boolean;
+	enable_image_comprehension?: boolean;
+	// Introduction message (Markdown)
+	introduction_message?: string;
+	// Message handling
+	enforce_author_role_alternation?: boolean;
+	enable_multi_entity_prompting?: boolean;
 }
 
 // =============================================================================
@@ -472,13 +479,8 @@ function handlePoeSettingsRequest(env: Env): Response {
 	const defaultModel = env.DEFAULT_MODEL || 'gpt-4o';
 	
 	const settings: PoeSettingsResponse = {
+		response_version: 2,
 		server_bot_dependencies: {},
-		allow_attachments: true,
-		expand_text_attachments: true,
-		enable_image_comprehension: false,
-		introduction_message: "Hello! I'm a GitHub Copilot proxy bot. Configure your settings using the parameter controls below.",
-		enforce_author_role_alternation: false,
-		enable_multi_bot_chat_prompting: false,
 		parameter_controls: {
 			api_version: "2",
 			sections: [
@@ -574,6 +576,12 @@ function handlePoeSettingsRequest(env: Env): Response {
 				},
 			],
 		},
+		allow_attachments: true,
+		expand_text_attachments: true,
+		enable_image_comprehension: false,
+		introduction_message: "Hello! I'm a GitHub Copilot proxy bot. Configure your settings using the parameter controls below.",
+		enforce_author_role_alternation: false,
+		enable_multi_entity_prompting: true,
 	};
 
 	return jsonResponse(settings);
