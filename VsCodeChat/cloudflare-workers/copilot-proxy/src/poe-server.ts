@@ -7,6 +7,7 @@
  */
 
 import { Env, corsHeaders, jsonResponse, errorResponse } from './shared';
+import { handleCopilotProxy } from './copilot';
 
 // =============================================================================
 // Types
@@ -327,19 +328,7 @@ function poeErrorResponse(message: string, allowRetry: boolean): Response {
 export async function handlePoeServer(request: Request, env: Env, url: URL): Promise<Response> {
 	const poeRequest = await request.json() as PoeQueryRequest;
 
-	let targetUrl: string;
 	const targetParam = url.searchParams.get('target');
-
-	if (targetParam) {
-		if (!validateTargetUrl(targetParam)) {
-			return errorResponse('Invalid target URL. Must be https and not a private address.', 400, 'invalid_target');
-		}
-		targetUrl = targetParam;
-	} else {
-		const base = new URL(request.url);
-		targetUrl = `${base.origin}/copilot/v1/chat/completions`;
-	}
-
 	const model = url.searchParams.get('model') || 'gpt-4o';
 	const openaiRequest = translatePoeToOpenAI(poeRequest, model);
 
@@ -352,11 +341,30 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 		headers['Authorization'] = authHeader;
 	}
 
-	const response = await fetch(targetUrl, {
-		method: 'POST',
-		headers,
-		body: JSON.stringify(openaiRequest),
-	});
+	let response: Response;
+
+	if (targetParam) {
+		// External target - validate and use fetch
+		if (!validateTargetUrl(targetParam)) {
+			return errorResponse('Invalid target URL. Must be https and not a private address.', 400, 'invalid_target');
+		}
+		response = await fetch(targetParam, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify(openaiRequest),
+		});
+	} else {
+		// Internal copilot proxy - call handler directly to avoid self-fetch issues
+		const copilotRequest = new Request(
+			`${url.origin}/copilot/v1/chat/completions`,
+			{
+				method: 'POST',
+				headers,
+				body: JSON.stringify(openaiRequest),
+			}
+		);
+		response = await handleCopilotProxy(copilotRequest, env, '/copilot/v1/chat/completions');
+	}
 
 	if (!response.ok) {
 		const error = await response.text();
