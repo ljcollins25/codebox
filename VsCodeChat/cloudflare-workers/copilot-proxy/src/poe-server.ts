@@ -326,6 +326,17 @@ function poeErrorResponse(message: string, allowRetry: boolean): Response {
  * Handle POST /poe/server
  */
 export async function handlePoeServer(request: Request, env: Env, url: URL): Promise<Response> {
+	// Verify request authorization against AUTH_SECRET if configured
+	if (env.AUTH_SECRET) {
+		const authHeader = request.headers.get('Authorization');
+		const expectedAuth = env.AUTH_SECRET.toLowerCase().startsWith('bearer ')
+			? env.AUTH_SECRET
+			: `Bearer ${env.AUTH_SECRET}`;
+		if (!authHeader || authHeader !== expectedAuth) {
+			return poeErrorResponse('Unauthorized', false);
+		}
+	}
+
 	const poeRequest = await request.json() as PoeQueryRequest;
 
 	const targetParam = url.searchParams.get('target');
@@ -336,9 +347,13 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 		'Content-Type': 'application/json',
 	};
 
-	const authHeader = request.headers.get('Authorization');
-	if (authHeader) {
-		headers['Authorization'] = authHeader;
+	// Get token from query param for backing API authorization
+	const tokenParam = url.searchParams.get('token');
+	if (tokenParam) {
+		// Prepend 'Bearer ' if not already present
+		headers['Authorization'] = tokenParam.toLowerCase().startsWith('bearer ')
+			? tokenParam
+			: `Bearer ${tokenParam}`;
 	}
 
 	let response: Response;

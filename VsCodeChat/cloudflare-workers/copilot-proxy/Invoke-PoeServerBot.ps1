@@ -20,7 +20,11 @@
     Optional user ID (generates random if not provided).
 
 .PARAMETER AccessKey
-    Optional access key for authentication.
+    Optional access key for authentication (sent in Authorization header).
+
+.PARAMETER Token
+    Optional token for backing API authentication (sent as query parameter).
+    Use this when the server requires a separate token for the backing API.
 
 .PARAMETER NoStream
     Disable streaming output (streaming is on by default).
@@ -32,16 +36,16 @@
     .\Invoke-PoeServerBot.ps1 -ServerUrl "https://example.com/poe" -Prompt "Hello!"
 
 .EXAMPLE
-    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server" -Prompt "Say hello" -AccessKey "gho_xxx"
+    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server" -Prompt "Say hello" -Token "gho_xxx"
 
 .EXAMPLE
-    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server?model=claude-sonnet-4" -Prompt "Hello"
+    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server?model=claude-sonnet-4" -Prompt "Hello" -Token "gho_xxx"
 
 .EXAMPLE
-    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server" -Prompt "What time is it?" -UseTools -AccessKey "gho_xxx"
+    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server" -Prompt "What time is it?" -UseTools -Token "gho_xxx"
 
 .EXAMPLE
-    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server" -Prompt "Roll 3 dice" -UseTools -AccessKey "gho_xxx"
+    .\Invoke-PoeServerBot.ps1 -ServerUrl "https://copilot-proxy.ref12cf.workers.dev/poe/server" -Prompt "Roll 3 dice" -UseTools -Token "gho_xxx"
 #>
 
 [CmdletBinding()]
@@ -60,6 +64,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$AccessKey,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Token,
 
     [Parameter(Mandatory = $false)]
     [switch]$NoStream,
@@ -283,6 +290,7 @@ function Invoke-PoeRequest {
         [string]$UserId,
         [string]$ConversationId,
         [string]$AccessKey,
+        [string]$Token,
         [array]$Tools,
         [array]$ToolResults
     )
@@ -290,6 +298,13 @@ function Invoke-PoeRequest {
     $messageId = "m-" + (New-RandomId)
     $requestToken = "r-" + (New-RandomId)
     $botQueryId = "b-" + (New-RandomId)
+    
+    # Append token to URL if provided
+    $finalUrl = $ServerUrl
+    if ($Token) {
+        $separator = if ($ServerUrl.Contains("?")) { "&" } else { "?" }
+        $finalUrl = "$ServerUrl${separator}token=$([System.Uri]::EscapeDataString($Token))"
+    }
     
     $poeRequest = @{
         version            = "1.1"
@@ -322,7 +337,7 @@ function Invoke-PoeRequest {
     
     $body = $poeRequest | ConvertTo-Json -Depth 20
     
-    $request = [System.Net.HttpWebRequest]::Create($ServerUrl)
+    $request = [System.Net.HttpWebRequest]::Create($finalUrl)
     $request.Method = "POST"
     $request.ContentType = "application/json"
     $request.Accept = "text/event-stream"
@@ -488,7 +503,7 @@ function Main {
         while ($iteration -lt $maxIterations) {
             $iteration++
             
-            $result = Invoke-PoeRequest -ServerUrl $ServerUrl -QueryMessages $queryMessages -UserId $userId -ConversationId $conversationId -AccessKey $AccessKey -Tools $tools -ToolResults $toolResults
+            $result = Invoke-PoeRequest -ServerUrl $ServerUrl -QueryMessages $queryMessages -UserId $userId -ConversationId $conversationId -AccessKey $AccessKey -Token $Token -Tools $tools -ToolResults $toolResults
             
             # If there are tool calls, process them
             if ($result.tool_calls -and $result.tool_calls.Count -gt 0) {
