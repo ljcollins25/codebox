@@ -443,6 +443,7 @@ function Invoke-ChatCompletion {
         
         $fullContent = ""
         $currentEvent = ""
+        $usage = $null
         while (-not $reader.EndOfStream) {
             $line = $reader.ReadLine()
             
@@ -471,6 +472,10 @@ function Invoke-ChatCompletion {
                                 $fullContent += $content
                             }
                         }
+                        # Capture usage from response.completed event
+                        if ($currentEvent -eq "response.completed" -and $chunk.response.usage) {
+                            $usage = $chunk.response.usage
+                        }
                     }
                     else {
                         # /chat/completions endpoint format
@@ -482,6 +487,10 @@ function Invoke-ChatCompletion {
                                 }
                                 $fullContent += $content
                             }
+                        }
+                        # Capture usage from streaming chunk (sent in final chunk by some APIs)
+                        if ($chunk.usage) {
+                            $usage = $chunk.usage
                         }
                     }
                 }
@@ -502,6 +511,17 @@ function Invoke-ChatCompletion {
         
         Write-Host ""
         Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+        
+        # Print token usage if available
+        if ($usage) {
+            Write-Host ""
+            $promptTokens = if ($usage.prompt_tokens) { $usage.prompt_tokens } elseif ($usage.input_tokens) { $usage.input_tokens } else { "?" }
+            $completionTokens = if ($usage.completion_tokens) { $usage.completion_tokens } elseif ($usage.output_tokens) { $usage.output_tokens } else { "?" }
+            $totalTokens = if ($usage.total_tokens) { $usage.total_tokens } else { "?" }
+            Write-Host "📊 Tokens: " -NoNewline -ForegroundColor DarkGray
+            Write-Host "prompt=$promptTokens, completion=$completionTokens, total=$totalTokens" -ForegroundColor DarkGray
+        }
+        
         Write-Host ""
         
         return $fullContent
