@@ -20,6 +20,7 @@ interface PoeMessage {
 	attachments?: PoeAttachment[];
 	tool_call_id?: string;
 	tool_calls?: PoeToolCall[];
+	parameters?: Record<string, unknown>;
 }
 
 interface PoeAttachment {
@@ -71,6 +72,13 @@ interface PoeQueryRequest {
 	}>;
 }
 
+interface PoeSettingsRequest {
+	version: string;
+	type: 'settings';
+}
+
+type PoeRequest = PoeQueryRequest | PoeSettingsRequest;
+
 interface OpenAIMessage {
 	role: 'system' | 'user' | 'assistant' | 'tool';
 	content: string | null;
@@ -112,6 +120,14 @@ interface PoeSettingsResponse {
 	introduction_message?: string;
 	enforce_author_role_alternation?: boolean;
 	enable_multi_bot_chat_prompting?: boolean;
+	parameter_controls?: {
+		api_version: string;
+		sections: Array<{
+			name?: string;
+			controls?: Array<Record<string, unknown>>;
+			collapsed_by_default?: boolean;
+		}>;
+	};
 }
 
 // =============================================================================
@@ -337,11 +353,51 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 		}
 	}
 
-	const poeRequest = await request.json() as PoeQueryRequest;
+	const poeRequest = await request.json() as PoeRequest;
 
+	// Handle settings request
+	if (poeRequest.type === 'settings') {
+		return handlePoeSettingsRequest(env);
+	}
+
+	// Handle query request
+	const queryRequest = poeRequest as PoeQueryRequest;
 	const targetParam = url.searchParams.get('target');
-	const model = url.searchParams.get('model') || 'gpt-4o';
-	const openaiRequest = translatePoeToOpenAI(poeRequest, model);
+	
+	// Get parameters from the last message
+	const lastMessage = queryRequest.query?.[queryRequest.query.length - 1];
+	const params = lastMessage?.parameters || {};
+	
+	// Get model: 1) query param, 2) custom_model if model=custom, 3) model param, 4) env default, 5) hardcoded
+	let model = url.searchParams.get('model');
+	if (!model) {
+		const paramModel = params.model as string | undefined;
+		if (paramModel === 'custom') {
+			model = (params.custom_model as string) || env.DEFAULT_MODEL || 'gpt-4o';
+		} else {
+			model = paramModel || env.DEFAULT_MODEL || 'gpt-4o';
+		}
+	}
+	
+	// Build OpenAI request with additional parameters
+	const openaiRequest = translatePoeToOpenAI(queryRequest, model);
+	
+	// Apply optional parameters from parameter controls
+	if (typeof params.temperature === 'number') {
+		openaiRequest.temperature = params.temperature;
+	}
+	if (typeof params.max_tokens === 'number' && params.max_tokens > 0) {
+		(openaiRequest as Record<string, unknown>).max_tokens = params.max_tokens;
+	}
+	if (typeof params.top_p === 'number') {
+		(openaiRequest as Record<string, unknown>).top_p = params.top_p;
+	}
+	if (typeof params.frequency_penalty === 'number') {
+		(openaiRequest as Record<string, unknown>).frequency_penalty = params.frequency_penalty;
+	}
+	if (typeof params.presence_penalty === 'number') {
+		(openaiRequest as Record<string, unknown>).presence_penalty = params.presence_penalty;
+	}
 
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json',
@@ -410,18 +466,122 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 }
 
 /**
- * Handle POST /poe/settings
+ * Build settings response with parameter controls
  */
-export async function handlePoeSettings(request: Request, env: Env): Promise<Response> {
+function handlePoeSettingsRequest(env: Env): Response {
+	const defaultModel = env.DEFAULT_MODEL || 'gpt-4o';
+	
 	const settings: PoeSettingsResponse = {
 		server_bot_dependencies: {},
 		allow_attachments: true,
 		expand_text_attachments: true,
 		enable_image_comprehension: false,
-		introduction_message: "Hello! I'm a GitHub Copilot proxy bot. Send me a message to get started.",
+		introduction_message: "Hello! I'm a GitHub Copilot proxy bot. Configure your settings using the parameter controls below.",
 		enforce_author_role_alternation: false,
 		enable_multi_bot_chat_prompting: false,
+		parameter_controls: {
+			api_version: "2",
+			sections: [
+				{
+					name: "Connection",
+					controls: [
+						{
+							control: "drop_down",
+							label: "Model",
+							parameter_name: "model",
+							description: "Model to use",
+							default_value: defaultModel,
+							options: [
+								{ value: "gpt-4.1", name: "GPT-4.1" },
+								{ value: "gpt-4o", name: "GPT-4o" },
+								{ value: "gpt-4o-mini", name: "GPT-4o Mini" },
+								{ value: "gpt-4.1-mini", name: "GPT-4.1 Mini" },
+								{ value: "gpt-4.1-nano", name: "GPT-4.1 Nano" },
+								{ value: "o1", name: "o1" },
+								{ value: "o1-mini", name: "o1 Mini" },
+								{ value: "o1-pro", name: "o1 Pro" },
+								{ value: "o3-mini", name: "o3 Mini" },
+								{ value: "claude-3.5-sonnet", name: "Claude 3.5 Sonnet" },
+								{ value: "claude-sonnet-4", name: "Claude Sonnet 4" },
+								{ value: "custom", name: "Custom..." },
+							],
+						},
+						{
+							control: "text_field",
+							label: "Custom Model",
+							parameter_name: "custom_model",
+							description: "Used when 'Custom...' is selected above",
+							placeholder: "gpt-4-turbo",
+						},
+					],
+					collapsed_by_default: false,
+				},
+				{
+					name: "Model Parameters",
+					controls: [
+						{
+							control: "slider",
+							label: "Temperature",
+							parameter_name: "temperature",
+							description: "Controls randomness (0 = deterministic, 2 = creative)",
+							default_value: 1.0,
+							min_value: 0.0,
+							max_value: 2.0,
+							step: 0.1,
+						},
+						{
+							control: "slider",
+							label: "Max Tokens",
+							parameter_name: "max_tokens",
+							description: "Maximum tokens in response (0 = no limit)",
+							default_value: 0,
+							min_value: 0,
+							max_value: 16384,
+							step: 256,
+						},
+						{
+							control: "slider",
+							label: "Top P",
+							parameter_name: "top_p",
+							description: "Nucleus sampling threshold",
+							default_value: 1.0,
+							min_value: 0.0,
+							max_value: 1.0,
+							step: 0.05,
+						},
+						{
+							control: "slider",
+							label: "Frequency Penalty",
+							parameter_name: "frequency_penalty",
+							description: "Penalizes repeated tokens based on frequency",
+							default_value: 0.0,
+							min_value: -2.0,
+							max_value: 2.0,
+							step: 0.1,
+						},
+						{
+							control: "slider",
+							label: "Presence Penalty",
+							parameter_name: "presence_penalty",
+							description: "Penalizes tokens based on presence in text",
+							default_value: 0.0,
+							min_value: -2.0,
+							max_value: 2.0,
+							step: 0.1,
+						},
+					],
+					collapsed_by_default: false,
+				},
+			],
+		},
 	};
 
 	return jsonResponse(settings);
+}
+
+/**
+ * Handle POST /poe/settings (legacy endpoint)
+ */
+export async function handlePoeSettings(request: Request, env: Env): Promise<Response> {
+	return handlePoeSettingsRequest(env);
 }

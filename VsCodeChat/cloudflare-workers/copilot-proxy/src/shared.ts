@@ -6,6 +6,7 @@ export interface Env {
 	TOKEN_CACHE: KVNamespace;
 	SERVER_SECRET?: string;
 	AUTH_SECRET?: string;
+	DEFAULT_MODEL?: string;
 }
 
 // =============================================================================
