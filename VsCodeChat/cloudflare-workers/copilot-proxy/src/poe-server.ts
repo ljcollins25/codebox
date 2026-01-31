@@ -4,10 +4,118 @@
  * 
  * Translates Poe Server Bot API requests/responses to/from OpenAI-compatible format.
  * See: https://creator.poe.com/docs/server-bots/quick-start
+ * 
+ * Monetization API:
+ * See: https://creator.poe.com/docs/server-bots/poe-bot-monetization-api-documentation
  */
 
 import { Env, corsHeaders, jsonResponse, errorResponse } from './shared';
 import { handleCopilotProxy } from './copilot';
+
+// =============================================================================
+// Model Pricing Configuration
+// =============================================================================
+
+/**
+ * Model pricing in points per 1k tokens.
+ * USD rate: $0.03/1M tokens = 1 point/1k tokens
+ * 
+ * Fill in model-specific values here.
+ */
+interface ModelPricing {
+	input_points_per_1k: number;   // Points per 1k input tokens
+	output_points_per_1k: number;  // Points per 1k output tokens
+	cache_discount?: number;       // Optional cache discount (0.0-1.0, e.g., 0.9 = 90% discount)
+}
+
+const MODEL_PRICING: Record<string, ModelPricing> = {
+	// GPT-4 series
+	'gpt-4.1': { input_points_per_1k: 67, output_points_per_1k: 267 },
+	'gpt-4o': { input_points_per_1k: 83, output_points_per_1k: 333 },
+	'gpt-4o-mini': { input_points_per_1k: 5, output_points_per_1k: 20 },
+	
+	// GPT-5 series (placeholder values - fill in actual rates)
+	'gpt-5-mini': { input_points_per_1k: 10, output_points_per_1k: 40 },
+	'gpt-5': { input_points_per_1k: 167, output_points_per_1k: 667 },
+	'gpt-5-codex': { input_points_per_1k: 200, output_points_per_1k: 800 },
+	'gpt-5.1': { input_points_per_1k: 200, output_points_per_1k: 800 },
+	'gpt-5.1-codex': { input_points_per_1k: 250, output_points_per_1k: 1000 },
+	'gpt-5.1-codex-max': { input_points_per_1k: 500, output_points_per_1k: 2000 },
+	'gpt-5.1-codex-mini': { input_points_per_1k: 50, output_points_per_1k: 200 },
+	'gpt-5.2': { input_points_per_1k: 250, output_points_per_1k: 1000 },
+	'gpt-5.2-codex': { input_points_per_1k: 300, output_points_per_1k: 1200 },
+	
+	// Claude series
+	'claude-haiku-4.5': { input_points_per_1k: 33, output_points_per_1k: 167, cache_discount: 0.9 },
+	'claude-opus-4.5': { input_points_per_1k: 500, output_points_per_1k: 2500, cache_discount: 0.9 },
+	'claude-sonnet-4': { input_points_per_1k: 100, output_points_per_1k: 500, cache_discount: 0.9 },
+	'claude-sonnet-4.5': { input_points_per_1k: 100, output_points_per_1k: 500, cache_discount: 0.9 },
+	
+	// Gemini series (placeholder values - fill in actual rates)
+	'gemini-2.5-pro': { input_points_per_1k: 42, output_points_per_1k: 167 },
+	'gemini-3-flash-preview': { input_points_per_1k: 25, output_points_per_1k: 100 },
+	'gemini-3-pro-preview': { input_points_per_1k: 42, output_points_per_1k: 167 },
+};
+
+// Default pricing for unknown models
+const DEFAULT_PRICING: ModelPricing = { input_points_per_1k: 10, output_points_per_1k: 40 };
+
+/**
+ * Get pricing for a model, with fallback to default
+ */
+function getModelPricing(model: string): ModelPricing {
+	return MODEL_PRICING[model] || DEFAULT_PRICING;
+}
+
+/**
+ * Convert points per 1k tokens to USD milli-cents per token
+ * 1 point/1k tokens = $0.03/1M tokens = 0.03 cents/1k tokens = 0.00003 cents/token = 0.03 milli-cents/token
+ * So: points_per_1k * 30 = milli_cents per 1k tokens
+ */
+function pointsToMilliCentsPerToken(pointsPer1k: number): number {
+	// points_per_1k tokens -> milli-cents per token
+	// 1 point = $0.03/1M tokens = 30 milli-cents/1M tokens = 0.00003 cents/token = 0.03 milli-cents/token
+	// So points_per_1k * 0.03 = milli-cents per token
+	return pointsPer1k * 0.03;
+}
+
+/**
+ * Calculate cost in USD milli-cents from token counts and pricing
+ */
+function calculateCostMilliCents(inputTokens: number, outputTokens: number, pricing: ModelPricing): number {
+	const inputCost = inputTokens * pointsToMilliCentsPerToken(pricing.input_points_per_1k);
+	const outputCost = outputTokens * pointsToMilliCentsPerToken(pricing.output_points_per_1k);
+	return Math.round(inputCost + outputCost);
+}
+
+/**
+ * Generate rate card markdown for a model
+ */
+function generateRateCard(model: string, pricing: ModelPricing): string {
+	const inputMilliCents = Math.round(pricing.input_points_per_1k * 30);
+	const outputMilliCents = Math.round(pricing.output_points_per_1k * 30);
+	
+	let rateCard = `**${model}** pricing:\n\n`;
+	rateCard += `| Type | Rate |\n`;
+	rateCard += `|------|------|\n`;
+	rateCard += `| Input | [usd_milli_cents=${inputMilliCents}] / 1k tokens |\n`;
+	rateCard += `| Output | [usd_milli_cents=${outputMilliCents}] / 1k tokens |\n`;
+	
+	if (pricing.cache_discount) {
+		const discountPercent = Math.round(pricing.cache_discount * 100);
+		rateCard += `| Cache discount | ${discountPercent}% |\n`;
+	}
+	
+	return rateCard;
+}
+
+/**
+ * Generate cost label for a model (short summary)
+ */
+function generateCostLabel(pricing: ModelPricing): string {
+	const inputMilliCents = Math.round(pricing.input_points_per_1k * 30);
+	return `[usd_milli_cents=${inputMilliCents}]+`;
+}
 
 // =============================================================================
 // Types
@@ -126,6 +234,9 @@ interface PoeSettingsResponse {
 			collapsed_by_default?: boolean;
 		}>;
 	};
+	// Monetization - rate card and cost label
+	rate_card?: string;
+	cost_label?: string;
 	// Attachment settings
 	allow_attachments?: boolean;
 	expand_text_attachments?: boolean;
@@ -241,7 +352,8 @@ function translatePoeToOpenAI(poeRequest: PoeQueryRequest, model: string): OpenA
 async function translateOpenAIStreamToPoe(
 	openaiStream: ReadableStream<Uint8Array>,
 	writer: WritableStreamDefaultWriter<Uint8Array>,
-	encoder: TextEncoder
+	encoder: TextEncoder,
+	pricing?: ModelPricing
 ): Promise<void> {
 	const reader = openaiStream.getReader();
 	const decoder = new TextDecoder();
@@ -252,6 +364,10 @@ async function translateOpenAIStreamToPoe(
 		name: string;
 		arguments: string;
 	}> = new Map();
+
+	// Track token usage for cost capture
+	let promptTokens = 0;
+	let completionTokens = 0;
 
 	const sendEvent = async (event: string, data: unknown) => {
 		await writer.write(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
@@ -310,9 +426,30 @@ async function translateOpenAIStreamToPoe(
 						}
 						toolCallAccumulator.clear();
 					}
+
+					// Capture usage from streaming response (typically in final chunk)
+					if (json.usage) {
+						promptTokens = json.usage.prompt_tokens || json.usage.input_tokens || 0;
+						completionTokens = json.usage.completion_tokens || json.usage.output_tokens || 0;
+					}
 				} catch {
 					// Ignore parse errors
 				}
+			}
+		}
+
+		// Send cost capture event if pricing is configured and we have usage data
+		if (pricing && (promptTokens > 0 || completionTokens > 0)) {
+			const totalCostMilliCents = calculateCostMilliCents(promptTokens, completionTokens, pricing);
+			if (totalCostMilliCents > 0) {
+				await sendEvent('cost_capture', {
+					amounts: [
+						{
+							amount_usd_milli_cents: totalCostMilliCents,
+							description: `${promptTokens} input + ${completionTokens} output tokens`
+						}
+					]
+				});
 			}
 		}
 
@@ -449,14 +586,34 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 		return poeErrorResponse(`Backend error: ${error}`, true);
 	}
 
+	// Get pricing for cost events (only if cost=true query param)
+	const costEnabled = url.searchParams.get('cost') === 'true';
+	const pricing = costEnabled ? getModelPricing(model) : undefined;
+
 	const { readable, writable } = new TransformStream();
 	const writer = writable.getWriter();
 	const encoder = new TextEncoder();
 
 	(async () => {
 		try {
+			// Send cost_authorize event with estimated cost (based on rough input token estimate)
+			if (pricing) {
+				// Rough estimate: ~4 chars per token, estimate output as 500 tokens
+				const estimatedInputTokens = Math.ceil(JSON.stringify(queryRequest.query).length / 4);
+				const estimatedOutputTokens = 500;
+				const estimatedCost = calculateCostMilliCents(estimatedInputTokens, estimatedOutputTokens, pricing);
+				if (estimatedCost > 0) {
+					await writer.write(encoder.encode(`event: cost_authorize\ndata: ${JSON.stringify({
+						amounts: [{
+							amount_usd_milli_cents: estimatedCost,
+							description: `Estimated: ~${estimatedInputTokens} input tokens`
+						}]
+					})}\n\n`));
+				}
+			}
+
 			if (response.body) {
-				await translateOpenAIStreamToPoe(response.body, writer, encoder);
+				await translateOpenAIStreamToPoe(response.body, writer, encoder, pricing);
 			}
 		} finally {
 			await writer.close();
@@ -596,6 +753,14 @@ function handlePoeSettingsRequest(env: Env, url: URL): Response {
 		enforce_author_role_alternation: false,
 		enable_multi_entity_prompting: true,
 	};
+
+	// Add rate card and cost label only when model is specified and cost=true
+	const costEnabled = url.searchParams.get('cost') === 'true';
+	if (modelFromQuery && costEnabled) {
+		const pricing = getModelPricing(modelFromQuery);
+		settings.rate_card = generateRateCard(modelFromQuery, pricing);
+		settings.cost_label = generateCostLabel(pricing);
+	}
 
 	return jsonResponse(settings);
 }
