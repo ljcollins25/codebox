@@ -375,10 +375,10 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 	const lastMessage = queryRequest.query?.[queryRequest.query.length - 1];
 	const params = lastMessage?.parameters || {};
 	
-	// Get model: 1) query param, 2) custom_model if model=custom, 3) model param, 4) env default, 5) hardcoded
+	// Get model: 1) query param, 2) custom_model if model_id=custom, 3) model_id param, 4) env default, 5) hardcoded
 	let model = url.searchParams.get('model');
 	if (!model) {
-		const paramModel = params.model as string | undefined;
+		const paramModel = params.model_id as string | undefined;
 		if (paramModel === 'custom') {
 			model = (params.custom_model as string) || env.DEFAULT_MODEL || 'gpt-4o';
 		} else {
@@ -489,7 +489,7 @@ function handlePoeSettingsRequest(env: Env, url: URL): Response {
 				{
 					control: "drop_down",
 					label: "Model",
-					parameter_name: "model",
+					parameter_name: "model_id",
 					description: "Model to use",
 					default_value: defaultModel,
 					options: [
