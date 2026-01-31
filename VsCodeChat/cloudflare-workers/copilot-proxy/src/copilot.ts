@@ -3,6 +3,8 @@
  * 
  * Accepts GitHub OAuth token in Authorization header, resolves to Copilot token
  * (cached), injects VS Code emulation headers, and forwards to Copilot API.
+ * 
+ * For codex models, automatically translates chat completions <-> /responses API.
  */
 
 import {
@@ -15,9 +17,37 @@ import {
 	errorResponse,
 } from './shared';
 
+// =============================================================================
+// Types
+// =============================================================================
+
 interface CopilotTokenCache {
 	copilot_token: string;
 	expires_at: string;
+}
+
+interface ChatMessage {
+	role: 'system' | 'user' | 'assistant';
+	content: string;
+}
+
+interface ChatCompletionsRequest {
+	model: string;
+	messages: ChatMessage[];
+	stream?: boolean;
+	temperature?: number;
+	max_tokens?: number;
+	top_p?: number;
+	frequency_penalty?: number;
+	presence_penalty?: number;
+}
+
+interface ResponsesRequest {
+	model: string;
+	input: string;
+	stream?: boolean;
+	temperature?: number;
+	max_output_tokens?: number;
 }
 
 /**
@@ -102,6 +132,184 @@ async function getCopilotToken(githubToken: string, env: Env): Promise<string> {
 	return data.token;
 }
 
+// =============================================================================
+// Chat Completions <-> Responses Translation
+// =============================================================================
+
+/**
+ * Check if model uses /responses endpoint (codex models)
+ */
+function isCodexModel(model: string): boolean {
+	return /codex/i.test(model);
+}
+
+/**
+ * Convert chat messages to a single input string for /responses API
+ */
+function messagesToInput(messages: ChatMessage[]): string {
+	return messages.map(msg => `${msg.role}: ${msg.content}`).join('\n');
+}
+
+/**
+ * Transform chat completions request to /responses request
+ */
+function transformToResponsesRequest(chatReq: ChatCompletionsRequest): ResponsesRequest {
+	const responsesReq: ResponsesRequest = {
+		model: chatReq.model,
+		input: messagesToInput(chatReq.messages),
+		stream: chatReq.stream,
+	};
+	
+	if (chatReq.temperature !== undefined) {
+		responsesReq.temperature = chatReq.temperature;
+	}
+	if (chatReq.max_tokens !== undefined) {
+		responsesReq.max_output_tokens = chatReq.max_tokens;
+	}
+	
+	return responsesReq;
+}
+
+/**
+ * Transform /responses SSE stream to chat completions SSE stream
+ */
+function transformResponsesStreamToChatCompletions(
+	responsesStream: ReadableStream<Uint8Array>,
+	model: string
+): ReadableStream<Uint8Array> {
+	const encoder = new TextEncoder();
+	const decoder = new TextDecoder();
+	
+	// Generate a unique ID for this completion
+	const completionId = `chatcmpl-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+	const created = Math.floor(Date.now() / 1000);
+	
+	let buffer = '';
+	
+	return new ReadableStream({
+		async start(controller) {
+			const reader = responsesStream.getReader();
+			
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					
+					buffer += decoder.decode(value, { stream: true });
+					const lines = buffer.split('\n');
+					buffer = lines.pop() || '';
+					
+					let currentEvent = '';
+					
+					for (const line of lines) {
+						if (line.startsWith('event: ')) {
+							currentEvent = line.slice(7).trim();
+							continue;
+						}
+						
+						if (!line.startsWith('data: ')) continue;
+						const data = line.slice(6);
+						if (data === '[DONE]') {
+							controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+							continue;
+						}
+						
+						try {
+							const json = JSON.parse(data);
+							
+							// Handle response.output_text.delta events
+							if (currentEvent === 'response.output_text.delta' && json.delta) {
+								const chatChunk = {
+									id: completionId,
+									object: 'chat.completion.chunk',
+									created,
+									model,
+									choices: [{
+										index: 0,
+										delta: { content: json.delta },
+										finish_reason: null,
+									}],
+								};
+								controller.enqueue(encoder.encode(`data: ${JSON.stringify(chatChunk)}\n\n`));
+							}
+							// Handle response.completed event
+							else if (currentEvent === 'response.completed' || json.type === 'response.completed') {
+								const chatChunk = {
+									id: completionId,
+									object: 'chat.completion.chunk',
+									created,
+									model,
+									choices: [{
+										index: 0,
+										delta: {},
+										finish_reason: 'stop',
+									}],
+								};
+								controller.enqueue(encoder.encode(`data: ${JSON.stringify(chatChunk)}\n\n`));
+								controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+							}
+						} catch {
+							// Ignore parse errors
+						}
+					}
+				}
+			} finally {
+				reader.releaseLock();
+				controller.close();
+			}
+		}
+	});
+}
+
+/**
+ * Transform non-streaming /responses response to chat completions response
+ */
+function transformResponsesToChatCompletions(responsesData: Record<string, unknown>, model: string): Record<string, unknown> {
+	const completionId = `chatcmpl-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+	const created = Math.floor(Date.now() / 1000);
+	
+	// Extract output text from responses format
+	let outputText = '';
+	if (responsesData.output && Array.isArray(responsesData.output)) {
+		for (const item of responsesData.output) {
+			if ((item as Record<string, unknown>).type === 'message') {
+				const content = (item as Record<string, unknown>).content;
+				if (Array.isArray(content)) {
+					for (const c of content) {
+						if ((c as Record<string, unknown>).type === 'output_text') {
+							outputText += (c as Record<string, unknown>).text || '';
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	return {
+		id: completionId,
+		object: 'chat.completion',
+		created,
+		model,
+		choices: [{
+			index: 0,
+			message: {
+				role: 'assistant',
+				content: outputText,
+			},
+			finish_reason: 'stop',
+		}],
+		usage: responsesData.usage || {
+			prompt_tokens: 0,
+			completion_tokens: 0,
+			total_tokens: 0,
+		},
+	};
+}
+
+// =============================================================================
+// Main Handler
+// =============================================================================
+
 /**
  * Handle requests to /copilot/v1/*
  */
@@ -125,9 +333,6 @@ export async function handleCopilotProxy(request: Request, env: Env, path: strin
 		return errorResponse(msg, 500, 'token_error');
 	}
 
-	const copilotPath = path.replace('/copilot/v1', '');
-	const targetUrl = `${COPILOT_API_BASE}${copilotPath}`;
-
 	const headers: Record<string, string> = {
 		...VSCODE_HEADERS,
 		'Authorization': `Bearer ${copilotToken}`,
@@ -135,12 +340,32 @@ export async function handleCopilotProxy(request: Request, env: Env, path: strin
 
 	let body: string | null = null;
 	let isStreaming = false;
+	let useResponsesApi = false;
+	let model = '';
 
 	if (request.method === 'POST') {
-		const bodyData = await request.json() as Record<string, unknown>;
+		const bodyData = await request.json() as ChatCompletionsRequest;
 		isStreaming = bodyData.stream === true;
-		body = JSON.stringify(bodyData);
+		model = bodyData.model || '';
+		
+		// Check if this is a chat completions request with a codex model
+		const isChatCompletions = path === '/copilot/v1/chat/completions';
+		useResponsesApi = isChatCompletions && isCodexModel(model);
+		
+		if (useResponsesApi) {
+			// Transform chat completions request to /responses format
+			const responsesReq = transformToResponsesRequest(bodyData);
+			body = JSON.stringify(responsesReq);
+		} else {
+			body = JSON.stringify(bodyData);
+		}
 	}
+
+	// Determine target URL
+	const copilotPath = useResponsesApi 
+		? '/responses'
+		: path.replace('/copilot/v1', '');
+	const targetUrl = `${COPILOT_API_BASE}${copilotPath}`;
 
 	const response = await fetch(targetUrl, {
 		method: request.method,
@@ -148,8 +373,21 @@ export async function handleCopilotProxy(request: Request, env: Env, path: strin
 		body,
 	});
 
+	if (!response.ok) {
+		const errorText = await response.text();
+		return errorResponse(`Copilot API error: ${errorText}`, response.status, 'api_error');
+	}
+
+	// Handle streaming response
 	if (isStreaming && response.body) {
-		return new Response(response.body, {
+		let responseBody = response.body;
+		
+		// Transform /responses stream to chat completions format
+		if (useResponsesApi) {
+			responseBody = transformResponsesStreamToChatCompletions(response.body, model);
+		}
+		
+		return new Response(responseBody, {
 			status: response.status,
 			headers: {
 				'Content-Type': 'text/event-stream',
@@ -159,6 +397,14 @@ export async function handleCopilotProxy(request: Request, env: Env, path: strin
 		});
 	}
 
-	const data = await response.json();
+	// Handle non-streaming response
+	const data = await response.json() as Record<string, unknown>;
+	
+	// Transform /responses response to chat completions format
+	if (useResponsesApi) {
+		const chatData = transformResponsesToChatCompletions(data, model);
+		return jsonResponse(chatData, response.status);
+	}
+
 	return jsonResponse(data, response.status);
 }
