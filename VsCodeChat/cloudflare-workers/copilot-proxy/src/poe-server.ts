@@ -46,10 +46,10 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
 	'gpt-5.2-codex': { input_points_per_1k: 300, output_points_per_1k: 1200 },
 	
 	// Claude series
-	'claude-haiku-4.5': { input_points_per_1k: 33, output_points_per_1k: 167, cache_discount: 0.9 },
-	'claude-opus-4.5': { input_points_per_1k: 500, output_points_per_1k: 2500, cache_discount: 0.9 },
-	'claude-sonnet-4': { input_points_per_1k: 100, output_points_per_1k: 500, cache_discount: 0.9 },
-	'claude-sonnet-4.5': { input_points_per_1k: 100, output_points_per_1k: 500, cache_discount: 0.9 },
+	'claude-haiku-4.5': { input_points_per_1k: 33, output_points_per_1k: 167 },
+	'claude-opus-4.5': { input_points_per_1k: 50, output_points_per_1k: 250 },
+	'claude-sonnet-4': { input_points_per_1k: 100, output_points_per_1k: 500 },
+	'claude-sonnet-4.5': { input_points_per_1k: 100, output_points_per_1k: 500 },
 	
 	// Gemini series (placeholder values - fill in actual rates)
 	'gemini-2.5-pro': { input_points_per_1k: 42, output_points_per_1k: 167 },
@@ -90,20 +90,22 @@ function calculateCostMilliCents(inputTokens: number, outputTokens: number, pric
 
 /**
  * Generate rate card markdown for a model
+ * USD rate: points_per_1k * 0.03 = $ per 1M tokens
  */
 function generateRateCard(model: string, pricing: ModelPricing): string {
-	const inputMilliCents = Math.round(pricing.input_points_per_1k * 30);
-	const outputMilliCents = Math.round(pricing.output_points_per_1k * 30);
+	// Convert points/1k to $/1M: points_per_1k * 0.03 = $/1M
+	const inputUsdPerMillion = (pricing.input_points_per_1k * 0.03).toFixed(2);
+	const outputUsdPerMillion = (pricing.output_points_per_1k * 0.03).toFixed(2);
 	
-	let rateCard = `**${model}** pricing:\n\n`;
-	rateCard += `| Type | Rate |\n`;
-	rateCard += `|------|------|\n`;
-	rateCard += `| Input | [usd_milli_cents=${inputMilliCents}] / 1k tokens |\n`;
-	rateCard += `| Output | [usd_milli_cents=${outputMilliCents}] / 1k tokens |\n`;
+	let rateCard = `Message cost is variable, so longer messages are more expensive than shorter messages.\n\n`;
+	rateCard += `| Type | Rate (USD) | Rate (Points) |\n`;
+	rateCard += `|------|------------|---------------|\n`;
+	rateCard += `| Input | $${inputUsdPerMillion}/1M tokens | ${pricing.input_points_per_1k} points/1k tokens |\n`;
+	rateCard += `| Output | $${outputUsdPerMillion}/1M tokens | ${pricing.output_points_per_1k} points/1k tokens |\n`;
 	
 	if (pricing.cache_discount) {
 		const discountPercent = Math.round(pricing.cache_discount * 100);
-		rateCard += `| Cache discount | ${discountPercent}% |\n`;
+		rateCard += `| Cache discount | ${discountPercent}% | ${discountPercent}% |\n`;
 	}
 	
 	return rateCard;
@@ -596,6 +598,11 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 
 	(async () => {
 		try {
+			// Send meta event to trigger settings refetch (helps Poe recognize tool support)
+			await writer.write(encoder.encode(`event: meta\ndata: ${JSON.stringify({
+				refetch_settings: true
+			})}\n\n`));
+
 			// Send cost_authorize event with estimated cost (based on rough input token estimate)
 			if (pricing) {
 				// Rough estimate: ~4 chars per token, estimate output as 500 tokens

@@ -1,0 +1,17 @@
+{
+  "name": "url-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240620.0",
+    "typescript": "^5.4.5",
+    "wrangler": "^3.114.17"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0"
+  }
+}

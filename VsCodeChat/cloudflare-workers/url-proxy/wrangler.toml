@@ -1,0 +1,13 @@
+name = "url-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+# Service bindings for Worker-to-Worker communication
+[[services]]
+binding = "COPILOT_PROXY"
+service = "copilot-proxy"
