@@ -1,27 +1,27 @@
 # TypingMind Web Search Plugin
 
-A web search plugin for TypingMind that supports multiple search providers. The search results are returned to the LLM, which uses them to answer your questions (similar to how Poe's Web-Search bot works).
-
-## Features
-
-- 🔍 **Multiple Search Providers**
-  - **Serper.dev** - Google Search results via API
-  - **Brave Search** - Privacy-focused search alternative
-
-- 📊 **Rich Results**
-  - Organic search results with snippets
-  - Knowledge panels
-  - Featured snippets/answer boxes
-  - "People Also Ask" questions
+A web search plugin for TypingMind that uses an OpenAI-compatible API with web search bots.
 
 ## How It Works
 
 1. You ask a question that requires web search
-2. The plugin searches the web using Serper.dev or Brave Search
-3. Search results are returned to the LLM (the model you're chatting with)
-4. The LLM uses the search results to formulate a comprehensive answer
+2. The plugin sends your query to a web search bot via an OpenAI-compatible API
+3. The search bot returns results
+4. The LLM (the model you're chatting with) uses these results to answer your question
 
-This is similar to how Poe's Web-Search bot operates - the LLM receives search context and uses it to answer your questions.
+## Available Search Bots
+
+Edit the `WEB_SEARCH_BOTS` array in [web-search-plugin.js](web-search-plugin.js) to add or remove bots:
+
+```javascript
+const WEB_SEARCH_BOTS = [
+  "Gray-Search",
+  "Web-Search",
+  "Claude-3.5-Sonnet-Search",
+  "GPT-4o-Search",
+  "Gemini-2.0-Flash-Search"
+];
+```
 
 ## Installation
 
@@ -31,7 +31,7 @@ This is similar to how Poe's Web-Search bot operates - the LLM receives search c
 2. Go to **Plugins** → **Custom Plugins**
 3. Click **Import Plugin**
 4. Select `web-search-plugin.json`
-5. Configure your API keys in the plugin settings
+5. Configure your API key and settings
 
 ### Option 2: Manual Setup
 
@@ -44,81 +44,48 @@ This is similar to how Poe's Web-Search bot operates - the LLM receives search c
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `searchProvider` | Choose between `serper` (Google) or `brave` | `serper` |
-| `serperApiKey` | Your Serper.dev API key (if using Serper) | - |
-| `braveApiKey` | Your Brave Search API key (if using Brave) | - |
-| `numResults` | Number of search results to return | `10` |
-
-## Getting API Keys
-
-### Serper.dev (Google Search)
-1. Go to [serper.dev](https://serper.dev)
-2. Sign up for a free account
-3. Get your API key from the dashboard
-4. **Free tier:** 2,500 queries/month
-
-### Brave Search
-1. Go to [brave.com/search/api](https://brave.com/search/api)
-2. Sign up for the Search API
-3. Get your API key
-4. **Free tier:** 2,000 queries/month
+| `apiKey` | API key for the OpenAI-compatible service | - |
+| `apiBaseUrl` | Base URL for the API | `https://api.poe.com/v1` |
+| `searchBot` | Which bot to use for searches | `Gray-Search` |
 
 ## Usage Examples
 
 ### Basic Search
 ```
-What are the latest developments in AI regulation?
+What are the latest developments in AI?
 ```
 
-### With Provider Override
+### Override Search Bot
+The LLM can override the default bot when calling the plugin:
 ```
-Use Brave to search for privacy-focused email providers
-```
-
-## Output Format
-
-The plugin returns results in a structured format that the LLM can easily process:
-
-```markdown
-# Web Search Results
-
-**Query:** your query
-**Provider:** Google (via Serper)
-
----
-
-## Knowledge Panel: Topic
-Description and attributes...
-
-## Featured Answer
-Direct answer from search...
-
-### 1. Result Title
-URL: https://example.com
-Snippet text...
-
-### 2. Result Title
-URL: https://example.com
-Snippet text...
-
-## Related Questions
-**Q: Related question?**
-A: Answer...
+Use GPT-4o-Search to find information about quantum computing
 ```
 
 ## Troubleshooting
 
 ### "API key is required" Error
-- Make sure you've configured the correct API key in plugin settings
-- Check that the key is entered without extra spaces
+- Make sure you've configured your API key in plugin settings
 
 ### "API error (401)" 
 - Your API key may be invalid or expired
-- Regenerate your API key from the provider dashboard
+- Check that the API key is correct
 
 ### "API error (429)"
 - You've exceeded your rate limit
-- Wait a few minutes or upgrade your plan
+- Wait a bit or check your plan limits
+
+### "No response received from search bot"
+- The bot may not have returned any content
+- Try a different search bot
+
+## Adding New Bots
+
+To add a new search bot:
+
+1. Open `web-search-plugin.js`
+2. Find the `WEB_SEARCH_BOTS` array at the top
+3. Add your bot name to the array
+4. Update `web-search-plugin.json` if you want it in the dropdown
 
 ## License
 

@@ -1,10 +1,10 @@
 {
-  "uuid": "web-search-multi-provider",
+  "uuid": "web-search",
   "emoji": "🔍",
-  "title": "Web Search (Serper/Brave)",
+  "title": "Web Search",
   "openaiSpec": {
     "name": "web_search",
-    "description": "Search the web using Google (via Serper.dev) or Brave Search API. Returns search results including organic results, knowledge panels, featured snippets, and related questions. The LLM will use these results to answer the user's question.",
+    "description": "Search the web using an OpenAI-compatible API with web search bots. Returns search results for the LLM to use in answering questions.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -12,14 +12,10 @@
           "type": "string",
           "description": "The search query to look up on the web. Be specific and include relevant keywords for best results."
         },
-        "searchProvider": {
+        "searchBot": {
           "type": "string",
-          "enum": ["serper", "brave"],
-          "description": "Override the default search provider. Use 'serper' for Google results or 'brave' for Brave Search. If not specified, uses the user's default setting."
-        },
-        "numResults": {
-          "type": "number",
-          "description": "Number of search results to return (1-20). Default is 10."
+          "enum": ["Gray-Search", "Web-Search", "Claude-3.5-Sonnet-Search", "GPT-4o-Search", "Gemini-2.0-Flash-Search"],
+          "description": "Override which search bot to use. If not specified, uses the user's default setting."
         }
       },
       "required": ["query"]
@@ -27,35 +23,32 @@
   },
   "userSettings": [
     {
-      "name": "searchProvider",
-      "label": "Default Search Provider",
+      "name": "apiKey",
+      "label": "API Key",
+      "type": "password",
+      "description": "API key for the OpenAI-compatible service"
+    },
+    {
+      "name": "apiBaseUrl",
+      "label": "API Base URL",
+      "type": "text",
+      "default": "https://api.poe.com/v1",
+      "description": "Base URL for the OpenAI-compatible API"
+    },
+    {
+      "name": "searchBot",
+      "label": "Search Bot",
       "type": "select",
       "options": [
-        { "label": "Google (via Serper.dev)", "value": "serper" },
-        { "label": "Brave Search", "value": "brave" }
+        { "label": "Gray-Search", "value": "Gray-Search" },
+        { "label": "Web-Search", "value": "Web-Search" },
+        { "label": "Claude-3.5-Sonnet-Search", "value": "Claude-3.5-Sonnet-Search" },
+        { "label": "GPT-4o-Search", "value": "GPT-4o-Search" },
+        { "label": "Gemini-2.0-Flash-Search", "value": "Gemini-2.0-Flash-Search" }
       ],
-      "default": "serper",
-      "description": "Choose your preferred search provider"
-    },
-    {
-      "name": "serperApiKey",
-      "label": "Serper.dev API Key",
-      "type": "password",
-      "description": "Get your API key from https://serper.dev - Free tier includes 2,500 queries/month"
-    },
-    {
-      "name": "braveApiKey",
-      "label": "Brave Search API Key", 
-      "type": "password",
-      "description": "Get your API key from https://brave.com/search/api - Free tier includes 2,000 queries/month"
-    },
-    {
-      "name": "numResults",
-      "label": "Number of Results",
-      "type": "number",
-      "default": 10,
-      "description": "Default number of search results to return (1-20)"
+      "default": "Gray-Search",
+      "description": "Which bot to use for web searches"
     }
   ],
-  "implementationCode": "async function webSearch(params, userSettings) {\n  const {\n    query,\n    searchProvider: overrideProvider,\n    numResults: overrideNumResults\n  } = params;\n\n  const {\n    searchProvider = 'serper',\n    serperApiKey,\n    braveApiKey,\n    numResults = 10\n  } = userSettings;\n\n  const provider = overrideProvider || searchProvider;\n  const resultCount = Math.min(Math.max(overrideNumResults || numResults, 1), 20);\n\n  if (!query || typeof query !== 'string' || query.trim() === '') {\n    throw new Error('Please provide a valid search query.');\n  }\n\n  if (provider === 'serper' && !serperApiKey) {\n    throw new Error('Serper API key is required. Please configure it in the plugin settings.');\n  }\n  if (provider === 'brave' && !braveApiKey) {\n    throw new Error('Brave Search API key is required. Please configure it in the plugin settings.');\n  }\n\n  // Search function for Serper\n  async function searchWithSerper(query, apiKey, numResults) {\n    const response = await fetch('https://google.serper.dev/search', {\n      method: 'POST',\n      headers: {\n        'X-API-KEY': apiKey,\n        'Content-Type': 'application/json'\n      },\n      body: JSON.stringify({ q: query, num: numResults })\n    });\n\n    if (!response.ok) {\n      const errorText = await response.text();\n      throw new Error(`Serper API error (${response.status}): ${errorText}`);\n    }\n\n    const data = await response.json();\n    const results = [];\n\n    if (data.knowledgeGraph) {\n      results.push({\n        type: 'knowledgeGraph',\n        title: data.knowledgeGraph.title || '',\n        description: data.knowledgeGraph.description || '',\n        attributes: data.knowledgeGraph.attributes || {}\n      });\n    }\n\n    if (data.answerBox) {\n      results.push({\n        type: 'answerBox',\n        title: data.answerBox.title || '',\n        answer: data.answerBox.answer || data.answerBox.snippet || '',\n        link: data.answerBox.link || ''\n      });\n    }\n\n    if (data.organic) {\n      data.organic.forEach((item, index) => {\n        results.push({\n          type: 'organic',\n          position: index + 1,\n          title: item.title || '',\n          link: item.link || '',\n          snippet: item.snippet || '',\n          date: item.date || ''\n        });\n      });\n    }\n\n    if (data.peopleAlsoAsk) {\n      results.push({\n        type: 'peopleAlsoAsk',\n        questions: data.peopleAlsoAsk.map(q => ({\n          question: q.question,\n          answer: q.snippet,\n          link: q.link\n        }))\n      });\n    }\n\n    return { provider: 'Google (via Serper)', query: query, results: results };\n  }\n\n  // Search function for Brave\n  async function searchWithBrave(query, apiKey, numResults) {\n    const params = new URLSearchParams({ q: query, count: numResults.toString() });\n\n    const response = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {\n      method: 'GET',\n      headers: {\n        'Accept': 'application/json',\n        'X-Subscription-Token': apiKey\n      }\n    });\n\n    if (!response.ok) {\n      const errorText = await response.text();\n      throw new Error(`Brave Search API error (${response.status}): ${errorText}`);\n    }\n\n    const data = await response.json();\n    const results = [];\n\n    if (data.infobox) {\n      results.push({\n        type: 'knowledgeGraph',\n        title: data.infobox.title || '',\n        description: data.infobox.description || '',\n        attributes: data.infobox.attributes || {}\n      });\n    }\n\n    if (data.featured_snippet) {\n      results.push({\n        type: 'answerBox',\n        title: data.featured_snippet.title || '',\n        answer: data.featured_snippet.description || '',\n        link: data.featured_snippet.url || ''\n      });\n    }\n\n    if (data.web?.results) {\n      data.web.results.forEach((item, index) => {\n        results.push({\n          type: 'organic',\n          position: index + 1,\n          title: item.title || '',\n          link: item.url || '',\n          snippet: item.description || '',\n          date: item.age || ''\n        });\n      });\n    }\n\n    if (data.faq?.results) {\n      results.push({\n        type: 'peopleAlsoAsk',\n        questions: data.faq.results.map(q => ({\n          question: q.question,\n          answer: q.answer,\n          link: q.url\n        }))\n      });\n    }\n\n    return { provider: 'Brave Search', query: query, results: results };\n  }\n\n  // Format results for LLM\n  function formatResultsForLLM(searchData) {\n    let output = `# Web Search Results\\n\\n`;\n    output += `**Query:** ${searchData.query}\\n`;\n    output += `**Provider:** ${searchData.provider}\\n\\n`;\n    output += `---\\n\\n`;\n\n    searchData.results.forEach(result => {\n      if (result.type === 'knowledgeGraph') {\n        output += `## Knowledge Panel: ${result.title}\\n\\n`;\n        output += `${result.description}\\n\\n`;\n        if (result.attributes && Object.keys(result.attributes).length > 0) {\n          Object.entries(result.attributes).forEach(([key, value]) => {\n            output += `- **${key}:** ${value}\\n`;\n          });\n          output += '\\n';\n        }\n      } else if (result.type === 'answerBox') {\n        output += `## Featured Answer\\n\\n`;\n        if (result.title) output += `**${result.title}**\\n\\n`;\n        output += `${result.answer}\\n\\n`;\n        if (result.link) {\n          output += `Source: ${result.link}\\n\\n`;\n        }\n      } else if (result.type === 'organic') {\n        output += `### ${result.position}. ${result.title}\\n`;\n        output += `URL: ${result.link}\\n`;\n        output += `${result.snippet}\\n`;\n        if (result.date) {\n          output += `Date: ${result.date}\\n`;\n        }\n        output += '\\n';\n      } else if (result.type === 'peopleAlsoAsk') {\n        output += `## Related Questions\\n\\n`;\n        result.questions.forEach(q => {\n          output += `**Q: ${q.question}**\\n`;\n          output += `A: ${q.answer}\\n`;\n          if (q.link) output += `Source: ${q.link}\\n`;\n          output += '\\n';\n        });\n      }\n    });\n\n    return output;\n  }\n\n  // Execute search\n  let searchData;\n  if (provider === 'brave') {\n    searchData = await searchWithBrave(query, braveApiKey, resultCount);\n  } else {\n    searchData = await searchWithSerper(query, serperApiKey, resultCount);\n  }\n\n  // Return formatted results for the LLM to use\n  return formatResultsForLLM(searchData);\n}"
+  "implementationCode": "async function webSearch(params, userSettings) {\n  const { query, searchBot: overrideBot } = params;\n  const { apiKey, apiBaseUrl = 'https://api.poe.com/v1', searchBot = 'Gray-Search' } = userSettings;\n\n  const bot = overrideBot || searchBot;\n\n  if (!query || typeof query !== 'string' || query.trim() === '') {\n    throw new Error('Please provide a valid search query.');\n  }\n\n  if (!apiKey) {\n    throw new Error('API key is required. Please configure it in the plugin settings.');\n  }\n\n  const response = await fetch(`${apiBaseUrl}/chat/completions`, {\n    method: 'POST',\n    headers: {\n      'Authorization': `Bearer ${apiKey}`,\n      'Content-Type': 'application/json'\n    },\n    body: JSON.stringify({\n      model: bot,\n      messages: [{ role: 'user', content: query }],\n      stream: false\n    })\n  });\n\n  if (!response.ok) {\n    const errorText = await response.text();\n    throw new Error(`API error (${response.status}): ${errorText}`);\n  }\n\n  const data = await response.json();\n  const content = data.choices?.[0]?.message?.content;\n\n  if (!content) {\n    throw new Error('No response received from search bot');\n  }\n\n  return content;\n}"
 }
