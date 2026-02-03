@@ -55,6 +55,13 @@ interface ResponsesRequest {
  * Accepts both "Bearer <token>" and raw "<token>".
  */
 function extractGitHubToken(request: Request): string | null {
+    // Check for token in query parameter first
+    const url = new URL(request.url);
+    const queryToken = url.searchParams.get('token');
+    if (queryToken) {
+        return queryToken.trim();
+    }
+
 	const auth = request.headers.get('Authorization');
 	if (!auth) return null;
 	if (auth.toLowerCase().startsWith('bearer ')) {
