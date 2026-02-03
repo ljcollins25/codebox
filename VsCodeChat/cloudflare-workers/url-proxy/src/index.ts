@@ -27,10 +27,10 @@ const SERVICE_BINDINGS: Record<string, keyof Env> = {
 /**
  * Store request body to Azure Blob Storage with timestamp
  */
-async function storeRequestBody(request: Request, targetUrl: string, ctx: ExecutionContext, blobSasUrl: string): Promise<string> {
+async function storeRequestBody(request: Request, targetUrl: string, ctx: ExecutionContext, blobSasUrl: string, timestamp: string): Promise<void> {
 	// Clone request to read body without consuming it
 	const body = await request.clone().text();
-	if (!body) return ''; // Skip empty bodies
+	if (!body) return; // Skip empty bodies
 
 	// Parse container URL and SAS token from the full SAS URL
 	const sasUrl = new URL(blobSasUrl);
@@ -38,14 +38,12 @@ async function storeRequestBody(request: Request, targetUrl: string, ctx: Execut
 	const sasToken = sasUrl.search.slice(1); // Remove leading '?'
 
 	// Create timestamped blob name
-	const now = new Date();
-	const timestamp = now.toISOString().replace(/[:.]/g, '-');
 	const blobName = `${timestamp}-request.json`;
 	const blobUrl = `${containerUrl}/${blobName}?${sasToken}`;
 
 	// Prepare payload with metadata
 	const payload = JSON.stringify({
-		timestamp: now.toISOString(),
+		timestamp: new Date().toISOString(),
 		type: 'request',
 		method: request.method,
 		targetUrl,
@@ -64,55 +62,87 @@ async function storeRequestBody(request: Request, targetUrl: string, ctx: Execut
 			body: payload,
 		}).catch(err => console.error('Failed to store request:', err))
 	);
-
-	return timestamp;
 }
 
 /**
  * Store response body to Azure Blob Storage
+ * For streaming responses, we collect chunks and store when complete
  */
-async function storeResponseBody(
+function storeResponseBody(
 	response: Response,
 	targetUrl: string,
 	timestamp: string,
 	ctx: ExecutionContext,
 	blobSasUrl: string
-): Promise<Response> {
+): Response {
 	// Parse container URL and SAS token from the full SAS URL
 	const sasUrl = new URL(blobSasUrl);
 	const containerUrl = `${sasUrl.origin}${sasUrl.pathname}`;
 	const sasToken = sasUrl.search.slice(1); // Remove leading '?'
 
-	const blobName = `${timestamp}-response.json`;
+	const blobName = `${timestamp}-response.txt`;
 	const blobUrl = `${containerUrl}/${blobName}?${sasToken}`;
 
-	// Clone response to read body without consuming it
-	const body = await response.clone().text();
+	const responseHeaders = Object.fromEntries(response.headers);
+	const isStreaming = responseHeaders['content-type']?.includes('text/event-stream') ||
+		responseHeaders['transfer-encoding'] === 'chunked';
 
-	// Prepare payload with metadata
-	const payload = JSON.stringify({
-		timestamp: new Date().toISOString(),
-		type: 'response',
+	if (!response.body) {
+		// No body, store metadata only
+		ctx.waitUntil(
+			fetch(blobUrl, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'text/plain',
+					'x-ms-blob-type': 'BlockBlob',
+				},
+				body: `[Response Metadata]\nTimestamp: ${new Date().toISOString()}\nStatus: ${response.status} ${response.statusText}\nTarget: ${targetUrl}\nHeaders: ${JSON.stringify(responseHeaders, null, 2)}\n\n[No Body]`,
+			}).catch(err => console.error('Failed to store response:', err))
+		);
+		return response;
+	}
+
+	// For streaming responses, we need to intercept the stream
+	const chunks: Uint8Array[] = [];
+	const originalBody = response.body;
+
+	const transformStream = new TransformStream<Uint8Array, Uint8Array>({
+		transform(chunk, controller) {
+			chunks.push(chunk);
+			controller.enqueue(chunk);
+		},
+		flush() {
+			// Stream complete - store the collected body
+			const fullBody = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
+			let offset = 0;
+			for (const chunk of chunks) {
+				fullBody.set(chunk, offset);
+				offset += chunk.length;
+			}
+			const bodyText = new TextDecoder().decode(fullBody);
+
+			const payload = `[Response Metadata]\nTimestamp: ${new Date().toISOString()}\nStatus: ${response.status} ${response.statusText}\nTarget: ${targetUrl}\nStreaming: ${isStreaming}\nHeaders: ${JSON.stringify(responseHeaders, null, 2)}\n\n[Body]\n${bodyText}`;
+
+			ctx.waitUntil(
+				fetch(blobUrl, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'text/plain',
+						'x-ms-blob-type': 'BlockBlob',
+					},
+					body: payload,
+				}).catch(err => console.error('Failed to store response:', err))
+			);
+		},
+	});
+
+	const newBody = originalBody.pipeThrough(transformStream);
+
+	return new Response(newBody, {
 		status: response.status,
 		statusText: response.statusText,
-		targetUrl,
-		headers: Object.fromEntries(response.headers),
-		body: tryParseJson(body),
-	}, null, 2);
-
-	// Fire and forget - don't block the response
-	ctx.waitUntil(
-		fetch(blobUrl, {
-			method: 'PUT',
-			headers: {
-				'Content-Type': 'application/json',
-				'x-ms-blob-type': 'BlockBlob',
-			},
-			body: payload,
-		}).catch(err => console.error('Failed to store response:', err))
-	);
-
-	return response;
+		headers: response.headers,
+	});
 }
 
 /**
@@ -156,10 +186,13 @@ export default {
 			});
 		}
 
-		// Store request body to Azure Blob (non-blocking)
-		let requestTimestamp = '';
+		// Generate timestamp for logging
+		const now = new Date();
+		const requestTimestamp = env.BLOB_SAS_URL ? now.toISOString().replace(/[:.]/g, '-') : '';
+
+		// Store request body to Azure Blob (non-blocking) - only for requests with bodies
 		if ((request.method === 'POST' || request.method === 'PUT') && env.BLOB_SAS_URL) {
-			requestTimestamp = await storeRequestBody(request, targetUrl, ctx, env.BLOB_SAS_URL);
+			await storeRequestBody(request, targetUrl, ctx, env.BLOB_SAS_URL, requestTimestamp);
 		}
 
 		try {
@@ -186,9 +219,9 @@ export default {
 				});
 			}
 
-			// Store response body to Azure Blob (non-blocking)
+			// Store response body to Azure Blob (non-blocking) by wrapping stream
 			if (requestTimestamp && env.BLOB_SAS_URL) {
-				storeResponseBody(response.clone(), targetUrl, requestTimestamp, ctx, env.BLOB_SAS_URL);
+				response = storeResponseBody(response, targetUrl, requestTimestamp, ctx, env.BLOB_SAS_URL);
 			}
 
 			return response;
