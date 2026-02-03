@@ -27,10 +27,10 @@ const SERVICE_BINDINGS: Record<string, keyof Env> = {
 /**
  * Store request body to Azure Blob Storage with timestamp
  */
-async function storeRequestBody(request: Request, targetUrl: string, ctx: ExecutionContext, blobSasUrl: string): Promise<void> {
+async function storeRequestBody(request: Request, targetUrl: string, ctx: ExecutionContext, blobSasUrl: string): Promise<string> {
 	// Clone request to read body without consuming it
 	const body = await request.clone().text();
-	if (!body) return; // Skip empty bodies
+	if (!body) return ''; // Skip empty bodies
 
 	// Parse container URL and SAS token from the full SAS URL
 	const sasUrl = new URL(blobSasUrl);
@@ -40,12 +40,13 @@ async function storeRequestBody(request: Request, targetUrl: string, ctx: Execut
 	// Create timestamped blob name
 	const now = new Date();
 	const timestamp = now.toISOString().replace(/[:.]/g, '-');
-	const blobName = `${timestamp}.json`;
+	const blobName = `${timestamp}-request.json`;
 	const blobUrl = `${containerUrl}/${blobName}?${sasToken}`;
 
 	// Prepare payload with metadata
 	const payload = JSON.stringify({
 		timestamp: now.toISOString(),
+		type: 'request',
 		method: request.method,
 		targetUrl,
 		headers: Object.fromEntries(request.headers),
@@ -63,6 +64,55 @@ async function storeRequestBody(request: Request, targetUrl: string, ctx: Execut
 			body: payload,
 		}).catch(err => console.error('Failed to store request:', err))
 	);
+
+	return timestamp;
+}
+
+/**
+ * Store response body to Azure Blob Storage
+ */
+async function storeResponseBody(
+	response: Response,
+	targetUrl: string,
+	timestamp: string,
+	ctx: ExecutionContext,
+	blobSasUrl: string
+): Promise<Response> {
+	// Parse container URL and SAS token from the full SAS URL
+	const sasUrl = new URL(blobSasUrl);
+	const containerUrl = `${sasUrl.origin}${sasUrl.pathname}`;
+	const sasToken = sasUrl.search.slice(1); // Remove leading '?'
+
+	const blobName = `${timestamp}-response.json`;
+	const blobUrl = `${containerUrl}/${blobName}?${sasToken}`;
+
+	// Clone response to read body without consuming it
+	const body = await response.clone().text();
+
+	// Prepare payload with metadata
+	const payload = JSON.stringify({
+		timestamp: new Date().toISOString(),
+		type: 'response',
+		status: response.status,
+		statusText: response.statusText,
+		targetUrl,
+		headers: Object.fromEntries(response.headers),
+		body: tryParseJson(body),
+	}, null, 2);
+
+	// Fire and forget - don't block the response
+	ctx.waitUntil(
+		fetch(blobUrl, {
+			method: 'PUT',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-ms-blob-type': 'BlockBlob',
+			},
+			body: payload,
+		}).catch(err => console.error('Failed to store response:', err))
+	);
+
+	return response;
 }
 
 /**
@@ -107,18 +157,20 @@ export default {
 		}
 
 		// Store request body to Azure Blob (non-blocking)
+		let requestTimestamp = '';
 		if ((request.method === 'POST' || request.method === 'PUT') && env.BLOB_SAS_URL) {
-			storeRequestBody(request, targetUrl, ctx, env.BLOB_SAS_URL);
+			requestTimestamp = await storeRequestBody(request, targetUrl, ctx, env.BLOB_SAS_URL);
 		}
 
 		try {
 			// Check if we have a service binding for this host
 			const serviceBindingKey = SERVICE_BINDINGS[targetHost];
+			let response: Response;
 
 			if (serviceBindingKey && env[serviceBindingKey]) {
 				// Use service binding for Worker-to-Worker communication
 				const service = env[serviceBindingKey] as Fetcher;
-				return service.fetch(
+				response = await service.fetch(
 					new Request(targetUrl, {
 						method: request.method,
 						headers: request.headers,
@@ -127,12 +179,19 @@ export default {
 				);
 			} else {
 				// Direct fetch passthrough
-				return fetch(targetUrl, {
+				response = await fetch(targetUrl, {
 					method: request.method,
 					headers: request.headers,
 					body: request.body,
 				});
 			}
+
+			// Store response body to Azure Blob (non-blocking)
+			if (requestTimestamp && env.BLOB_SAS_URL) {
+				storeResponseBody(response.clone(), targetUrl, requestTimestamp, ctx, env.BLOB_SAS_URL);
+			}
+
+			return response;
 		} catch (error) {
 			return new Response(JSON.stringify({
 				error: 'Proxy request failed',
