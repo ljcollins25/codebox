@@ -599,9 +599,9 @@ export async function handlePoeServer(request: Request, env: Env, url: URL): Pro
 	(async () => {
 		try {
 			// Send meta event to trigger settings refetch (helps Poe recognize tool support)
-			await writer.write(encoder.encode(`event: meta\ndata: ${JSON.stringify({
-				refetch_settings: true
-			})}\n\n`));
+			// await writer.write(encoder.encode(`event: meta\ndata: ${JSON.stringify({
+			// 	refetch_settings: true
+			// })}\n\n`));
 
 			// Send cost_authorize event with estimated cost (based on rough input token estimate)
 			if (pricing) {

@@ -15,12 +15,66 @@
 export interface Env {
 	// Service binding for copilot-proxy Worker
 	COPILOT_PROXY: Fetcher;
+	// Azure Blob Storage SAS URL for request logging (full URL with SAS token as query string)
+	BLOB_SAS_URL?: string;
 }
 
 // Map of hostnames to service bindings
 const SERVICE_BINDINGS: Record<string, keyof Env> = {
 	'copilot-proxy.ref12cf.workers.dev': 'COPILOT_PROXY',
 };
+
+/**
+ * Store request body to Azure Blob Storage with timestamp
+ */
+async function storeRequestBody(request: Request, targetUrl: string, ctx: ExecutionContext, blobSasUrl: string): Promise<void> {
+	// Clone request to read body without consuming it
+	const body = await request.clone().text();
+	if (!body) return; // Skip empty bodies
+
+	// Parse container URL and SAS token from the full SAS URL
+	const sasUrl = new URL(blobSasUrl);
+	const containerUrl = `${sasUrl.origin}${sasUrl.pathname}`;
+	const sasToken = sasUrl.search.slice(1); // Remove leading '?'
+
+	// Create timestamped blob name
+	const now = new Date();
+	const timestamp = now.toISOString().replace(/[:.]/g, '-');
+	const blobName = `${timestamp}.json`;
+	const blobUrl = `${containerUrl}/${blobName}?${sasToken}`;
+
+	// Prepare payload with metadata
+	const payload = JSON.stringify({
+		timestamp: now.toISOString(),
+		method: request.method,
+		targetUrl,
+		headers: Object.fromEntries(request.headers),
+		body: tryParseJson(body),
+	}, null, 2);
+
+	// Fire and forget - don't block the response
+	ctx.waitUntil(
+		fetch(blobUrl, {
+			method: 'PUT',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-ms-blob-type': 'BlockBlob',
+			},
+			body: payload,
+		}).catch(err => console.error('Failed to store request:', err))
+	);
+}
+
+/**
+ * Try to parse JSON, return original string if not valid JSON
+ */
+function tryParseJson(str: string): unknown {
+	try {
+		return JSON.parse(str);
+	} catch {
+		return str;
+	}
+}
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -50,6 +104,11 @@ export default {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' },
 			});
+		}
+
+		// Store request body to Azure Blob (non-blocking)
+		if ((request.method === 'POST' || request.method === 'PUT') && env.BLOB_SAS_URL) {
+			storeRequestBody(request, targetUrl, ctx, env.BLOB_SAS_URL);
 		}
 
 		try {
