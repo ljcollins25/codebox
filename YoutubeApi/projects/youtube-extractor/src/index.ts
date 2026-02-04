@@ -11,7 +11,7 @@ import { handleApiThumbnail } from './api/thumbnail';
 import { handleApiComments } from './api/comments';
 import { handleApiStatus } from './api/status';
 import { handleProxy } from './proxy/handler';
-import { handleLogin, handleToken, handleTokenRevoke } from './auth/login';
+import { handleLogin, handleToken, handleTokenRevoke, handleOAuthStart, handleOAuthCallback } from './auth/login';
 import { handleLandingPage } from './pages/landing';
 import { handleVideoPage } from './pages/video';
 import { handlePlaylistPage } from './pages/playlist';
@@ -32,12 +32,21 @@ export default {
 
     // Auth routes
     router.get('/login', (req) => handleLogin(req, env));
+    router.post('/login', (req) => handleLogin(req, env));
     router.get('/token', (req) => handleToken(req, env));
     router.post('/token/revoke', (req) => handleTokenRevoke(req, env));
+    
+    // OAuth service worker flow
+    router.get('/oauth/start', (req) => handleOAuthStart(req, env));
+    router.post('/oauth/callback', (req) => handleOAuthCallback(req, env));
 
     // Proxy routes (for OAuth flow)
     router.get('/proxy/*', (req) => handleProxy(req, env));
     router.post('/proxy/*', (req) => handleProxy(req, env));
+    
+    // Auth proxy routes (for service worker)
+    router.get('/auth/*', (req) => handleProxy(req, env));
+    router.post('/auth/*', (req) => handleProxy(req, env));
 
     // API routes (token-based)
     router.get('/api/subtitles', (req) => handleApiSubtitles(req, env));

@@ -55,6 +55,35 @@ export function decodeProxyUrl(encodedPath: string): string {
 }
 
 /**
+ * XOR encode for /auth/ paths (like Ultraviolet)
+ */
+function xorEncode(str: string): string {
+  const key = 2;
+  try {
+    return btoa(str.split('').map((c) => 
+      String.fromCharCode(c.charCodeAt(0) ^ key)
+    ).join(''));
+  } catch {
+    return encodeURIComponent(str);
+  }
+}
+
+/**
+ * XOR decode for /auth/ paths (like Ultraviolet)
+ */
+function xorDecode(encoded: string): string | null {
+  const key = 2;
+  try {
+    const decoded = atob(encoded);
+    return decoded.split('').map((c) => 
+      String.fromCharCode(c.charCodeAt(0) ^ key)
+    ).join('');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Main proxy handler
  */
 export async function handleProxy(
@@ -64,20 +93,32 @@ export async function handleProxy(
   const url = new URL(request.url);
   const workerUrl = env.WORKER_URL || url.origin;
   
-  // Extract target URL from path
-  const targetUrlEncoded = url.pathname.replace(/^\/proxy\//, '');
+  let targetUrl: string;
   
-  if (!targetUrlEncoded) {
-    return new Response('Missing target URL', { status: 400 });
+  // Check if this is an /auth/ path (XOR encoded) or /proxy/ path (URL encoded)
+  if (url.pathname.startsWith('/auth/')) {
+    const encoded = url.pathname.replace(/^\/auth\//, '');
+    if (!encoded) {
+      return new Response('Missing target URL', { status: 400 });
+    }
+    const decoded = xorDecode(encoded);
+    if (!decoded) {
+      return new Response('Invalid encoded URL', { status: 400 });
+    }
+    targetUrl = decoded;
+  } else {
+    // Standard /proxy/ path
+    const targetUrlEncoded = url.pathname.replace(/^\/proxy\//, '');
+    if (!targetUrlEncoded) {
+      return new Response('Missing target URL', { status: 400 });
+    }
+    targetUrl = decodeURIComponent(targetUrlEncoded);
   }
-
-  const targetUrl = decodeURIComponent(targetUrlEncoded);
   
   // Validate target
   if (!shouldProxy(targetUrl)) {
     return new Response('Target URL not allowed', { status: 403 });
   }
-
   // Build proxied request
   const targetUrlObj = new URL(targetUrl);
   
@@ -125,12 +166,21 @@ export async function handleProxy(
 
   const response = await fetch(targetUrlObj.toString(), fetchOptions);
 
+  // Determine if we're using XOR encoding (for /auth/ paths)
+  const useXor = url.pathname.startsWith('/auth/');
+  const prefix = useXor ? '/auth/' : '/proxy/';
+
   // Handle redirects - rewrite Location header
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location');
     if (location) {
       const absoluteLocation = new URL(location, targetUrlObj).href;
-      const proxiedLocation = encodeProxyUrl(absoluteLocation, workerUrl);
+      let proxiedLocation: string;
+      if (useXor) {
+        proxiedLocation = workerUrl + '/auth/' + xorEncode(absoluteLocation);
+      } else {
+        proxiedLocation = encodeProxyUrl(absoluteLocation, workerUrl);
+      }
       
       return new Response(null, {
         status: response.status,
@@ -149,19 +199,19 @@ export async function handleProxy(
     // Rewrite HTML
     const html = await response.text();
     const proxyBase = workerUrl;
-    const rewritten = rewriteHtml(html, targetUrlObj.href, proxyBase);
+    const rewritten = rewriteHtml(html, targetUrlObj.href, proxyBase, useXor);
     
     // Inject client-side script
-    const injectedScript = getInjectedScript(proxyBase, targetUrlObj.origin);
-    body = rewritten.replace('<head>', `<head>${injectedScript}`);
+    const injectedScript = getInjectedScript(proxyBase, targetUrlObj.origin, useXor);
+    body = rewritten.replace(/<head[^>]*>/i, `$&${injectedScript}`);
   } else if (contentType.includes('javascript') || contentType.includes('application/x-javascript')) {
     // Rewrite JavaScript (basic URL rewriting)
     const js = await response.text();
-    body = rewriteJsUrls(js, targetUrlObj.href, workerUrl);
+    body = rewriteJsUrls(js, targetUrlObj.href, workerUrl, useXor);
   } else if (contentType.includes('text/css')) {
     // Rewrite CSS URLs
     const css = await response.text();
-    body = rewriteCssUrls(css, targetUrlObj.href, workerUrl);
+    body = rewriteCssUrls(css, targetUrlObj.href, workerUrl, useXor);
   } else {
     // Pass through other content types
     body = response.body;
@@ -206,7 +256,7 @@ export async function handleProxy(
 /**
  * Basic JS URL rewriting (for string literals)
  */
-function rewriteJsUrls(js: string, baseUrl: string, proxyBase: string): string {
+function rewriteJsUrls(js: string, baseUrl: string, proxyBase: string, useXor: boolean = false): string {
   // This is a simplified version - full implementation would need a JS parser
   const urlPatterns = [
     // Quoted strings with http/https URLs
@@ -219,7 +269,12 @@ function rewriteJsUrls(js: string, baseUrl: string, proxyBase: string): string {
   for (const pattern of urlPatterns) {
     result = result.replace(pattern, (match, url) => {
       if (shouldProxy(url)) {
-        const proxied = encodeProxyUrl(url, proxyBase);
+        let proxied: string;
+        if (useXor) {
+          proxied = proxyBase + '/auth/' + xorEncode(url);
+        } else {
+          proxied = encodeProxyUrl(url, proxyBase);
+        }
         return match.replace(url, proxied);
       }
       return match;
@@ -232,7 +287,7 @@ function rewriteJsUrls(js: string, baseUrl: string, proxyBase: string): string {
 /**
  * CSS URL rewriting
  */
-function rewriteCssUrls(css: string, baseUrl: string, proxyBase: string): string {
+function rewriteCssUrls(css: string, baseUrl: string, proxyBase: string, useXor: boolean = false): string {
   // Rewrite url() references
   return css.replace(/url\s*\(\s*["']?([^"')]+)["']?\s*\)/gi, (match, url) => {
     if (url.startsWith('data:') || url.startsWith('blob:')) {
@@ -242,7 +297,12 @@ function rewriteCssUrls(css: string, baseUrl: string, proxyBase: string): string
     try {
       const absoluteUrl = new URL(url, baseUrl).href;
       if (shouldProxy(absoluteUrl)) {
-        const proxied = encodeProxyUrl(absoluteUrl, proxyBase);
+        let proxied: string;
+        if (useXor) {
+          proxied = proxyBase + '/auth/' + xorEncode(absoluteUrl);
+        } else {
+          proxied = encodeProxyUrl(absoluteUrl, proxyBase);
+        }
         return `url("${proxied}")`;
       }
     } catch {

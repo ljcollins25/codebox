@@ -4,8 +4,11 @@
 
 /**
  * Get the script to inject into proxied HTML pages
+ * Uses XOR encoding for /auth/ routes (like Ultraviolet)
  */
-export function getInjectedScript(proxyBase: string, currentOrigin: string): string {
+export function getInjectedScript(proxyBase: string, currentOrigin: string, useXor: boolean = false): string {
+  const prefix = useXor ? '/auth/' : '/proxy/';
+  
   return `
 <script>
 (function() {
@@ -13,6 +16,8 @@ export function getInjectedScript(proxyBase: string, currentOrigin: string): str
   
   const PROXY_BASE = ${JSON.stringify(proxyBase)};
   const CURRENT_ORIGIN = ${JSON.stringify(currentOrigin)};
+  const USE_XOR = ${useXor};
+  const PREFIX = ${JSON.stringify(prefix)};
   
   // URL patterns that should be proxied
   const PROXY_DOMAINS = [
@@ -28,6 +33,12 @@ export function getInjectedScript(proxyBase: string, currentOrigin: string): str
     'googleapis.com',
     'google.com',
     'www.google.com',
+    'ssl.gstatic.com',
+    'gstatic.com',
+    'accounts.youtube.com',
+    'myaccount.google.com',
+    'ogs.google.com',
+    'play.google.com',
   ];
   
   function shouldProxy(url) {
@@ -37,6 +48,19 @@ export function getInjectedScript(proxyBase: string, currentOrigin: string): str
     } catch {
       return false;
     }
+  }
+  
+  // XOR encode for /auth/ routes
+  function xorEncode(str) {
+    const key = 2;
+    return btoa(str.split('').map(c => String.fromCharCode(c.charCodeAt(0) ^ key)).join(''));
+  }
+  
+  function encodeUrl(url) {
+    if (USE_XOR) {
+      return xorEncode(url);
+    }
+    return encodeURIComponent(url);
   }
   
   function rewriteUrl(url) {
@@ -50,14 +74,20 @@ export function getInjectedScript(proxyBase: string, currentOrigin: string): str
     if (url.startsWith('data:') || 
         url.startsWith('blob:') || 
         url.startsWith('javascript:') ||
-        url.startsWith('#')) {
+        url.startsWith('#') ||
+        url.startsWith('about:')) {
+      return url;
+    }
+    
+    // Skip already-proxied URLs
+    if (url.includes(PREFIX)) {
       return url;
     }
     
     try {
       const absolute = new URL(url, CURRENT_ORIGIN).href;
       if (shouldProxy(absolute)) {
-        return PROXY_BASE + '/proxy/' + encodeURIComponent(absolute);
+        return PROXY_BASE + PREFIX + encodeUrl(absolute);
       }
     } catch (e) {
       // Invalid URL
@@ -159,9 +189,65 @@ export function getInjectedScript(proxyBase: string, currentOrigin: string): str
     return originalDocumentWrite.call(this, html);
   };
   
+  // MutationObserver to catch dynamically added elements
+  const observer = new MutationObserver(function(mutations) {
+    mutations.forEach(function(mutation) {
+      mutation.addedNodes.forEach(function(node) {
+        if (node.nodeType === 1) {
+          // Rewrite attributes on new elements
+          ['href', 'src', 'action', 'formaction', 'poster', 'data'].forEach(function(attr) {
+            if (node[attr]) {
+              const rewritten = rewriteUrl(node[attr]);
+              if (rewritten !== node[attr]) {
+                node.setAttribute(attr, rewritten);
+              }
+            }
+          });
+          
+          // Check children too
+          if (node.querySelectorAll) {
+            node.querySelectorAll('[href],[src],[action],[formaction]').forEach(function(el) {
+              ['href', 'src', 'action', 'formaction'].forEach(function(attr) {
+                if (el[attr]) {
+                  const rewritten = rewriteUrl(el[attr]);
+                  if (rewritten !== el[attr]) {
+                    el.setAttribute(attr, rewritten);
+                  }
+                }
+              });
+            });
+          }
+        }
+      });
+    });
+  });
+  
+  if (document.documentElement) {
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+  
   // Signal that proxy is active (for cookie capture)
   window.__PROXY_ACTIVE__ = true;
   window.__PROXY_BASE__ = PROXY_BASE;
+  
+  // Detect YouTube login completion and notify parent
+  function checkLoginComplete() {
+    const url = window.location.href;
+    // If we're on YouTube after login
+    if (url.includes('youtube.com') && !url.includes('accounts.google.com')) {
+      // Check for login indicators in cookies
+      if (document.cookie.includes('SID=') || document.cookie.includes('SAPISID=')) {
+        // Notify parent window
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: 'AUTH_COMPLETE', cookies: document.cookie }, '*');
+        }
+      }
+    }
+  }
+  
+  // Check on load and periodically
+  window.addEventListener('load', checkLoginComplete);
+  setInterval(checkLoginComplete, 2000);
   
   console.log('[Proxy] Client-side interception active');
 })();

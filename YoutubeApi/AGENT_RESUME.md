@@ -29,19 +29,16 @@ This document enables another AI agent to resume or extend the YouTube Extractio
 - ✅ Router and core structure
 - ✅ KV storage layer
 - ✅ Extraction core (player, decipher, n-transform, formats, comments)
-- ✅ Proxy/rewriter system
-- ✅ Authentication/login flow
+- ✅ Proxy/rewriter system with XOR encoding (like Ultraviolet)
+- ✅ Authentication/login flow (dual method: OAuth + manual cookies)
+- ✅ Service worker for OAuth proxy (`static/uv-sw.js`)
 - ✅ All API endpoints
 - ✅ Web interface pages
 - ✅ Static client files
+- ✅ Deployed to Cloudflare Workers
 
-### Ready for Testing/Deployment
-- ⬜ Install npm dependencies
-- ⬜ Create KV namespaces in Cloudflare
-- ⬜ Update wrangler.toml with KV namespace IDs
-- ⬜ Deploy to Cloudflare Workers
-- ⬜ Test OAuth flow
-- ⬜ Test extraction with various videos
+### Deployed At
+**URL:** https://youtube-extractor.ref12cf.workers.dev
 
 ### Future Enhancements
 - ⬜ Improved error recovery
@@ -49,6 +46,7 @@ This document enables another AI agent to resume or extend the YouTube Extractio
 - ⬜ Caching layer
 - ⬜ WebCodecs muxing implementation
 - ⬜ Post comment functionality
+- ⬜ Improve OAuth reliability (Google's anti-bot measures are challenging)
 
 ---
 
@@ -74,6 +72,9 @@ This document enables another AI agent to resume or extend the YouTube Extractio
 | Location | Purpose |
 |----------|---------|
 | `projects/youtube-extractor/` | Main worker code |
+| `projects/youtube-extractor/src/proxy/` | Proxy with XOR/URL encoding |
+| `projects/youtube-extractor/src/auth/login.ts` | Dual auth (OAuth + manual) |
+| `projects/youtube-extractor/static/uv-sw.js` | Service worker for OAuth |
 
 ---
 
