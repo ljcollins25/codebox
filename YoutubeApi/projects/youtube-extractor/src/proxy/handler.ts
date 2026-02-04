@@ -24,6 +24,15 @@ const PROXY_DOMAINS = [
   'googleapis.com',
   'google.com',
   'www.google.com',
+  'gstatic.com',
+  'www.gstatic.com',
+  'ssl.gstatic.com',
+  'fonts.gstatic.com',
+  'play.google.com',
+  'myaccount.google.com',
+  'ogs.google.com',
+  'signaler-pa.clients6.google.com',
+  'lh3.googleusercontent.com',
 ];
 
 /**
@@ -74,11 +83,18 @@ function xorEncode(str: string): string {
 function xorDecode(encoded: string): string | null {
   const key = 2;
   try {
-    const decoded = atob(encoded);
+    // Handle URL-safe base64 if needed
+    let base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    // Add padding if needed
+    while (base64.length % 4) {
+      base64 += '=';
+    }
+    const decoded = atob(base64);
     return decoded.split('').map((c) => 
       String.fromCharCode(c.charCodeAt(0) ^ key)
     ).join('');
-  } catch {
+  } catch (e) {
+    console.error('XOR decode error:', e, 'Input:', encoded);
     return null;
   }
 }
@@ -90,37 +106,38 @@ export async function handleProxy(
   request: Request,
   env: Env
 ): Promise<Response> {
-  const url = new URL(request.url);
-  const workerUrl = env.WORKER_URL || url.origin;
-  
-  let targetUrl: string;
-  
-  // Check if this is an /auth/ path (XOR encoded) or /proxy/ path (URL encoded)
-  if (url.pathname.startsWith('/auth/')) {
-    const encoded = url.pathname.replace(/^\/auth\//, '');
-    if (!encoded) {
-      return new Response('Missing target URL', { status: 400 });
+  try {
+    const url = new URL(request.url);
+    const workerUrl = env.WORKER_URL || url.origin;
+    
+    let targetUrl: string;
+    
+    // Check if this is an /auth/ path (XOR encoded) or /proxy/ path (URL encoded)
+    if (url.pathname.startsWith('/auth/')) {
+      const encoded = url.pathname.replace(/^\/auth\//, '');
+      if (!encoded) {
+        return new Response('Missing target URL', { status: 400 });
+      }
+      const decoded = xorDecode(encoded);
+      if (!decoded) {
+        return new Response(`Invalid encoded URL. Input: ${encoded.substring(0, 50)}...`, { status: 400 });
+      }
+      targetUrl = decoded;
+    } else {
+      // Standard /proxy/ path
+      const targetUrlEncoded = url.pathname.replace(/^\/proxy\//, '');
+      if (!targetUrlEncoded) {
+        return new Response('Missing target URL', { status: 400 });
+      }
+      targetUrl = decodeURIComponent(targetUrlEncoded);
     }
-    const decoded = xorDecode(encoded);
-    if (!decoded) {
-      return new Response('Invalid encoded URL', { status: 400 });
+    
+    // Validate target
+    if (!shouldProxy(targetUrl)) {
+      return new Response(`Target URL not allowed: ${targetUrl}`, { status: 403 });
     }
-    targetUrl = decoded;
-  } else {
-    // Standard /proxy/ path
-    const targetUrlEncoded = url.pathname.replace(/^\/proxy\//, '');
-    if (!targetUrlEncoded) {
-      return new Response('Missing target URL', { status: 400 });
-    }
-    targetUrl = decodeURIComponent(targetUrlEncoded);
-  }
-  
-  // Validate target
-  if (!shouldProxy(targetUrl)) {
-    return new Response('Target URL not allowed', { status: 403 });
-  }
-  // Build proxied request
-  const targetUrlObj = new URL(targetUrl);
+    // Build proxied request
+    const targetUrlObj = new URL(targetUrl);
   
   // Copy query params from original request
   url.searchParams.forEach((value, key) => {
@@ -152,12 +169,21 @@ export async function handleProxy(
   headers.set('Origin', targetUrlObj.origin);
   headers.set('Referer', targetUrlObj.origin + '/');
   headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  
+  // Add headers that Google expects
+  headers.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8');
+  headers.set('Accept-Language', 'en-US,en;q=0.5');
+  headers.set('Sec-Fetch-Dest', 'document');
+  headers.set('Sec-Fetch-Mode', 'navigate');
+  headers.set('Sec-Fetch-Site', 'none');
+  headers.set('Sec-Fetch-User', '?1');
+  headers.set('Upgrade-Insecure-Requests', '1');
 
-  // Make request to target
+  // Make request to target - follow redirects to get final page
   const fetchOptions: RequestInit = {
     method: request.method,
     headers,
-    redirect: 'manual', // Handle redirects ourselves
+    redirect: 'follow', // Let fetch handle redirects
   };
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -169,8 +195,16 @@ export async function handleProxy(
   // Determine if we're using XOR encoding (for /auth/ paths)
   const useXor = url.pathname.startsWith('/auth/');
   const prefix = useXor ? '/auth/' : '/proxy/';
+  
+  // Check for failed response (status 0 means network error)
+  if (response.status === 0 || response.type === 'error') {
+    return new Response(`Failed to fetch target: ${targetUrlObj.origin} - request was blocked or failed`, {
+      status: 502,
+      headers: { 'Content-Type': 'text/plain' }
+    });
+  }
 
-  // Handle redirects - rewrite Location header
+  // Handle redirects - rewrite Location header (only if redirect: manual)
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location');
     if (location) {
@@ -251,6 +285,13 @@ export async function handleProxy(
     status: response.status,
     headers: responseHeaders,
   });
+  } catch (error) {
+    console.error('Proxy handler error:', error);
+    return new Response(`Proxy error: ${error instanceof Error ? error.message : String(error)}`, { 
+      status: 500,
+      headers: { 'Content-Type': 'text/plain' }
+    });
+  }
 }
 
 /**

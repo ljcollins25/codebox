@@ -15,6 +15,7 @@ id = "ed5ab1c1d0f94b01b7c84667bb9382e8"
 [vars]
 WORKER_URL = "https://youtube-extractor.ref12cf.workers.dev"
 
-# Static assets
-[site]
-bucket = "./static"
+# Static assets - using modern assets configuration
+[assets]
+directory = "./static"
+binding = "ASSETS"

@@ -114,6 +114,115 @@ export async function handleOAuthCallback(
 }
 
 /**
+ * Handle OAuth complete - try to get cookies set during proxy flow
+ */
+export async function handleOAuthComplete(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const url = new URL(request.url);
+  const workerUrl = env.WORKER_URL || url.origin;
+  
+  // Get cookies from the request (these would be set during the proxy flow)
+  const cookieHeader = request.headers.get('Cookie') || '';
+  
+  if (!cookieHeader) {
+    return new Response(generateOAuthCompletePageHtml(workerUrl, 'No cookies found. The login may not have completed through our proxy. Please try the manual method.'), {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+  
+  // Parse cookies
+  const cookies = parseCookies(cookieHeader);
+  
+  // Check for required YouTube cookies
+  const hasRequired = REQUIRED_COOKIES.some(name => cookies[name]);
+  
+  if (!hasRequired) {
+    return new Response(generateOAuthCompletePageHtml(workerUrl, 'Login cookies not found. Google may have blocked the proxy. Please try the manual method.'), {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+  
+  // Generate token
+  const token = generateToken();
+  await storeToken(env, token, cookieHeader);
+  
+  // Redirect to token page
+  return Response.redirect(`${workerUrl}/token?new=${token}`, 302);
+}
+
+/**
+ * Generate OAuth complete page (for errors)
+ */
+function generateOAuthCompletePageHtml(workerUrl: string, error: string): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login Issue - YouTube Extractor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      max-width: 500px;
+      width: 100%;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 40px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+    }
+    h1 { font-size: 2rem; margin-bottom: 20px; }
+    .error {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      text-decoration: none;
+      margin: 5px;
+    }
+    .btn:hover { background: #2563eb; }
+    .btn-secondary { background: rgba(255,255,255,0.2); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.3); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚠️ Login Issue</h1>
+    <div class="error">${error}</div>
+    <a href="/login?method=manual" class="btn">Use Manual Cookie Method</a>
+    <a href="/oauth/start" class="btn btn-secondary">Try Again</a>
+  </div>
+</body>
+</html>
+`;
+}
+
+/**
  * Handle login form submission with pasted cookies
  */
 async function handleLoginSubmit(
@@ -887,7 +996,7 @@ function generateManualLoginPageHtml(workerUrl: string, error?: string): string 
 }
 
 /**
- * Generate OAuth frame page HTML (with service worker registration)
+ * Generate OAuth page HTML with service worker registration (like Ultraviolet)
  */
 function generateOAuthFramePageHtml(workerUrl: string): string {
   return `
@@ -905,79 +1014,46 @@ function generateOAuthFramePageHtml(workerUrl: string): string {
       color: #fff;
       min-height: 100vh;
       display: flex;
-      flex-direction: column;
-    }
-    .header {
-      padding: 15px 20px;
-      background: rgba(0,0,0,0.2);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .header h1 { font-size: 1.2rem; }
-    .status {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 0.9rem;
-    }
-    .status-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: #f59e0b;
-      animation: pulse 1.5s infinite;
-    }
-    .status-dot.ready { background: #22c55e; animation: none; }
-    .status-dot.error { background: #ef4444; animation: none; }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-    .frame-container {
-      flex: 1;
-      display: flex;
       align-items: center;
       justify-content: center;
       padding: 20px;
     }
-    .frame-wrapper {
-      width: 100%;
+    .container {
       max-width: 500px;
-      height: 600px;
-      background: #fff;
-      border-radius: 12px;
-      overflow: hidden;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    }
-    iframe {
       width: 100%;
-      height: 100%;
-      border: none;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 40px;
+      backdrop-filter: blur(10px);
+      text-align: center;
     }
-    .loading {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: #333;
+    h1 { font-size: 1.8rem; margin-bottom: 20px; }
+    .status {
+      margin: 30px 0;
+      padding: 20px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 8px;
     }
-    .loading h2 { margin-bottom: 20px; }
     .spinner {
       width: 40px;
       height: 40px;
-      border: 3px solid #e5e7eb;
+      border: 3px solid rgba(255,255,255,0.2);
       border-top-color: #3b82f6;
       border-radius: 50%;
       animation: spin 1s linear infinite;
+      margin: 0 auto 15px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .error-msg {
-      text-align: center;
-      padding: 40px;
+    .status-text { font-size: 0.95rem; color: rgba(255,255,255,0.8); }
+    .error {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+      display: none;
     }
-    .error-msg h2 { color: #ef4444; margin-bottom: 15px; }
     .btn {
       display: inline-block;
       padding: 12px 24px;
@@ -988,51 +1064,27 @@ function generateOAuthFramePageHtml(workerUrl: string): string {
       font-size: 1rem;
       cursor: pointer;
       text-decoration: none;
-      margin-top: 15px;
+      margin: 5px;
     }
     .btn:hover { background: #2563eb; }
-    .instructions {
-      max-width: 500px;
-      margin: 0 auto 20px;
-      padding: 15px;
-      background: rgba(59, 130, 246, 0.15);
-      border-radius: 8px;
-      font-size: 0.9rem;
-      text-align: center;
-    }
-    .hidden { display: none !important; }
+    .btn-secondary { background: rgba(255,255,255,0.2); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.3); }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
-  <div class="header">
+  <div class="container">
     <h1>🔐 YouTube Sign In</h1>
-    <div class="status">
-      <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">Initializing...</span>
+    
+    <div class="status" id="status">
+      <div class="spinner" id="spinner"></div>
+      <div class="status-text" id="statusText">Initializing secure proxy...</div>
     </div>
-  </div>
-  
-  <div class="frame-container">
-    <div>
-      <div class="instructions" id="instructions">
-        Sign in with your Google account below. Once complete, your API token will be generated automatically.
-      </div>
-      
-      <div class="frame-wrapper" id="frameWrapper">
-        <div class="loading" id="loadingState">
-          <div class="spinner"></div>
-          <h2>Preparing secure login...</h2>
-          <p>Setting up proxy service worker</p>
-        </div>
-        
-        <div class="error-msg hidden" id="errorState">
-          <h2>⚠️ Could not initialize</h2>
-          <p id="errorText">Service workers are not supported or blocked.</p>
-          <a href="/login?method=manual" class="btn">Use Manual Method</a>
-        </div>
-        
-        <iframe id="authFrame" class="hidden" sandbox="allow-forms allow-scripts allow-same-origin allow-popups"></iframe>
-      </div>
+    
+    <div class="error" id="error"></div>
+    
+    <div id="actions" class="hidden">
+      <a href="/login?method=manual" class="btn btn-secondary">Use Manual Method Instead</a>
     </div>
   </div>
   
@@ -1040,119 +1092,73 @@ function generateOAuthFramePageHtml(workerUrl: string): string {
     const WORKER_URL = ${JSON.stringify(workerUrl)};
     const GOOGLE_AUTH_URL = 'https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Den%26next%3Dhttps%253A%252F%252Fwww.youtube.com%252F';
     
-    const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
-    const loadingState = document.getElementById('loadingState');
-    const errorState = document.getElementById('errorState');
-    const errorText = document.getElementById('errorText');
-    const authFrame = document.getElementById('authFrame');
-    const instructions = document.getElementById('instructions');
+    const spinner = document.getElementById('spinner');
+    const errorDiv = document.getElementById('error');
+    const actions = document.getElementById('actions');
     
-    function setStatus(status, text) {
-      statusDot.className = 'status-dot ' + status;
+    function setStatus(text) {
       statusText.textContent = text;
     }
     
     function showError(msg) {
-      loadingState.classList.add('hidden');
-      errorState.classList.remove('hidden');
-      errorText.textContent = msg;
-      setStatus('error', 'Error');
+      spinner.style.display = 'none';
+      errorDiv.textContent = msg;
+      errorDiv.style.display = 'block';
+      actions.classList.remove('hidden');
     }
     
-    function showFrame() {
-      loadingState.classList.add('hidden');
-      errorState.classList.add('hidden');
-      authFrame.classList.remove('hidden');
-      setStatus('ready', 'Ready - Please sign in');
+    function xorEncode(str) {
+      const key = 2;
+      let encoded = '';
+      for (let i = 0; i < str.length; i++) {
+        encoded += String.fromCharCode(str.charCodeAt(i) ^ key);
+      }
+      return btoa(encoded);
     }
     
     async function init() {
-      // Check for service worker support
-      if (!('serviceWorker' in navigator)) {
-        showError('Your browser does not support service workers.');
-        return;
-      }
-      
       try {
-        setStatus('', 'Registering service worker...');
+        // Check for service worker support
+        if (!('serviceWorker' in navigator)) {
+          showError('Your browser does not support service workers. Please use the manual method.');
+          return;
+        }
         
-        // Register the service worker
+        setStatus('Setting up proxy...');
+        
+        // Build the proxied URL
+        const encodedUrl = xorEncode(GOOGLE_AUTH_URL);
+        const proxyUrl = '/auth/' + encodedUrl;
+        
+        // Register the service worker with scope /auth/
         const registration = await navigator.serviceWorker.register('/static/uv-sw.js', {
           scope: '/auth/'
         });
         
-        // Wait for it to be active
-        let sw = registration.active || registration.installing || registration.waiting;
-        
-        if (!registration.active) {
-          await new Promise((resolve, reject) => {
-            sw.addEventListener('statechange', () => {
-              if (sw.state === 'activated') resolve();
-              if (sw.state === 'redundant') reject(new Error('SW failed'));
+        // Wait for the SW to be active (not necessarily controlling this page)
+        const sw = registration.installing || registration.waiting || registration.active;
+        if (sw && sw.state !== 'activated') {
+          await new Promise(resolve => {
+            sw.addEventListener('statechange', function onStateChange() {
+              if (sw.state === 'activated') {
+                sw.removeEventListener('statechange', onStateChange);
+                resolve();
+              }
             });
-            setTimeout(() => reject(new Error('Timeout')), 10000);
+            // If already activated, resolve immediately
+            if (sw.state === 'activated') resolve();
           });
         }
         
-        setStatus('', 'Service worker ready');
+        setStatus('Redirecting to Google Sign In...');
         
-        // Load the Google login page through our proxy
-        // The SW will intercept /auth/* requests
-        const encodedUrl = '/auth/' + btoa(GOOGLE_AUTH_URL.split('').map((c,i) => 
-          String.fromCharCode(c.charCodeAt(0) ^ 2)
-        ).join(''));
-        
-        authFrame.src = encodedUrl;
-        showFrame();
-        
-        // Listen for messages from the frame
-        window.addEventListener('message', async (event) => {
-          if (event.data.type === 'AUTH_COMPLETE') {
-            setStatus('', 'Processing login...');
-            instructions.textContent = 'Login detected! Generating your API token...';
-            
-            // Request cookies from the service worker
-            if (navigator.serviceWorker.controller) {
-              navigator.serviceWorker.controller.postMessage({ type: 'GET_COOKIES' });
-            }
-          }
-        });
-        
-        // Listen for cookie response from SW
-        navigator.serviceWorker.addEventListener('message', async (event) => {
-          if (event.data.type === 'COOKIES') {
-            const cookies = event.data.cookies;
-            if (cookies && cookies.includes('SID=')) {
-              // Submit cookies to get token
-              const resp = await fetch('/oauth/callback', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cookies })
-              });
-              
-              const result = await resp.json();
-              if (result.token) {
-                // Success! Redirect to token page
-                window.location.href = '/token?new=' + result.token;
-              } else {
-                showError(result.error || 'Failed to create token');
-              }
-            }
-          }
-        });
-        
-        // Also check periodically if we've logged in
-        // (in case message passing doesn't work)
-        setInterval(async () => {
-          if (navigator.serviceWorker.controller) {
-            navigator.serviceWorker.controller.postMessage({ type: 'GET_COOKIES' });
-          }
-        }, 3000);
+        // Navigate immediately - the active SW will intercept /auth/* requests
+        window.location.href = proxyUrl;
         
       } catch (error) {
-        console.error('Init error:', error);
-        showError('Failed to initialize: ' + error.message);
+        console.error('Service worker error:', error);
+        showError('Failed to initialize: ' + error.message + '. Please use the manual method.');
       }
     }
     

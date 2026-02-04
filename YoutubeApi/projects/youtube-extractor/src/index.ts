@@ -11,7 +11,7 @@ import { handleApiThumbnail } from './api/thumbnail';
 import { handleApiComments } from './api/comments';
 import { handleApiStatus } from './api/status';
 import { handleProxy } from './proxy/handler';
-import { handleLogin, handleToken, handleTokenRevoke, handleOAuthStart, handleOAuthCallback } from './auth/login';
+import { handleLogin, handleToken, handleTokenRevoke, handleOAuthStart, handleOAuthCallback, handleOAuthComplete } from './auth/login';
 import { handleLandingPage } from './pages/landing';
 import { handleVideoPage } from './pages/video';
 import { handlePlaylistPage } from './pages/playlist';
@@ -21,10 +21,40 @@ export interface Env {
   TOKENS: KVNamespace;
   CACHE: KVNamespace;
   WORKER_URL: string;
+  ASSETS: Fetcher;
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    
+    // Serve static assets directly (before router)
+    if (url.pathname.startsWith('/static/')) {
+      // Remove /static/ prefix for asset lookup
+      const assetPath = url.pathname.replace('/static/', '/');
+      const assetUrl = new URL(assetPath, request.url);
+      const assetRequest = new Request(assetUrl, request);
+      
+      try {
+        const response = await env.ASSETS.fetch(assetRequest);
+        if (response.status !== 404) {
+          // Add proper headers for service worker
+          const headers = new Headers(response.headers);
+          if (url.pathname.endsWith('.js')) {
+            headers.set('Content-Type', 'application/javascript');
+            headers.set('Service-Worker-Allowed', '/');
+          }
+          return new Response(response.body, {
+            status: response.status,
+            headers
+          });
+        }
+      } catch (e) {
+        // Fall through to 404
+      }
+      return new Response('Not found', { status: 404 });
+    }
+    
     const router = new Router();
 
     // Landing page
@@ -39,6 +69,7 @@ export default {
     // OAuth service worker flow
     router.get('/oauth/start', (req) => handleOAuthStart(req, env));
     router.post('/oauth/callback', (req) => handleOAuthCallback(req, env));
+    router.get('/oauth/complete', (req) => handleOAuthComplete(req, env));
 
     // Proxy routes (for OAuth flow)
     router.get('/proxy/*', (req) => handleProxy(req, env));
