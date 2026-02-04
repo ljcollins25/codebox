@@ -109,6 +109,7 @@ export async function handleProxy(
   try {
     const url = new URL(request.url);
     const workerUrl = env.WORKER_URL || url.origin;
+    const isSwRequest = request.headers.get('x-uv-sw') === '1';
     
     let targetUrl: string;
     
@@ -170,20 +171,22 @@ export async function handleProxy(
   headers.set('Referer', targetUrlObj.origin + '/');
   headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
   
-  // Add headers that Google expects
+  // Add headers that Google expects (avoid Sec-Fetch headers for SW requests)
   headers.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8');
   headers.set('Accept-Language', 'en-US,en;q=0.5');
-  headers.set('Sec-Fetch-Dest', 'document');
-  headers.set('Sec-Fetch-Mode', 'navigate');
-  headers.set('Sec-Fetch-Site', 'none');
-  headers.set('Sec-Fetch-User', '?1');
-  headers.set('Upgrade-Insecure-Requests', '1');
+  if (!isSwRequest) {
+    headers.set('Sec-Fetch-Dest', 'document');
+    headers.set('Sec-Fetch-Mode', 'navigate');
+    headers.set('Sec-Fetch-Site', 'none');
+    headers.set('Sec-Fetch-User', '?1');
+    headers.set('Upgrade-Insecure-Requests', '1');
+  }
 
-  // Make request to target - follow redirects to get final page
+  // Make request to target
   const fetchOptions: RequestInit = {
     method: request.method,
     headers,
-    redirect: 'follow', // Let fetch handle redirects
+    redirect: 'follow',
   };
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -192,9 +195,25 @@ export async function handleProxy(
 
   const response = await fetch(targetUrlObj.toString(), fetchOptions);
 
+  if (response.status === 0) {
+    return new Response(`Upstream fetch failed for ${targetUrlObj.origin}`, {
+      status: 502,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  }
+
   // Determine if we're using XOR encoding (for /auth/ paths)
   const useXor = url.pathname.startsWith('/auth/');
   const prefix = useXor ? '/auth/' : '/proxy/';
+
+  // For service worker requests, return raw response and let SW rewrite
+  if (isSwRequest) {
+    const passHeaders = new Headers(response.headers);
+    return new Response(response.body, {
+      status: response.status,
+      headers: passHeaders,
+    });
+  }
   
   // Check for failed response (status 0 means network error)
   if (response.status === 0 || response.type === 'error') {

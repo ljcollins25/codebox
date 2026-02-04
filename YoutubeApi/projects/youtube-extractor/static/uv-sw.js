@@ -16,6 +16,9 @@ const PROXY_DOMAINS = [
   'google.com',
   'youtube.com',
   'www.youtube.com',
+  'gstatic.com',
+  'www.gstatic.com',
+  'fonts.gstatic.com',
   'ssl.gstatic.com',
   'accounts.youtube.com',
   'myaccount.google.com',
@@ -404,12 +407,19 @@ async function handleProxyRequest(request) {
     // We use the backend proxy to avoid CORS issues
     const backendUrl = `${url.origin}${BACKEND_PROXY}${encodeURIComponent(targetUrlObj.toString())}`;
     
+    const backendHeaders = new Headers(request.headers);
+    backendHeaders.set('X-UV-SW', '1');
+
     const response = await fetch(backendUrl, {
       method: request.method,
-      headers: request.headers,
+      headers: backendHeaders,
       body: fetchOpts.body,
       redirect: 'manual',
     });
+
+    if (response.status === 0) {
+      return new Response('Upstream fetch failed', { status: 502 });
+    }
     
     // Handle redirects
     if (response.status >= 300 && response.status < 400) {
