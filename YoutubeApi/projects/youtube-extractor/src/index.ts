@@ -11,7 +11,7 @@ import { handleApiThumbnail } from './api/thumbnail';
 import { handleApiComments } from './api/comments';
 import { handleApiStatus } from './api/status';
 import { handleProxy } from './proxy/handler';
-import { handleLogin, handleToken, handleTokenRevoke, handleOAuthStart, handleOAuthCallback, handleOAuthComplete } from './auth/login';
+import { handleLogin, handleToken, handleTokenRevoke, handleOAuthStart, handleOAuthCallback, handleOAuthComplete, handleDeviceStart, handleDevicePoll, handleDeviceStatus } from './auth/login';
 import { handleLandingPage } from './pages/landing';
 import { handleVideoPage } from './pages/video';
 import { handlePlaylistPage } from './pages/playlist';
@@ -70,6 +70,11 @@ export default {
     router.get('/oauth/start', (req) => handleOAuthStart(req, env));
     router.post('/oauth/callback', (req) => handleOAuthCallback(req, env));
     router.get('/oauth/complete', (req) => handleOAuthComplete(req, env));
+    
+    // Device flow OAuth
+    router.post('/device/start', (req) => handleDeviceStart(req, env));
+    router.get('/device/poll', (req) => handleDevicePoll(req, env));
+    router.get('/device/status', (req) => handleDeviceStatus(req, env));
 
     // Proxy routes (for OAuth flow)
     router.get('/proxy/*', (req) => handleProxy(req, env));

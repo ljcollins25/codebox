@@ -40,6 +40,12 @@ export async function handleLogin(
     });
   }
   
+  if (method === 'device') {
+    return new Response(generateDeviceFlowPageHtml(workerUrl), {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+  
   // Default: show login options page
   return new Response(generateLoginOptionsPageHtml(workerUrl), {
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -224,6 +230,7 @@ function generateOAuthCompletePageHtml(workerUrl: string, error: string): string
 
 /**
  * Handle login form submission with pasted cookies
+ * Accepts both form data and JSON
  */
 async function handleLoginSubmit(
   request: Request,
@@ -231,12 +238,29 @@ async function handleLoginSubmit(
 ): Promise<Response> {
   const url = new URL(request.url);
   const workerUrl = env.WORKER_URL || url.origin;
+  const contentType = request.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
   
   try {
-    const formData = await request.formData();
-    const cookieString = formData.get('cookies') as string;
+    let cookieString: string;
+    
+    if (isJson) {
+      // Handle JSON request
+      const body = await request.json() as { cookies?: string };
+      cookieString = body.cookies || '';
+    } else {
+      // Handle form data
+      const formData = await request.formData();
+      cookieString = formData.get('cookies') as string || '';
+    }
     
     if (!cookieString || !cookieString.trim()) {
+      if (isJson) {
+        return new Response(JSON.stringify({ error: 'Please provide cookies' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       return new Response(generateLoginPageHtml(workerUrl, 'Please paste your YouTube cookies'), {
         status: 400,
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -250,6 +274,12 @@ async function handleLoginSubmit(
     const missingCookies = REQUIRED_COOKIES.filter(name => !cookies[name]);
     
     if (missingCookies.length > 0) {
+      if (isJson) {
+        return new Response(JSON.stringify({ error: `Missing required cookies: ${missingCookies.join(', ')}` }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       return new Response(
         generateLoginPageHtml(workerUrl, `Missing required cookies: ${missingCookies.join(', ')}`),
         {
@@ -263,6 +293,12 @@ async function handleLoginSubmit(
     const verified = await verifyYouTubeCookies(cookieString);
     
     if (!verified) {
+      if (isJson) {
+        return new Response(JSON.stringify({ error: 'Invalid or expired cookies. Please extract fresh cookies from YouTube.' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       return new Response(
         generateLoginPageHtml(workerUrl, 'Invalid or expired cookies. Please extract fresh cookies from YouTube.'),
         {
@@ -276,10 +312,23 @@ async function handleLoginSubmit(
     const token = generateToken();
     await storeToken(env, token, cookieString.trim());
     
+    if (isJson) {
+      return new Response(JSON.stringify({ token, tokenUrl: `${workerUrl}/token?new=${token}` }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
     // Redirect to token page
     return Response.redirect(`${workerUrl}/token?new=${token}`, 302);
     
   } catch (error) {
+    if (isJson) {
+      return new Response(JSON.stringify({ error: 'Error processing cookies. Please try again.' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     return new Response(
       generateLoginPageHtml(workerUrl, 'Error processing cookies. Please try again.'),
       {
@@ -830,9 +879,15 @@ function generateLoginOptionsPageHtml(workerUrl: string): string {
     <p class="subtitle">Choose how you want to authenticate</p>
     
     <div class="login-option">
+      <h3>📺 TV Device Flow <span class="badge">Recommended</span></h3>
+      <p>Sign in like a smart TV - get a code and enter it on any device. Simple and secure OAuth flow.</p>
+      <a href="/login?method=device" class="btn">Get Device Code</a>
+    </div>
+    
+    <div class="login-option">
       <h3>🌐 Sign in with Google <span class="badge experimental">Experimental</span></h3>
       <p>Sign in directly through Google's login page. Uses a secure proxy to capture authentication cookies.</p>
-      <a href="/oauth/start" class="btn">Sign in with Google</a>
+      <a href="/oauth/start" class="btn btn-secondary">Sign in with Google</a>
     </div>
     
     <div class="login-option">
@@ -1164,6 +1219,508 @@ function generateOAuthFramePageHtml(workerUrl: string): string {
     
     init();
   </script>
+</body>
+</html>
+`;
+}
+
+// ============================================
+// Device Flow OAuth (TV/Limited Input Device)
+// ============================================
+
+/**
+ * YouTube TV Client ID (Android TV)
+ * This is the public client ID used by YouTube on Android TV devices
+ */
+const YOUTUBE_TV_CLIENT_ID = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com';
+const YOUTUBE_TV_CLIENT_SECRET = 'SboVhoG9s0rNafixCSGGKXAT';
+
+/**
+ * Handle device flow start - initiate OAuth device authorization
+ */
+export async function handleDeviceStart(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  try {
+    // Request device code from Google
+    const response = await fetch('https://oauth2.googleapis.com/device/code', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: YOUTUBE_TV_CLIENT_ID,
+        scope: 'https://www.googleapis.com/auth/youtube',
+      }).toString(),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Device code error:', error);
+      return new Response(JSON.stringify({ error: 'Failed to get device code' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const data = await response.json() as {
+      device_code: string;
+      user_code: string;
+      verification_url: string;
+      expires_in: number;
+      interval: number;
+    };
+
+    // Store device code in KV for polling
+    await env.TOKENS.put(`device:${data.user_code}`, JSON.stringify({
+      device_code: data.device_code,
+      expires_at: Date.now() + (data.expires_in * 1000),
+      interval: data.interval,
+    }), { expirationTtl: data.expires_in });
+
+    return new Response(JSON.stringify({
+      user_code: data.user_code,
+      verification_url: data.verification_url,
+      expires_in: data.expires_in,
+      interval: data.interval,
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  } catch (error) {
+    console.error('Device start error:', error);
+    return new Response(JSON.stringify({ error: 'Failed to initiate device flow' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * Handle device flow poll - check if user has authorized
+ */
+export async function handleDevicePoll(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const url = new URL(request.url);
+  const workerUrl = env.WORKER_URL || url.origin;
+  const userCode = url.searchParams.get('code');
+
+  if (!userCode) {
+    return new Response(JSON.stringify({ error: 'Missing code parameter' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    // Get stored device code
+    const stored = await env.TOKENS.get(`device:${userCode}`);
+    if (!stored) {
+      return new Response(JSON.stringify({ error: 'Invalid or expired code' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { device_code, expires_at } = JSON.parse(stored);
+
+    if (Date.now() > expires_at) {
+      await env.TOKENS.delete(`device:${userCode}`);
+      return new Response(JSON.stringify({ error: 'Code expired' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Poll Google for token
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: YOUTUBE_TV_CLIENT_ID,
+        client_secret: YOUTUBE_TV_CLIENT_SECRET,
+        device_code: device_code,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      }).toString(),
+    });
+
+    const data = await response.json() as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      token_type?: string;
+      error?: string;
+      error_description?: string;
+    };
+
+    if (data.error) {
+      if (data.error === 'authorization_pending') {
+        return new Response(JSON.stringify({ status: 'pending' }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (data.error === 'slow_down') {
+        return new Response(JSON.stringify({ status: 'pending', slow_down: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (data.error === 'access_denied') {
+        await env.TOKENS.delete(`device:${userCode}`);
+        return new Response(JSON.stringify({ error: 'Access denied by user' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: data.error_description || data.error }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Success! Store tokens and clean up
+    await env.TOKENS.delete(`device:${userCode}`);
+
+    // Store OAuth tokens - generate an API token for our service
+    const apiToken = generateToken();
+    await env.TOKENS.put(`token:${apiToken}`, JSON.stringify({
+      type: 'oauth',
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: Date.now() + ((data.expires_in || 3600) * 1000),
+      created_at: Date.now(),
+    }));
+
+    // Return success with the token set as a cookie
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      'Set-Cookie': `yt_oauth_token=${apiToken}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`,
+    });
+
+    return new Response(JSON.stringify({
+      status: 'success',
+      token: apiToken,
+      redirect: `${workerUrl}/token?new=${apiToken}`,
+    }), { headers });
+
+  } catch (error) {
+    console.error('Device poll error:', error);
+    return new Response(JSON.stringify({ error: 'Poll failed' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * Handle device status page - show user code
+ */
+export async function handleDeviceStatus(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const url = new URL(request.url);
+  const userCode = url.searchParams.get('code');
+  const workerUrl = env.WORKER_URL || url.origin;
+
+  return new Response(generateDeviceStatusPageHtml(workerUrl, userCode || ''), {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
+/**
+ * Generate device flow start page HTML
+ */
+function generateDeviceFlowPageHtml(workerUrl: string): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Device Sign In - YouTube Extractor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      max-width: 500px;
+      width: 100%;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 40px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+    }
+    h1 { font-size: 1.8rem; margin-bottom: 15px; }
+    .subtitle { color: rgba(255,255,255,0.7); margin-bottom: 30px; }
+    .code-display {
+      background: rgba(0,0,0,0.3);
+      border-radius: 12px;
+      padding: 30px;
+      margin: 25px 0;
+    }
+    .code-display.hidden { display: none; }
+    .user-code {
+      font-size: 2.5rem;
+      font-weight: bold;
+      font-family: monospace;
+      letter-spacing: 8px;
+      color: #60a5fa;
+      margin-bottom: 15px;
+    }
+    .verification-url {
+      font-size: 1.1rem;
+      color: #22c55e;
+      margin-bottom: 10px;
+    }
+    .verification-url a { color: #22c55e; }
+    .instructions { font-size: 0.9rem; color: rgba(255,255,255,0.7); }
+    .status {
+      margin: 20px 0;
+      padding: 15px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 8px;
+    }
+    .spinner {
+      width: 30px;
+      height: 30px;
+      border: 3px solid rgba(255,255,255,0.2);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px 0;
+      display: none;
+    }
+    .success {
+      background: rgba(34, 197, 94, 0.2);
+      border: 1px solid #22c55e;
+      color: #86efac;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+      display: none;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn:hover { background: #2563eb; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .back-link {
+      display: block;
+      margin-top: 20px;
+      color: rgba(255,255,255,0.7);
+      text-decoration: none;
+    }
+    .back-link:hover { color: #fff; }
+    .expires { font-size: 0.85rem; color: rgba(255,255,255,0.5); margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📺 Device Sign In</h1>
+    <p class="subtitle">Sign in like a smart TV</p>
+    
+    <div id="loading" class="status">
+      <div class="spinner"></div>
+      <div>Getting your device code...</div>
+    </div>
+    
+    <div id="codeDisplay" class="code-display hidden">
+      <div class="verification-url">
+        Go to: <a href="https://www.google.com/device" target="_blank">google.com/device</a>
+      </div>
+      <div class="user-code" id="userCode"></div>
+      <div class="instructions">Enter this code on any device to sign in</div>
+      <div class="expires" id="expires"></div>
+    </div>
+    
+    <div id="polling" class="status" style="display: none;">
+      <div class="spinner"></div>
+      <div>Waiting for you to enter the code...</div>
+    </div>
+    
+    <div id="error" class="error"></div>
+    <div id="success" class="success">
+      <p style="font-size: 1.2rem; margin-bottom: 10px;">✓ Successfully signed in!</p>
+      <p>Redirecting to your token...</p>
+    </div>
+    
+    <a href="/login" class="back-link">← Back to Login Options</a>
+  </div>
+  
+  <script>
+    const WORKER_URL = ${JSON.stringify(workerUrl)};
+    
+    let pollInterval = 5000;
+    let userCode = null;
+    
+    async function startDeviceFlow() {
+      try {
+        const response = await fetch('/device/start', { method: 'POST' });
+        const data = await response.json();
+        
+        if (data.error) {
+          showError(data.error);
+          return;
+        }
+        
+        userCode = data.user_code;
+        pollInterval = (data.interval || 5) * 1000;
+        
+        // Show the code
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('codeDisplay').classList.remove('hidden');
+        document.getElementById('userCode').textContent = data.user_code;
+        
+        const expiresIn = Math.floor(data.expires_in / 60);
+        document.getElementById('expires').textContent = 'Code expires in ' + expiresIn + ' minutes';
+        
+        // Start polling
+        document.getElementById('polling').style.display = 'block';
+        pollForToken();
+        
+      } catch (error) {
+        showError('Failed to start device flow: ' + error.message);
+      }
+    }
+    
+    async function pollForToken() {
+      try {
+        const response = await fetch('/device/poll?code=' + encodeURIComponent(userCode));
+        const data = await response.json();
+        
+        if (data.error) {
+          showError(data.error);
+          return;
+        }
+        
+        if (data.status === 'pending') {
+          // Keep polling
+          if (data.slow_down) {
+            pollInterval = Math.min(pollInterval + 2000, 15000);
+          }
+          setTimeout(pollForToken, pollInterval);
+          return;
+        }
+        
+        if (data.status === 'success') {
+          // Success!
+          document.getElementById('polling').style.display = 'none';
+          document.getElementById('codeDisplay').classList.add('hidden');
+          document.getElementById('success').style.display = 'block';
+          
+          // Redirect after a moment
+          setTimeout(() => {
+            window.location.href = data.redirect;
+          }, 1500);
+        }
+        
+      } catch (error) {
+        showError('Polling error: ' + error.message);
+      }
+    }
+    
+    function showError(message) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('polling').style.display = 'none';
+      const errorDiv = document.getElementById('error');
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+    }
+    
+    // Start the flow
+    startDeviceFlow();
+  </script>
+</body>
+</html>
+`;
+}
+
+/**
+ * Generate device status page HTML (for showing code after redirect)
+ */
+function generateDeviceStatusPageHtml(workerUrl: string, userCode: string): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enter Code - YouTube Extractor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      max-width: 500px;
+      width: 100%;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 40px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+    }
+    h1 { font-size: 1.8rem; margin-bottom: 30px; }
+    .code {
+      font-size: 3rem;
+      font-weight: bold;
+      font-family: monospace;
+      letter-spacing: 10px;
+      color: #60a5fa;
+      margin: 30px 0;
+    }
+    .url {
+      font-size: 1.2rem;
+      color: #22c55e;
+      margin-bottom: 30px;
+    }
+    .url a { color: #22c55e; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📺 Enter this code</h1>
+    <div class="url">Visit: <a href="https://www.google.com/device" target="_blank">google.com/device</a></div>
+    <div class="code">${userCode}</div>
+  </div>
 </body>
 </html>
 `;
