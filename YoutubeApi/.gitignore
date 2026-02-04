@@ -1,0 +1,30 @@
+# Ignore reference repositories
+refs/
+
+# Cloudflare Worker artifacts
+.wrangler/
+dist/
+.dev.vars
+
+# Dependencies
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+
+# Build outputs
+*.tsbuildinfo

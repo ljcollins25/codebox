@@ -1,0 +1,22 @@
+name = "youtube-extractor"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# KV Namespace for token storage
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "your-kv-namespace-id-here"
+preview_id = "your-preview-kv-namespace-id-here"
+
+# Optional: Cache for base.js functions
+[[kv_namespaces]]
+binding = "CACHE"
+id = "your-cache-kv-namespace-id-here"
+preview_id = "your-cache-preview-kv-namespace-id-here"
+
+[vars]
+WORKER_URL = "https://youtube-extractor.your-subdomain.workers.dev"
+
+# Static assets
+[site]
+bucket = "./static"
