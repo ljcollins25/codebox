@@ -1,0 +1,45 @@
+{
+  "capabilities": {
+    "family": "claude-opus-4.1",
+    "limits": {
+      "max_context_window_tokens": 80000,
+      "max_output_tokens": 16000,
+      "max_prompt_tokens": 80000,
+      "vision": {
+        "max_prompt_image_size": 3145728,
+        "max_prompt_images": 1,
+        "supported_media_types": [
+          "image/jpeg",
+          "image/png",
+          "image/webp"
+        ]
+      }
+    },
+    "object": "model_capabilities",
+    "supports": {
+      "max_thinking_budget": 32000,
+      "min_thinking_budget": 1024,
+      "streaming": true,
+      "vision": true,
+      "web_search": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+  },
+  "id": "claude-opus-41",
+  "model_picker_category": "powerful",
+  "model_picker_enabled": true,
+  "name": "Claude Opus 4.1",
+  "object": "model",
+  "policy": {
+    "state": "enabled",
+    "terms": "Enable access to the latest Claude Opus 4.1 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Opus 4.1](https://docs.github.com/en/copilot/using-github-copilot/ai-models/using-claude-sonnet-in-github-copilot)."
+  },
+  "preview": false,
+  "supported_endpoints": [
+    "/chat/completions",
+    "/v1/messages"
+  ],
+  "vendor": "Anthropic",
+  "version": "claude-opus-41"
+}

@@ -1,0 +1,49 @@
+{
+  "capabilities": {
+    "family": "claude-opus-4.6",
+    "limits": {
+      "max_context_window_tokens": 200000,
+      "max_non_streaming_output_tokens": 16000,
+      "max_output_tokens": 64000,
+      "max_prompt_tokens": 128000,
+      "vision": {
+        "max_prompt_image_size": 3145728,
+        "max_prompt_images": 1,
+        "supported_media_types": [
+          "image/jpeg",
+          "image/png",
+          "image/webp"
+        ]
+      }
+    },
+    "object": "model_capabilities",
+    "supports": {
+      "adaptive_thinking": true,
+      "max_thinking_budget": 32000,
+      "min_thinking_budget": 1024,
+      "parallel_tool_calls": true,
+      "streaming": true,
+      "structured_outputs": true,
+      "tool_calls": true,
+      "vision": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+  },
+  "id": "claude-opus-4.6",
+  "model_picker_category": "powerful",
+  "model_picker_enabled": true,
+  "name": "Claude Opus 4.6",
+  "object": "model",
+  "policy": {
+    "state": "enabled",
+    "terms": "Enable access to the latest Claude Opus 4.6 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Opus 4.6](https://gh.io/copilot-claude-opus)."
+  },
+  "preview": false,
+  "supported_endpoints": [
+    "/v1/messages",
+    "/chat/completions"
+  ],
+  "vendor": "Anthropic",
+  "version": "claude-opus-4.6"
+}

@@ -1,0 +1,25 @@
+{
+  "capabilities": {
+    "family": "gpt-4o-mini",
+    "limits": {
+      "max_context_window_tokens": 128000,
+      "max_output_tokens": 4096,
+      "max_prompt_tokens": 12288
+    },
+    "object": "model_capabilities",
+    "supports": {
+      "parallel_tool_calls": true,
+      "streaming": true,
+      "tool_calls": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+  },
+  "id": "gpt-4o-mini",
+  "model_picker_enabled": false,
+  "name": "GPT-4o mini",
+  "object": "model",
+  "preview": false,
+  "vendor": "Azure OpenAI",
+  "version": "gpt-4o-mini-2024-07-18"
+}

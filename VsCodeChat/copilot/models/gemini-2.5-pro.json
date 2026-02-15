@@ -1,0 +1,44 @@
+{
+  "capabilities": {
+    "family": "gemini-2.5-pro",
+    "limits": {
+      "max_context_window_tokens": 128000,
+      "max_output_tokens": 64000,
+      "max_prompt_tokens": 128000,
+      "vision": {
+        "max_prompt_image_size": 3145728,
+        "max_prompt_images": 10,
+        "supported_media_types": [
+          "image/jpeg",
+          "image/png",
+          "image/webp",
+          "image/heic",
+          "image/heif"
+        ]
+      }
+    },
+    "object": "model_capabilities",
+    "supports": {
+      "max_thinking_budget": 32768,
+      "min_thinking_budget": 128,
+      "parallel_tool_calls": true,
+      "streaming": true,
+      "tool_calls": true,
+      "vision": true
+    },
+    "tokenizer": "o200k_base",
+    "type": "chat"
+  },
+  "id": "gemini-2.5-pro",
+  "model_picker_category": "powerful",
+  "model_picker_enabled": true,
+  "name": "Gemini 2.5 Pro",
+  "object": "model",
+  "policy": {
+    "state": "enabled",
+    "terms": "Enable access to the latest Gemini 2.5 Pro model from Google. [Learn more about how GitHub Copilot serves Gemini 2.5 Pro](https://docs.github.com/en/copilot/using-github-copilot/ai-models/choosing-the-right-ai-model-for-your-task#gemini-25-pro)."
+  },
+  "preview": false,
+  "vendor": "Google",
+  "version": "gemini-2.5-pro"
+}
