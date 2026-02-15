@@ -1229,11 +1229,19 @@ function generateOAuthFramePageHtml(workerUrl: string): string {
 // ============================================
 
 /**
- * YouTube TV Client ID (Android TV)
- * This is the public client ID used by YouTube on Android TV devices
+ * YouTube TV Client ID (TVHTML5 / Smart TV)
+ * These are well-known public OAuth credentials used by YouTube apps
+ * Try different clients if one is restricted
  */
 const YOUTUBE_TV_CLIENT_ID = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com';
 const YOUTUBE_TV_CLIENT_SECRET = 'SboVhoG9s0rNafixCSGGKXAT';
+
+// Alternative: YouTube iOS client
+const YOUTUBE_IOS_CLIENT_ID = '747816274692.apps.googleusercontent.com';
+const YOUTUBE_IOS_CLIENT_SECRET = 'NONE';
+
+// Alternative: YouTube Desktop (ytmdesktop / revanced)
+const YOUTUBE_DESKTOP_CLIENT_ID = '861556708454-s02vc8c3ru41ntct86bvq7cjmj91a4n4.apps.googleusercontent.com';
 
 /**
  * Handle device flow start - initiate OAuth device authorization
@@ -1243,7 +1251,8 @@ export async function handleDeviceStart(
   env: Env
 ): Promise<Response> {
   try {
-    // Request device code from Google
+    // Request device code from Google using TV client
+    // The TV client is designed for device flow but has restrictions
     const response = await fetch('https://oauth2.googleapis.com/device/code', {
       method: 'POST',
       headers: {
@@ -1257,8 +1266,12 @@ export async function handleDeviceStart(
 
     if (!response.ok) {
       const error = await response.text();
-      console.error('Device code error:', error);
-      return new Response(JSON.stringify({ error: 'Failed to get device code' }), {
+      console.error('Device code error:', response.status, error);
+      return new Response(JSON.stringify({ 
+        error: 'Failed to get device code',
+        status: response.status,
+        details: error 
+      }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -1335,7 +1348,7 @@ export async function handleDevicePoll(
       });
     }
 
-    // Poll Google for token
+    // Poll Google for token (use same client as device/start)
     const response = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
@@ -1385,15 +1398,20 @@ export async function handleDevicePoll(
     // Success! Store tokens and clean up
     await env.TOKENS.delete(`device:${userCode}`);
 
-    // Store OAuth tokens - generate an API token for our service
+    // Generate our API token and store with OAuth info
+    // We store the OAuth tokens as a special "oauth:" type that can be used
+    // to call YouTube Data API directly for captions
     const apiToken = generateToken();
-    await env.TOKENS.put(`token:${apiToken}`, JSON.stringify({
+    
+    // Store using the standard token format so getToken() can find it
+    // We put the OAuth access_token in youtube_cookies field but mark type as oauth
+    // for the subtitle endpoint to handle differently
+    await storeToken(env, apiToken, JSON.stringify({
       type: 'oauth',
       access_token: data.access_token,
       refresh_token: data.refresh_token,
-      expires_at: Date.now() + ((data.expires_in || 3600) * 1000),
-      created_at: Date.now(),
-    }));
+      token_expires_at: Date.now() + ((data.expires_in || 3600) * 1000),
+    }), 'OAuth Device Flow');
 
     // Return success with the token set as a cookie
     const headers = new Headers({
