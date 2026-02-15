@@ -1,0 +1,62 @@
+# Poe Script Bot — Metadata YAML Schema
+#
+# Place this file next to a matching .py file with the same base name.
+# Example: my-bot.yml + my-bot.py
+#
+# Reference: spec.md
+
+# ─────────────────────────────────────────────
+# Required
+# ─────────────────────────────────────────────
+
+# Bot handle/name — unique on Poe, alphanumeric + hyphens
+# Maps to: input[name="handle"]
+name: "My-Bot"
+
+# ─────────────────────────────────────────────
+# Optional — Identity
+# ─────────────────────────────────────────────
+
+# Bot description, up to 4000 characters
+# Maps to: textarea[name="description"]
+description: ""
+
+# ─────────────────────────────────────────────
+# Optional — Access & Sharing
+# ─────────────────────────────────────────────
+
+# Visibility setting
+# Values: "everyone" | "link" | "private"
+# Default: "private"
+# Maps to: select[name="botIsPublicOption"]
+#   "everyone" → select value "public"
+#   "link"     → select value "unlisted"
+#   "private"  → select value "private"
+access: "private"
+
+# Allow others to copy/edit and publish copies
+# Default: false
+# Maps to: input[name="promptIsPublic"] (custom switch checkbox)
+allow_remix: false
+
+# ─────────────────────────────────────────────
+# Optional — Monetization
+# ─────────────────────────────────────────────
+
+# Daily message limit for non-subscribed users.
+# When set to a number, enables the "Subscriber earnings" toggle
+# and sets the daily limit. Non-subscribed users see a paywall
+# after reaching this limit.
+# When null/omitted, the toggle is off (no limit).
+# Maps to:
+#   toggle: input[name="hasCustomMessageLimit"] (custom switch checkbox)
+#   value:  input[name="customMessageLimit"] (number input, appears when toggle is on)
+# GraphQL field: customMessageLimit
+daily_message_limit: null  # or e.g. 10
+
+# Price per thousand messages in USD.
+# When set, the bot earns this amount per 1000 messages.
+# Range: 0.00 – 10000.00, step 0.01
+# Maps to: input[name="messagePrice"] (number input)
+# GraphQL field: messagePriceCc (stored in cents)
+message_price: null  # or e.g. 1.50

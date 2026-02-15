@@ -1,0 +1,4 @@
+name: "TestBotASDNSAD4FT"
+description: "A simple Hello World test bot created via publish-bots.mjs"
+access: "private"
+allow_remix: false
