@@ -1,0 +1,106 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  min-width: 420px;
+}
+
+.container {
+  padding: 16px;
+}
+
+h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #f5e0dc;
+}
+
+.site-url {
+  font-size: 12px;
+  color: #a6adc8;
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+
+.stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #94e2d5;
+  font-weight: 500;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.button-row button {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s, transform 0.1s;
+}
+
+#btn-copy {
+  background: #89b4fa;
+  color: #1e1e2e;
+}
+
+#btn-copy:hover {
+  background: #74c7ec;
+}
+
+#btn-download {
+  background: #a6e3a1;
+  color: #1e1e2e;
+}
+
+#btn-download:hover {
+  background: #94e2d5;
+}
+
+.button-row button:active {
+  transform: scale(0.97);
+}
+
+textarea {
+  width: 100%;
+  height: 220px;
+  padding: 10px;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  background: #181825;
+  color: #cdd6f4;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  resize: vertical;
+  outline: none;
+}
+
+textarea:focus {
+  border-color: #89b4fa;
+}
+
+.status-msg {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #a6e3a1;
+  min-height: 16px;
+  text-align: center;
+  transition: opacity 0.3s;
+}
