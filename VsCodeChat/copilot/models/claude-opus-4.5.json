@@ -23,8 +23,7 @@
       "parallel_tool_calls": true,
       "streaming": true,
       "tool_calls": true,
-      "vision": true,
-      "web_search": true
+      "vision": true
     },
     "tokenizer": "o200k_base",
     "type": "chat"

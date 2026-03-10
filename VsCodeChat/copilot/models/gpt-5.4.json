@@ -1,10 +1,10 @@
 {
   "capabilities": {
-    "family": "gpt-5-codex",
+    "family": "gpt-5.4",
     "limits": {
       "max_context_window_tokens": 400000,
       "max_output_tokens": 128000,
-      "max_prompt_tokens": 128000,
+      "max_prompt_tokens": 272000,
       "vision": {
         "max_prompt_image_size": 3145728,
         "max_prompt_images": 1,
@@ -19,6 +19,11 @@
     "object": "model_capabilities",
     "supports": {
       "parallel_tool_calls": true,
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
       "streaming": true,
       "structured_outputs": true,
       "tool_calls": true,
@@ -27,19 +32,19 @@
     "tokenizer": "o200k_base",
     "type": "chat"
   },
-  "id": "gpt-5-codex",
+  "id": "gpt-5.4",
   "model_picker_category": "powerful",
   "model_picker_enabled": true,
-  "name": "GPT-5-Codex (Preview)",
+  "name": "GPT-5.4",
   "object": "model",
   "policy": {
     "state": "enabled",
-    "terms": "Enable access to the latest GPT-5-Codex model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5-Codex](https://gh.io/copilot-openai)."
+    "terms": "Enable access to the latest GPT-5.4 model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.4](https://gh.io/copilot-openai)."
   },
-  "preview": true,
+  "preview": false,
   "supported_endpoints": [
     "/responses"
   ],
   "vendor": "OpenAI",
-  "version": "gpt-5-codex"
+  "version": "gpt-5.4"
 }

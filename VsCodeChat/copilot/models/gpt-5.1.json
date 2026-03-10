@@ -19,6 +19,12 @@
     "object": "model_capabilities",
     "supports": {
       "parallel_tool_calls": true,
+      "reasoning_effort": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ],
       "streaming": true,
       "structured_outputs": true,
       "tool_calls": true,

@@ -1,14 +1,13 @@
 {
   "capabilities": {
-    "family": "claude-opus-4.6-fast",
+    "family": "gemini-3.1-pro-preview",
     "limits": {
-      "max_context_window_tokens": 200000,
-      "max_non_streaming_output_tokens": 16000,
+      "max_context_window_tokens": 128000,
       "max_output_tokens": 64000,
       "max_prompt_tokens": 128000,
       "vision": {
         "max_prompt_image_size": 3145728,
-        "max_prompt_images": 1,
+        "max_prompt_images": 10,
         "supported_media_types": [
           "image/jpeg",
           "image/png",
@@ -18,32 +17,34 @@
     },
     "object": "model_capabilities",
     "supports": {
-      "adaptive_thinking": true,
       "max_thinking_budget": 32000,
-      "min_thinking_budget": 1024,
+      "min_thinking_budget": 256,
       "parallel_tool_calls": true,
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
       "streaming": true,
-      "structured_outputs": true,
       "tool_calls": true,
       "vision": true
     },
     "tokenizer": "o200k_base",
     "type": "chat"
   },
-  "id": "claude-opus-4.6-fast",
+  "id": "gemini-3.1-pro-preview",
   "model_picker_category": "powerful",
   "model_picker_enabled": true,
-  "name": "Claude Opus 4.6 (fast mode)",
+  "name": "Gemini 3.1 Pro",
   "object": "model",
   "policy": {
     "state": "enabled",
-    "terms": "Enable access to the latest Claude Opus 4.6 fast model from Anthropic. [Learn more about how GitHub Copilot serves Claude Opus 4.6 fast](https://gh.io/copilot-claude-opus)."
+    "terms": "Enable access to the latest Gemini 3 Pro model from Google. [Learn more about how GitHub Copilot serves Gemini 3 Pro](https://docs.github.com/en/copilot/reference/ai-models/model-hosting#google-models)."
   },
   "preview": true,
   "supported_endpoints": [
-    "/v1/messages",
     "/chat/completions"
   ],
-  "vendor": "Anthropic",
-  "version": "claude-opus-4.6-fast"
+  "vendor": "Google",
+  "version": "gemini-3.1-pro-preview"
 }

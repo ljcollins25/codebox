@@ -22,6 +22,11 @@
       "max_thinking_budget": 32000,
       "min_thinking_budget": 1024,
       "parallel_tool_calls": true,
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
       "streaming": true,
       "structured_outputs": true,
       "tool_calls": true,
