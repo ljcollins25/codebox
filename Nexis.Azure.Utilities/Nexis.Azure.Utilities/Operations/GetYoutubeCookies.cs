@@ -10,13 +10,18 @@ public record class GetYoutubeCookies(IConsole Console, CancellationToken token)
 {
     public required string TargetFile;
 
+    /// <summary>
+    /// The site URL to navigate to for cookie extraction.
+    /// </summary>
+    public string Site = "https://www.youtube.com/feed/playlists";
+
     public override async Task<int> RunAsync(IPlaywright playwright, IBrowser browser, IPage page)
     {
-        Console.WriteLine($"Extracting cookies to {TargetFile}");
+        Console.WriteLine($"Extracting cookies from {Site} to {TargetFile}");
 
         Directory.CreateDirectory(Path.GetDirectoryName(TargetFile)!);
 
-        await page.GotoAsync($"https://www.youtube.com/feed/playlists");
+        await page.GotoAsync(Site);
         var cookies = await page.Context.CookiesAsync();
 
         // Write cookies to file in Netscape format.

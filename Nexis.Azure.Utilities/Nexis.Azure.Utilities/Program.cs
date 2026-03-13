@@ -168,6 +168,23 @@ public class Program
                 },
                 r => r.RunAsync()),
 
+            CliModel.Bind<GetYoutubeCookies>(
+                new Command("cookies", "Extract cookies from a browser instance using Playwright."),
+                m =>
+                {
+                    var r = new GetYoutubeCookies(m.Console, cts.Token)
+                    {
+                        TargetFile = m.Option(c => ref c.TargetFile, name: "target", description: "The output file path for extracted cookies", required: true, aliases: ["t", "output", "o"]),
+                    };
+
+                    m.Option(c => ref c.Browser, name: "browser", description: "Browser name (brave, chrome, edge, chromium) or path to browser executable", defaultValue: "chrome", aliases: ["b"]);
+                    m.Option(c => ref c.Site, name: "site", description: "The site URL to navigate to for cookie extraction", defaultValue: r.Site, aliases: ["s", "url"]);
+                    m.Option(c => ref c.ForceNewInstance, name: "force-new", description: "Force opening a new browser instance, killing any existing one", defaultValue: false, aliases: ["f"]);
+
+                    return r;
+                },
+                r => r.RunAsync()),
+
             CliModel.Bind<DeleteFilesOperation>(
                 new Command("rmdir", "Dehydrate Azure Files to Azure Blob Storage."),
                 m =>
