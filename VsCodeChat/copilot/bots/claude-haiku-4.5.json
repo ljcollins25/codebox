@@ -1,0 +1,27 @@
+{
+  "api_bot_settings": {
+    "input_modalities": [
+      "text",
+      "image"
+    ],
+    "api_key": "[REDACTED]",
+    "context_size": 200000,
+    "max_input_tokens": 128000,
+    "pricing": {
+      "prompt": "0.0000001",
+      "completion": "0.0000001"
+    },
+    "api_type": "chat_completions_api",
+    "supported_features": [
+      "tools"
+    ],
+    "model_name": "claude-haiku-4.5",
+    "base_url": "[REDACTED]",
+    "output_modalities": [
+      "text"
+    ]
+  },
+  "handle": "VSC-claude-haiku-4.5",
+  "description": "VSC: Claude Haiku 4.5",
+  "is_private": true
+}

@@ -1,10 +1,12 @@
 # Export-Models.ps1
 # Exports individual model JSON files from models.json, excluding models that match filter terms
-# Usage: .\Export-Models.ps1 [-Url <url>]
+# Usage: .\Export-Models.ps1 [-Url <url>] [-Root <path>]
 
 param(
     [Parameter(Position = 0)]
-    [string]$Url
+    [string]$Url,
+
+    [string]$Root
 )
 
 # Static filter list - models containing these terms (case insensitive) in id or name will be excluded
@@ -15,9 +17,8 @@ $ExcludeTerms = @(
     # Add more terms here as needed
 )
 
-# Get script directory for relative paths
-$ScriptDir = $PSScriptRoot
-if (-not $ScriptDir) { $ScriptDir = Get-Location }
+# Get root directory for relative paths
+$ScriptDir = if ($Root) { Resolve-Path $Root } elseif ($PSScriptRoot) { $PSScriptRoot } else { Get-Location }
 
 $ModelsJsonPath = Join-Path $ScriptDir "models.json"
 $OutputDir = Join-Path $ScriptDir "models"

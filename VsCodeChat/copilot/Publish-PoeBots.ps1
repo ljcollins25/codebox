@@ -1,6 +1,6 @@
 # Publish-PoeBots.ps1
 # Creates/updates Poe API bots from OpenAI model JSON files
-# Usage: .\Publish-PoeBots.ps1 -PoeKey <key> -ApiKey <key> [-BaseUrl <url>] [-Handle <template>] [-Description <template>] [-Path <path>] [-Public] [-Publish]
+# Usage: .\Publish-PoeBots.ps1 -PoeKey <key> -ApiKey <key> [-BaseUrl <url>] [-Handle <template>] [-Description <template>] [-Path <path>] [-PromptPrice <price>] [-CompletionPrice <price>] [-CacheReadPrice <price>] [-Public] [-Publish]
 
 param(
     [Parameter(Mandatory = $true)]
@@ -20,6 +20,15 @@ param(
 
     [Parameter()]
     [string]$Path = "models",
+
+    [Parameter()]
+    [string]$PromptPrice = "0.0000001",
+
+    [Parameter()]
+    [string]$CompletionPrice = "0.0000001",
+
+    [Parameter()]
+    [string]$CacheReadPrice,
 
     [Parameter()]
     [switch]$Public,
@@ -105,9 +114,19 @@ function Build-BotPayload {
         output_modalities = @("text")
     }
 
-    # Add supported features if any
+    # Add pricing
+    $pricing = @{
+        prompt     = $PromptPrice
+        completion = $CompletionPrice
+    }
+    if ($CacheReadPrice) {
+        $pricing.input_cache_reads = $CacheReadPrice
+    }
+    $apiSettings.pricing = $pricing
+
+    # Add supported features if any (force array — PowerShell unwraps single-element arrays)
     if ($supportedFeatures.Count -gt 0) {
-        $apiSettings.supported_features = $supportedFeatures
+        $apiSettings.supported_features = @($supportedFeatures)
     }
 
     # Add max input tokens if available
@@ -208,6 +227,7 @@ if ($ModelFiles.Count -eq 0) {
 Write-Host "Processing $($ModelFiles.Count) model file(s)..." -ForegroundColor Cyan
 Write-Host "  Base URL: $BaseUrl" -ForegroundColor Gray
 Write-Host "  Handle template: $Handle" -ForegroundColor Gray
+Write-Host "  Pricing: prompt=$PromptPrice, completion=$CompletionPrice$(if ($CacheReadPrice) { ", cache_read=$CacheReadPrice" })" -ForegroundColor Gray
 Write-Host "  Public: $($Public.IsPresent)" -ForegroundColor Gray
 Write-Host "  Publish to Poe: $($Publish.IsPresent)" -ForegroundColor Gray
 Write-Host ""
