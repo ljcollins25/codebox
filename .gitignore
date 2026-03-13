@@ -348,3 +348,9 @@ dist/
 .env
 .env.local
 .env.*.local
+
+
+
+*.img
+*.webm
+*.mp4

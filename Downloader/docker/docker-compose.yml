@@ -1,0 +1,36 @@
+services:
+  # Interactive browser session - use to log in and manage cookies
+  brave:
+    build: .
+    container_name: kasm-brave
+    shm_size: "2g"
+    privileged: true
+    ports:
+      - "6901:6901"
+    environment:
+      - VNC_PW=password
+      - KASM_USER=kasm_user
+      - PROFILE_IMG_SIZE_MB=256
+    volumes:
+      - ./data:/mnt/host-data
+    restart: unless-stopped
+
+  # Download mode - launches Brave, grabs cookies, runs yt-dlp
+  # Usage: docker compose run --rm download <yt-dlp args>
+  # Example: docker compose run --rm download "https://youtube.com/watch?v=xxx"
+  download:
+    build: .
+    container_name: kasm-download
+    shm_size: "2g"
+    privileged: true
+    environment:
+      - PROFILE_IMG_SIZE_MB=256
+      - TARGET_URL=${TARGET_URL:-https://youtube.com}
+      - BROWSE_WAIT=${BROWSE_WAIT:-3}
+      - OUTPUT_FOLDER=${OUTPUT_FOLDER:-downloads}
+    volumes:
+      - ./data:/mnt/host-data
+      - ./out:/out
+    entrypoint: ["/dockerstartup/download-entrypoint.sh"]
+    profiles:
+      - download
