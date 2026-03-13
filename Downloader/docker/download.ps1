@@ -18,11 +18,17 @@
 .PARAMETER BrowseWait
     Seconds to wait for the page to load before grabbing cookies (default: 3).
 
+.PARAMETER NoShutdown
+    Keep the Brave browser container running after download (default: shuts down).
+
 .PARAMETER YtDlpArgs
     Additional arguments passed directly to yt-dlp.
 
 .EXAMPLE
     .\download.ps1 "https://youtube.com/watch?v=xxx"
+
+.EXAMPLE
+    .\download.ps1 "https://youtube.com/watch?v=xxx" -NoShutdown
 
 .EXAMPLE
     .\download.ps1 "https://youtube.com/watch?v=xxx" -OutputFolder "music"
@@ -44,6 +50,8 @@ param(
 
     [int]$BrowseWait,
 
+    [switch]$NoShutdown,
+
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$YtDlpArgs
 )
@@ -63,6 +71,11 @@ try {
     }
 
     & docker @args
+
+    if (-not $NoShutdown) {
+        Write-Host "`n[download] Shutting down Brave container..." -ForegroundColor Cyan
+        & docker compose down
+    }
 }
 finally {
     Remove-Item Env:\TARGET_URL -ErrorAction SilentlyContinue
