@@ -788,3 +788,112 @@ th.sort-desc .sort-indicator::after {
 ::-webkit-scrollbar-thumb:hover {
     background: #a1a1a1;
 }
+
+/* ---- Action separator ---- */
+.action-separator {
+    width: 1px;
+    height: 20px;
+    background: var(--color-border);
+    margin: 0 4px;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+/* ---- Block List Modal ---- */
+.blocklist-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 10px 14px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    margin-bottom: 12px;
+    font-size: 12px;
+}
+
+.blocklist-table-wrap {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    margin-bottom: 4px;
+}
+
+.blocklist-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.blocklist-table thead {
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+    z-index: 1;
+}
+
+.blocklist-table th {
+    padding: 6px 10px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--color-text-secondary);
+    border-bottom: 2px solid var(--color-border);
+}
+
+.blocklist-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.blocklist-table tbody tr:hover {
+    background: var(--color-hover);
+}
+
+.block-name-cell {
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+    word-break: break-all;
+    max-width: 280px;
+}
+
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.badge-committed {
+    background: #dff6dd;
+    color: #107c10;
+}
+
+.badge-uncommitted {
+    background: #fff4ce;
+    color: #8a6914;
+}
+
+/* ---- Folder commit progress ---- */
+.folder-commit-progress {
+    padding: 8px 0 12px;
+}
+
+.fc-status {
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 10px;
+}
+
+.fc-detail {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin-top: 4px;
+    word-break: break-all;
+}

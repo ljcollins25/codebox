@@ -193,6 +193,88 @@ export async function fetchBlob(conn, container, blobName) {
     return resp;
 }
 
+// ─── Block list operations ─────────────────────────────────────
+
+/**
+ * Get the block list for a blob.
+ * @param {StorageConnection} conn
+ * @param {string} container
+ * @param {string} blobName
+ * @param {'committed'|'uncommitted'|'all'} blockListType
+ * @returns {Promise<{committedBlocks: Array, uncommittedBlocks: Array}>}
+ */
+export async function getBlockList(conn, container, blobName, blockListType = 'all') {
+    const base = serviceUrl(conn);
+    let url = `${base}/${encodeURIComponent(container)}/${blobName.split('/').map(encodeURIComponent).join('/')}`;
+    url += `?comp=blocklist&blocklisttype=${blockListType}`;
+    url = appendSas(url, conn);
+
+    const resp = await fetch(url, { headers: buildHeaders(conn) });
+    if (!resp.ok) throw new Error(`Get block list failed: ${resp.status} ${resp.statusText}`);
+
+    const text = await resp.text();
+    return parseBlockListXml(text);
+}
+
+function parseBlockListXml(xml) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'application/xml');
+
+    function parseBlocks(parentTag) {
+        const parent = doc.querySelector(parentTag);
+        if (!parent) return [];
+        return Array.from(parent.querySelectorAll('Block')).map(b => ({
+            name: b.querySelector('Name')?.textContent ?? '',
+            size: parseInt(b.querySelector('Size')?.textContent ?? '0', 10),
+        }));
+    }
+
+    return {
+        committedBlocks: parseBlocks('CommittedBlocks'),
+        uncommittedBlocks: parseBlocks('UncommittedBlocks'),
+    };
+}
+
+/**
+ * Commit (Put Block List) for a blob.
+ * Blocks are sorted by name before committing.
+ * @param {StorageConnection} conn
+ * @param {string} container
+ * @param {string} blobName
+ * @param {Array<{name:string}>} blocks — blocks to commit (will be sorted by name)
+ * @returns {Promise<void>}
+ */
+export async function commitBlockList(conn, container, blobName, blocks) {
+    const sorted = [...blocks].sort((a, b) => a.name.localeCompare(b.name));
+
+    const xmlParts = ['<?xml version="1.0" encoding="utf-8"?>', '<BlockList>'];
+    for (const block of sorted) {
+        xmlParts.push(`  <Latest>${escapeXml(block.name)}</Latest>`);
+    }
+    xmlParts.push('</BlockList>');
+    const body = xmlParts.join('\n');
+
+    const base = serviceUrl(conn);
+    let url = `${base}/${encodeURIComponent(container)}/${blobName.split('/').map(encodeURIComponent).join('/')}`;
+    url += '?comp=blocklist';
+    url = appendSas(url, conn);
+
+    const headers = buildHeaders(conn);
+    headers['Content-Type'] = 'application/xml';
+    headers['Content-Length'] = new Blob([body]).size.toString();
+
+    const resp = await fetch(url, { method: 'PUT', headers, body });
+    if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        throw new Error(`Commit block list failed: ${resp.status} ${resp.statusText}\n${errText}`);
+    }
+}
+
+function escapeXml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
 /**
  * Build a StorageConnection from credential record.
  */

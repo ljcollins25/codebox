@@ -592,6 +592,137 @@ export function setupSidebarResize() {
     }
 }
 
+// ─── Block List Modal ──────────────────────────────────────────
+
+/**
+ * Show a modal displaying block list for a blob, with a Commit button.
+ * @param {Object} blockListData — { committedBlocks, uncommittedBlocks }
+ * @param {string} blobName
+ * @param {Function} onCommit — called with combined blocks array when user clicks Commit
+ */
+export function showBlockListModal(blockListData, blobName, onCommit) {
+    const { committedBlocks, uncommittedBlocks } = blockListData;
+    const allBlocks = [
+        ...committedBlocks.map(b => ({ ...b, status: 'committed' })),
+        ...uncommittedBlocks.map(b => ({ ...b, status: 'uncommitted' })),
+    ];
+    const sorted = [...allBlocks].sort((a, b) => a.name.localeCompare(b.name));
+
+    const fileName = blobName.split('/').pop() || blobName;
+    const totalSize = allBlocks.reduce((s, b) => s + b.size, 0);
+
+    let tableRows = '';
+    if (sorted.length === 0) {
+        tableRows = '<tr><td colspan="4" style="text-align:center;color:var(--color-text-secondary);padding:20px;">No blocks found</td></tr>';
+    } else {
+        sorted.forEach((block, idx) => {
+            const badge = block.status === 'committed'
+                ? '<span class="badge badge-committed">Committed</span>'
+                : '<span class="badge badge-uncommitted">Uncommitted</span>';
+            tableRows += `<tr>
+                <td style="text-align:center;">${idx + 1}</td>
+                <td class="block-name-cell" title="${escapeHtmlAttr(block.name)}">${escapeHtmlContent(block.name)}</td>
+                <td>${formatSize(block.size)}</td>
+                <td>${badge}</td>
+            </tr>`;
+        });
+    }
+
+    const html = `
+        <div class="blocklist-summary">
+            <span><strong>Blob:</strong> ${escapeHtmlContent(fileName)}</span>
+            <span><strong>Committed:</strong> ${committedBlocks.length}</span>
+            <span><strong>Uncommitted:</strong> ${uncommittedBlocks.length}</span>
+            <span><strong>Total size:</strong> ${formatSize(totalSize)}</span>
+        </div>
+        <div class="blocklist-table-wrap">
+            <table class="blocklist-table">
+                <thead>
+                    <tr>
+                        <th style="width:50px">#</th>
+                        <th>Block Name</th>
+                        <th style="width:100px">Size</th>
+                        <th style="width:110px">Status</th>
+                    </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+        </div>
+        <div class="modal-actions">
+            <button class="btn-secondary" id="btn-blocklist-close">Close</button>
+            ${allBlocks.length > 0 ? '<button class="btn-primary" id="btn-blocklist-commit">Commit Block List (sorted)</button>' : ''}
+        </div>
+    `;
+
+    openModal(`Block List — ${fileName}`, html);
+
+    document.getElementById('btn-blocklist-close')?.addEventListener('click', closeModal);
+    document.getElementById('btn-blocklist-commit')?.addEventListener('click', () => {
+        onCommit(allBlocks);
+    });
+}
+
+/**
+ * Show progress modal for folder-level commit operation.
+ * @param {number} totalBlobs
+ * @param {Function} onCancel
+ * @returns {{ update(current, blobName, skipped), finish(committed, skipped) }}
+ */
+export function showFolderCommitProgress(totalBlobs, onCancel) {
+    let cancelled = false;
+    const html = `
+        <div class="folder-commit-progress">
+            <div class="progress-bar-track"><div class="progress-bar-fill" id="fc-progress-bar" style="width:0%"></div></div>
+            <div id="fc-status" class="fc-status">Scanning blobs...</div>
+            <div id="fc-detail" class="fc-detail"></div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn-secondary" id="btn-fc-cancel">Cancel</button>
+        </div>
+    `;
+
+    openModal(`Commit Blocks — Folder (${totalBlobs} blobs)`, html);
+
+    document.getElementById('btn-fc-cancel')?.addEventListener('click', () => {
+        cancelled = true;
+        onCancel();
+        closeModal();
+    });
+
+    return {
+        isCancelled: () => cancelled,
+        update(current, blobName, skipped) {
+            const pct = totalBlobs > 0 ? (current / totalBlobs) * 100 : 0;
+            const bar = document.getElementById('fc-progress-bar');
+            const status = document.getElementById('fc-status');
+            const detail = document.getElementById('fc-detail');
+            if (bar) bar.style.width = `${pct}%`;
+            if (status) status.textContent = `Processing ${current}/${totalBlobs}...`;
+            if (detail) detail.textContent = `${blobName} (${skipped} skipped)`;
+        },
+        finish(committed, skipped) {
+            const status = document.getElementById('fc-status');
+            const detail = document.getElementById('fc-detail');
+            const bar = document.getElementById('fc-progress-bar');
+            if (bar) bar.style.width = '100%';
+            if (status) status.textContent = 'Done!';
+            if (detail) detail.textContent = `Committed: ${committed}, Skipped (non-zero or no blocks): ${skipped}`;
+            const cancelBtn = document.getElementById('btn-fc-cancel');
+            if (cancelBtn) { cancelBtn.textContent = 'Close'; cancelBtn.onclick = closeModal; }
+        },
+    };
+}
+
+function escapeHtmlContent(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+function escapeHtmlAttr(str) {
+    return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ─── Helpers ───────────────────────────────────────────────────
 
 function formatSize(bytes) {

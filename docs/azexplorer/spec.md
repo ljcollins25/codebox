@@ -35,6 +35,17 @@ A single-page web application that replicates core Azure Storage Explorer functi
 - **Folder download** — uses `showDirectoryPicker()` to let users select a target directory; the app recursively downloads all blobs in the selected virtual folder, recreating the folder structure on disk. Users can create new folders during the picker flow.
 - **Fallback** — if the browser does not support the File System Access API, falls back to classic `<a download>` for single files and a zip download for folders.
 
+### Block List Management
+
+- **View block list** — select a single blob and click "Block List" to see all committed and uncommitted blocks in a modal. Blocks are displayed sorted by name with their size and status (committed/uncommitted badge).
+- **Commit block list** — from the block list modal, click "Commit Block List (sorted)" to commit all blocks (committed + uncommitted) sorted by block name. Uses the Put Block List REST API with `<Latest>` entries.
+- **Folder-level commit** — click "Commit Folder" to commit blocks for all **zero-length blobs** in the current folder (or container root). The operation:
+  1. Lists all blobs under the current prefix recursively.
+  2. Filters to only blobs with `Content-Length: 0`.
+  3. For each zero-length blob, fetches its block list and commits all blocks sorted by name.
+  4. Skips blobs that have no blocks at all.
+  5. Shows a progress modal with live count of committed/skipped.
+
 ### Upload (future)
 
 - Placeholder for drag-and-drop and file picker upload support.

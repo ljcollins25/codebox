@@ -4,7 +4,7 @@
  */
 
 import { loadCredentials, removeCredential, exportCredentials, importCredentials } from './credentials.js';
-import { connectionFromCredential, listContainers, listBlobs } from './storage.js';
+import { connectionFromCredential, listContainers, listBlobs, listAllBlobs, getBlockList, commitBlockList } from './storage.js';
 import { downloadFile, downloadFolder, hasFileSystemAccess, hasDirectoryPicker } from './download.js';
 import { acquireTokenSilent } from './auth.js';
 import {
@@ -13,6 +13,7 @@ import {
     renderFileList, showLoading, hideLoading, setStatus,
     getSelectedItems, showProgress, updateProgress, hideProgress,
     setupSorting, setupFilter, setupSidebarResize, closeModal,
+    showBlockListModal, showFolderCommitProgress,
 } from './ui.js';
 
 // ─── Application state ────────────────────────────────────────
@@ -87,6 +88,10 @@ function setupToolbarButtons() {
             navigateTo(currentCred, currentContainer, currentPrefix);
         }
     });
+
+    // Block list buttons
+    document.getElementById('btn-view-blocks').addEventListener('click', handleViewBlockList);
+    document.getElementById('btn-commit-folder').addEventListener('click', handleCommitFolder);
 }
 
 // ─── Tree refresh ──────────────────────────────────────────────
@@ -252,9 +257,15 @@ function updateActionButtons() {
     const selected = getSelectedItems();
     const hasFiles = selected.some(s => !s.isFolder);
     const hasFolders = selected.some(s => s.isFolder);
+    const singleFile = selected.length === 1 && !selected[0].isFolder;
 
     document.getElementById('btn-download').disabled = !hasFiles;
     document.getElementById('btn-download-folder').disabled = !(hasFolders || currentPrefix);
+
+    // Block list: view requires exactly one file selected
+    document.getElementById('btn-view-blocks').disabled = !singleFile;
+    // Commit folder: enabled when we're inside a container
+    document.getElementById('btn-commit-folder').disabled = !currentContainer;
 }
 
 function setupSelectAll() {
@@ -360,6 +371,108 @@ async function handleDownloadFolder() {
     } catch (e) {
         hideProgress();
         if (e.name !== 'AbortError') showToast(`Folder download failed: ${e.message}`, 'error');
+    }
+}
+
+// ─── Block List handlers ──────────────────────────────────────
+
+async function handleViewBlockList() {
+    const selected = getSelectedItems().filter(s => !s.isFolder);
+    if (selected.length !== 1) {
+        showToast('Select exactly one file to view its block list', 'warning');
+        return;
+    }
+
+    const blobName = selected[0].fullName;
+    try {
+        setStatus('Loading block list...');
+        const blockData = await getBlockList(currentConn, currentContainer, blobName);
+        setStatus('Ready');
+
+        showBlockListModal(blockData, blobName, async (blocks) => {
+            try {
+                closeModal();
+                setStatus('Committing block list...');
+                await commitBlockList(currentConn, currentContainer, blobName, blocks);
+                showToast('Block list committed (sorted by name)', 'success');
+                setStatus('Ready');
+                // Refresh current view to reflect new blob size
+                navigateTo(currentCred, currentContainer, currentPrefix);
+            } catch (e) {
+                showToast(`Commit failed: ${e.message}`, 'error');
+                setStatus('Error');
+            }
+        });
+    } catch (e) {
+        showToast(`Failed to get block list: ${e.message}`, 'error');
+        setStatus('Error');
+    }
+}
+
+async function handleCommitFolder() {
+    if (!currentConn || !currentContainer) {
+        showToast('Navigate to a container first', 'warning');
+        return;
+    }
+
+    const prefix = currentPrefix;
+    const label = prefix || '(container root)';
+    if (!confirm(`Commit blocks for all zero-length blobs under "${label}"?\n\nThis will sort blocks by name and commit them.`)) {
+        return;
+    }
+
+    try {
+        setStatus('Listing blobs...');
+        const allBlobs = await listAllBlobs(currentConn, currentContainer, prefix);
+        const zeroLengthBlobs = allBlobs.filter(b => b.size === 0);
+
+        if (zeroLengthBlobs.length === 0) {
+            showToast('No zero-length blobs found in this folder', 'info');
+            setStatus('Ready');
+            return;
+        }
+
+        let cancelled = false;
+        const progress = showFolderCommitProgress(zeroLengthBlobs.length, () => { cancelled = true; });
+
+        let committed = 0;
+        let skipped = 0;
+
+        for (let i = 0; i < zeroLengthBlobs.length; i++) {
+            if (progress.isCancelled()) break;
+
+            const blob = zeroLengthBlobs[i];
+            const shortName = blob.name.split('/').pop() || blob.name;
+            progress.update(i + 1, shortName, skipped);
+
+            try {
+                const blockData = await getBlockList(currentConn, currentContainer, blob.name, 'all');
+                const allBlocks = [...blockData.committedBlocks, ...blockData.uncommittedBlocks];
+
+                if (allBlocks.length === 0) {
+                    skipped++;
+                    continue;
+                }
+
+                await commitBlockList(currentConn, currentContainer, blob.name, allBlocks);
+                committed++;
+            } catch (e) {
+                console.warn(`Failed to commit ${blob.name}:`, e);
+                skipped++;
+            }
+        }
+
+        progress.finish(committed, skipped);
+        setStatus('Ready');
+
+        // Refresh
+        if (!cancelled) {
+            setTimeout(() => navigateTo(currentCred, currentContainer, currentPrefix), 1000);
+        }
+    } catch (e) {
+        closeModal();
+        showToast(`Folder commit failed: ${e.message}`, 'error');
+        setStatus('Error');
     }
 }
 

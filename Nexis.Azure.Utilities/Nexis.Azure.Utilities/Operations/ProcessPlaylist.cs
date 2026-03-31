@@ -28,7 +28,7 @@ public record class ProcessPlaylist(IConsole Console, CancellationToken token)
 
     public IAsyncEnumerable<YoutubeFile> ProcessAsync()
     {
-        Console.WriteLine($"Downloading {SourceFilePath} to {TargetFilePath}");
+        Console.WriteLine($"Processing {SourceFilePath} to {TargetFilePath}");
 
         SourcePlaylist = YoutubePlaylist.Deserialize(File.ReadAllText(SourceFilePath), Limit);
         var targetPlaylist = YoutubePlaylist.Deserialize(File.Exists(TargetFilePath) ? File.ReadAllText(TargetFilePath) : "[]").ToConcurrent();
