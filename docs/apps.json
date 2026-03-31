@@ -1,0 +1,22 @@
+[
+    {
+        "id":  "azexplorer",
+        "name":  "Azure Storage Explorer",
+        "description":  "A single-page web application that replicates core Azure Storage Explorer functionality in the browser. It enables users to browse, download, and manage files across multiple Azure Blob Storage accounts using either Azure AD (OAuth) credentials or SAS URLs.",
+        "path":  "azexplorer/",
+        "icon":  "☁",
+        "tags":  [
+                     "azexplorer"
+                 ]
+    },
+    {
+        "id":  "pdfeditor",
+        "name":  "DocuSign PDF Annotator",
+        "description":  "A single-page, zero-backend, client-side-only PDF signing and annotation tool. Users open a local PDF, place text and signature annotations on top of it, then either download the flattened PDF or export/import annotations as a separate YAML file. No server, no accounts, no uploads.",
+        "path":  "pdfeditor/",
+        "icon":  "✏",
+        "tags":  [
+                     "pdfeditor"
+                 ]
+    }
+]
