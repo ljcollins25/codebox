@@ -3,12 +3,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace FsDedup;
 
-/// <summary>
-/// How a duplicate comes to share storage with its original. The safe-replace machinery (temp file, verify, re-check,
-/// ReplaceFile, journal) is the same for every mode; a hard-link mode would implement this interface too
-/// (Materialize = create a link at the temp path, MaxReferencesPerOriginal = the link limit) and be added to
-/// <see cref="DedupStrategies.Create"/>. Only block cloning exists today.
-/// </summary>
+/// <summary>How duplicate names share storage. Both modes use the same safe temp/verify/journal/swap machinery.</summary>
 public interface IDedupStrategy
 {
     string Name { get; }
@@ -31,7 +26,7 @@ public static class DedupStrategies
     public static IDedupStrategy Create(string mode) => mode.ToLowerInvariant() switch
     {
         "clone" => new CloneStrategy(),
-        "hardlink" => throw new NotSupportedException("--mode hardlink is not implemented yet; only --mode clone is."),
+        "hardlink" => new HardLinkStrategy(),
         _ => throw new ArgumentException($"unknown mode '{mode}' (expected clone)"),
     };
 }
@@ -125,5 +120,42 @@ public sealed class CloneStrategy : IDedupStrategy
             throw new TooManyReferencesException(ex.Message);
         }
         RandomAccess.FlushToDisk(dst);
+    }
+}
+
+/// <summary>
+/// Creates directory entries that name the same underlying file. Windows documents 1,023 additional links for
+/// CreateHardLink (1,024 names total). Microsoft publishes no ReFS-specific maximum; 1,024 is a conservative cap.
+/// </summary>
+public sealed class HardLinkStrategy : IDedupStrategy
+{
+    public const int ConservativeMaxLinks = 1024;
+    public string Name => "hardlink";
+    public int MaxReferencesPerOriginal => ConservativeMaxLinks;
+
+    public void CheckVolume(VolumeInfo volume)
+    {
+        if (volume.FileSystem is not ("NTFS" or "ReFS"))
+            throw new NotSupportedException($"hard links are not supported by {volume.FileSystem}.");
+    }
+
+    public bool AlreadyShared(string original, string duplicate, VolumeInfo volume)
+    {
+        try
+        {
+            var a = Native.ReadIdentity(original);
+            var b = Native.ReadIdentity(duplicate);
+            return a.VolumeSerial == b.VolumeSerial && a.FileId == b.FileId;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception) { return false; }
+    }
+
+    public void Materialize(string original, string tempPath, VolumeInfo volume)
+    {
+        if (!Native.CreateHardLink(tempPath, original, out var error))
+        {
+            if (error == 1142) throw new TooManyReferencesException(new Win32Exception(error).Message);
+            throw new Win32Exception(error, $"CreateHardLink({tempPath}, {original})");
+        }
     }
 }

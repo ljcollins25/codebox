@@ -6,7 +6,7 @@ volume (Windows Server, or a Dev Drive). Whole-file dedup only: no chunking.
 
 ```
 fsdedup <folder> [--what-if] [--min-size N] [--threads N] [--cache path] [--verbose] [--json]
-                 [--settle N] [--mode clone]
+                 [--settle N] [--mode clone|hardlink]
 ```
 
 | option | meaning |
@@ -18,9 +18,11 @@ fsdedup <folder> [--what-if] [--min-size N] [--threads N] [--cache path] [--verb
 | `--verbose` | List every group and every action. |
 | `--json` | Print the report as JSON on stdout (progress goes to stderr). |
 | `--settle N` | Longest wait (default 30 s) for the volume's free space to show what was freed; ends early once 90% is back. ReFS gives freed clusters back 10-15 s late. 0 reads it at once. |
-| `--mode clone` | How duplicates share storage. Only `clone` exists; `hardlink` is reserved (see `IDedupStrategy`) and refused. |
+| `--mode clone` | ReFS block cloning (default). |
+| `--mode hardlink` | Replace each duplicate with a hard link to its original. Works on NTFS and ReFS. |
 
-Exit code: 0 ok, 1 the run finished but reported errors, 2 bad arguments or a volume that cannot clone.
+
+Exit code: 0 ok, 1 the run finished but reported errors, 2 bad arguments or unsupported filesystem for selected mode.
 
 ## What it does
 
@@ -58,14 +60,28 @@ is deleted; temp files are deleted. `--what-if` only mentions pending entries.
 
 - A failure at any step before the swap leaves D exactly as it was; a crash inside the swap is undone from the journal.
 - Content is compared byte for byte just before the swap, with D held open so nobody can write to it.
-- Hard-linked files, reparse points, encrypted files and other volumes are never touched.
+- Clone mode excludes files that are already hard-linked; hard-link mode permits those only to recognize same-file IDs as already shared. Reparse points, encrypted files and other volumes are never touched.
 - ACL, attributes, creation time, last-write time and alternate data streams are verified after the swap; otherwise
   the old file is restored.
 - Only the folder given is written: cache, journal and `.fsdedup-*` temp names.
 
+## Hard-link mode
+
+A hard link is another name for the same file rather than a copy-on-write clone. All names share the file's content,
+ACL, attributes, timestamps and alternate data streams. Before linking, FsDedup requires D and C to have identical
+ACLs (owner, group, ACEs and protection) and matching read-only, hidden and system attributes; mismatches are skipped
+with a reported reason. After linking, writes through **any name change the file seen by every other name**. This
+shared-write behavior is the main reason to prefer clone mode where it is available.
+
+Microsoft documents 1,023 additional links on NTFS (1,024 names total). ReFS supports hard links, but Microsoft
+publishes no ReFS-specific maximum. FsDedup conservatively splits at 1,024 total names and also responds to the
+filesystem's too-many-links error by selecting the next duplicate as a new original. Hard-link mode counts the full
+logical size of each replaced file as freed; actual free-space readings may lag on ReFS.
+
 ## Limits and observed behaviour
 
-- **ReFS only** for real runs (exit 2 elsewhere); `--what-if` works anywhere on Windows.
+
+- **Clone mode requires ReFS** for real runs; hard-link mode supports NTFS and ReFS. Other filesystems exit 2 for real runs.
 - **The final partial cluster is not shared**: ReFS copies it. "Bytes freed" counts whole clusters only; files smaller
   than a cluster are skipped.
 - **Free space lags** 10-15 s after replacement (one jump); `--settle` waits for it.

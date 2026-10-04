@@ -24,6 +24,10 @@ public static class SkipReason
     public const string Unreadable = "unreadable";
     public const string ToolFile = "tool-file";
     public const string ReadOnly = "read-only";
+    public const string HardLinkAclMismatch = "hardlink-acl-mismatch";
+    public const string HardLinkAttributesMismatch = "hardlink-attributes-mismatch";
+    public const string HardLinkTimestampMismatch = "hardlink-timestamp-mismatch";
+    public const string HardLinkStreamsMismatch = "hardlink-streams-mismatch";
     public const string AlternateStreams = "alternate-data-streams";
     public const string ChangedSinceHashed = "changed-since-hashed";
     public const string VerifyFailed = "verify-failed";
@@ -31,7 +35,7 @@ public static class SkipReason
 }
 
 /// <summary>Walks the tree without following reparse points and applies the per-file filters.</summary>
-public sealed class Scanner(string root, long minSize, ISet<string> toolFiles, ConcurrentDictionary<string, long> skipped, List<string> errors)
+public sealed class Scanner(string root, long minSize, ISet<string> toolFiles, ConcurrentDictionary<string, long> skipped, List<string> errors, bool includeHardLinks = false)
 {
     public long FilesScanned;
 
@@ -80,7 +84,7 @@ public sealed class Scanner(string root, long minSize, ISet<string> toolFiles, C
                 }
                 if (id.IsReparsePoint) { Skip(SkipReason.ReparsePoint); continue; }
                 if (id.IsEncrypted) { Skip(SkipReason.Encrypted); continue; }
-                if (id.Links > 1) { Skip(SkipReason.HardLinked); continue; }
+                if (id.Links > 1 && !includeHardLinks) { Skip(SkipReason.HardLinked); continue; }
                 if (id.VolumeSerial != rootId.VolumeSerial) { Skip(SkipReason.OtherVolume); continue; }
                 result.Add(new FileEntry { Path = path, Id = id });
             }

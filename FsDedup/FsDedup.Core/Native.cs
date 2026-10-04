@@ -219,6 +219,22 @@ public static class Native
 
     // ---- files ----------------------------------------------------------------------------------------------
 
+    public static bool MoveReplace(string source, string destination, out int error)
+    {
+        const uint MOVEFILE_REPLACE_EXISTING = 0x1, MOVEFILE_WRITE_THROUGH = 0x8;
+        var ok = MoveFileExW(Long(source), Long(destination), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        error = ok ? 0 : Marshal.GetLastWin32Error();
+        return ok;
+    }
+
+    public static bool CreateHardLink(string newPath, string existingPath, out int error)
+
+    {
+        var ok = CreateHardLinkW(Long(newPath), Long(existingPath), IntPtr.Zero);
+        error = ok ? 0 : Marshal.GetLastWin32Error();
+        return ok;
+    }
+
     public static bool ReplaceFile(string replaced, string replacement, string backup, out int error)
     {
         var ok = ReplaceFileW(Long(replaced), Long(replacement), Long(backup), 0, IntPtr.Zero, IntPtr.Zero);
@@ -285,7 +301,15 @@ public static class Native
     private static extern bool DeviceIoControl(SafeFileHandle h, uint code, byte[]? input, int inputSize, byte[]? output, int outputSize, out int returned, IntPtr overlapped);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool MoveFileExW(string existing, string replacement, uint flags);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CreateHardLinkW(string newPath, string existingPath, IntPtr securityAttributes);
+
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool ReplaceFileW(string replaced, string replacement, string backup, uint flags, IntPtr exclude, IntPtr reserved);
+
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool GetVolumePathNameW(string path, System.Text.StringBuilder volumePath, int length);

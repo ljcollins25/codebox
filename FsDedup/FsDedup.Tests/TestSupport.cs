@@ -57,9 +57,9 @@ public sealed class Scratch : IDisposable
         return path;
     }
 
-    public DedupReport Run(bool whatIf, RunHooks? hooks = null, Action<DedupOptions>? configure = null)
+    public DedupReport Run(bool whatIf, RunHooks? hooks = null, Action<DedupOptions>? configure = null, string mode = "clone")
     {
-        var o = new DedupOptions { Root = Root, WhatIf = whatIf, MinSize = 1024, Threads = 2, SettleSeconds = 0 };
+        var o = new DedupOptions { Root = Root, WhatIf = whatIf, MinSize = 1024, Threads = 2, Mode = mode, SettleSeconds = 0 };
         configure?.Invoke(o);
         return new DedupEngine(o, hooks, null).Run();
     }

@@ -10,7 +10,7 @@ public sealed class Journal : IDisposable
 {
     public const string FileName = ".fsdedup-journal.jsonl";
 
-    public sealed record Record(string Op, string Id, string? D = null, string? T = null, string? B = null, string? Note = null);
+    public sealed record Record(string Op, string Id, string? D = null, string? T = null, string? B = null, string? Note = null, bool HardLink = false, string? Original = null, long? OriginalCreation = null);
 
     private readonly FileStream stream;
     private readonly object gate = new();
@@ -23,7 +23,7 @@ public sealed class Journal : IDisposable
 
     public string Path { get; }
 
-    public void Begin(string id, string dup, string temp, string backup) => Write(new Record("begin", id, dup, temp, backup));
+    public void Begin(string id, string dup, string temp, string backup, bool hardLink = false, string? original = null, long? originalCreation = null) => Write(new Record("begin", id, dup, temp, backup, HardLink: hardLink, Original: original, OriginalCreation: originalCreation));
     public void Swapping(string id) => Write(new Record("swapping", id));
     public void Swapped(string id) => Write(new Record("swapped", id));
     public void End(string id, string note) => Write(new Record("end", id, Note: note));
@@ -72,9 +72,11 @@ public static class JournalRecovery
             try
             {
                 bool swapped = op.Swapped;
+                if (op.HardLink && op.Original is not null && op.OriginalCreation is { } creation && File.Exists(op.Original))
+                    File.SetCreationTimeUtc(op.Original, DateTime.FromFileTimeUtc(creation));
                 if (op.B is not null && File.Exists(op.B))
                 {
-                    if (swapped)
+                    if (swapped && !op.HardLink)
                     {
                         File.Delete(op.B);
                         done.Add($"deleted leftover backup {op.B} (swap had completed)");
@@ -102,7 +104,7 @@ public static class JournalRecovery
         return done;
     }
 
-    private sealed class Pending { public string? D, T, B; public bool Swapped; }
+    private sealed class Pending { public string? D, T, B, Original; public long? OriginalCreation; public bool Swapped, HardLink; }
 
     private static List<Pending> ReadPending(string path)
     {
@@ -117,7 +119,7 @@ public static class JournalRecovery
             if (r is null) continue;
             switch (r.Op)
             {
-                case "begin": ops[r.Id] = new Pending { D = r.D, T = r.T, B = r.B }; order.Add(r.Id); break;
+                case "begin": ops[r.Id] = new Pending { D = r.D, T = r.T, B = r.B, HardLink = r.HardLink, Original = r.Original, OriginalCreation = r.OriginalCreation }; order.Add(r.Id); break;
                 case "swapped": if (ops.TryGetValue(r.Id, out var s)) s.Swapped = true; break;
                 case "end": ops.Remove(r.Id); break;
             }

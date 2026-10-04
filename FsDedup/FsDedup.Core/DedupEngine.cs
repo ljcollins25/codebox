@@ -28,7 +28,9 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         var volume = Native.GetVolume(root);
         var report = new DedupReport { Root = root, Mode = strategy.Name, WhatIf = options.WhatIf, FileSystem = volume.FileSystem, ClusterSize = volume.ClusterSize };
         if (!options.WhatIf) strategy.CheckVolume(volume);
-        else if (!volume.SupportsBlockCloning) report.Errors.Add($"note: {volume.Root} is {volume.FileSystem}; a real run needs ReFS block cloning.");
+        else if (strategy.Name == "clone" && !volume.SupportsBlockCloning)
+            report.Errors.Add($"note: {volume.Root} is {volume.FileSystem}; a real run needs ReFS block cloning.");
+
 
         var cachePath = Path.GetFullPath(options.CachePath ?? Path.Combine(root, ".fsdedup-cache.jsonl"));
         var journalPath = Path.Combine(root, Journal.FileName);
@@ -45,9 +47,32 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         var cache = HashCache.Load(cachePath);
 
         // 1. Walk.
-        var scanner = new Scanner(root, Math.Max(options.MinSize, volume.ClusterSize), new HashSet<string>(new[] { cachePath, cachePath + ".tmp", journalPath }, StringComparer.OrdinalIgnoreCase), skipped, errorList);
+        var scanner = new Scanner(root, Math.Max(options.MinSize, volume.ClusterSize), new HashSet<string>(new[] { cachePath, cachePath + ".tmp", journalPath }, StringComparer.OrdinalIgnoreCase), skipped, errorList, strategy is HardLinkStrategy);
         var files = scanner.Scan();
         report.FilesScanned = scanner.FilesScanned;
+        var preShared = new List<GroupReport>();
+        if (strategy is HardLinkStrategy)
+        {
+            foreach (var idGroup in files.Where(f => f.Id.Links > 1).GroupBy(f => (f.Id.VolumeSerial, f.Id.FileId, f.Id.Size)))
+            {
+                var names = idGroup.OrderBy(f => f.Id.CreationTicks).ThenBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList();
+                if (names.Count > 1)
+                {
+                    preShared.Add(new GroupReport
+                    {
+                        Size = names[0].Id.Size,
+                        Original = names[0].Path,
+                        AlreadyShared = names.Skip(1).Select(f => f.Path).ToList(),
+                    });
+                    report.Groups++;
+                    report.DuplicateFiles += names.Count - 1;
+                    report.AlreadyShared += names.Count - 1;
+                }
+                else
+                    skipped.AddOrUpdate(SkipReason.HardLinked, 1, (_, n) => n + 1);
+            }
+            files = files.Where(f => f.Id.Links == 1).ToList();
+        }
         var seen = new HashSet<CacheKey>(files.Select(f => f.Key));
         foreach (var f in files)
             if (cache.Get(f.Key) is { } e) { f.Partial = e.Partial; f.Full = e.Full; }
@@ -87,10 +112,18 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
                 var dups = new List<FileEntry>();
                 var shared = new List<FileEntry>();
                 foreach (var d in part.Skip(1))
-                    (volume.SupportsBlockCloning && strategy.AlreadyShared(original.Path, d.Path, volume) ? shared : dups).Add(d);
+                {
+                    if (strategy.AlreadyShared(original.Path, d.Path, volume)) { shared.Add(d); continue; }
+                    if (strategy is HardLinkStrategy)
+                    {
+                        string? mismatch = Replacer.HardLinkMetadataMismatch(original.Path, d.Path);
+                        if (mismatch is not null) { skipped.AddOrUpdate(mismatch, 1, (_, n) => n + 1); continue; }
+                    }
+                    dups.Add(d);
+                }
                 report.AlreadyShared += shared.Count;
                 report.FilesToReplace += dups.Count;
-                report.BytesFreed += dups.Count * Whole(original.Id.Size, volume.ClusterSize);
+                report.BytesFreed += dups.Count * (strategy.Name == "hardlink" ? original.Id.Size : Whole(original.Id.Size, volume.ClusterSize));
                 var c = new Chunk(original, dups, shared)
                 {
                     Report = new GroupReport
@@ -105,12 +138,12 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
                 chunks.Add(c);
             }
         }
-        report.GroupList = chunks.Where(c => c.Dups.Count > 0 || c.Shared.Count > 0).Select(c => c.Report).ToList();
+        report.GroupList = preShared.Concat(chunks.Where(c => c.Dups.Count > 0 || c.Shared.Count > 0).Select(c => c.Report)).ToList();
 
         // 6. Replace (not in what-if).
         if (options.WhatIf)
         {
-            foreach (var c in chunks) log?.WriteLineIf(options.Verbose, $"would replace {c.Dups.Count} file(s) with clones of {c.Original.Path}");
+            foreach (var c in chunks) log?.WriteLineIf(options.Verbose, $"would replace {c.Dups.Count} file(s) with {strategy.Name}s of {c.Original.Path}");
         }
         else if (chunks.Any(c => c.Dups.Count > 0))
         {
@@ -137,7 +170,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
                     {
                         case ReplaceStatus.Replaced:
                             report.FilesReplaced++;
-                            report.BytesFreed += Whole(d.Id.Size, volume.ClusterSize);
+                            report.BytesFreed += strategy.Name == "hardlink" ? d.Id.Size : Whole(d.Id.Size, volume.ClusterSize);
                             if (outcome.NewIdentity is { } ni)
                             {
                                 var newKey = new CacheKey(ni.VolumeSerial, ni.FileId, ni.Size, ni.WriteTicks);
@@ -167,7 +200,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         try { cache.Save(cachePath, seen); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { errorList.Add($"cache not written: {ex.Message}"); }
         report.FreeSpaceAfter = report.FilesReplaced > 0 && options.SettleSeconds > 0
-            ? Native.WaitForFreeSpace(volume.Root, free => free - report.FreeSpaceBefore >= report.BytesFreed * 0.9, options.SettleSeconds)
+            ? Native.WaitForFreeSpace(volume.Root, free => free - report.FreeSpaceBefore >= Math.Min(report.BytesFreed * 0.9, 1024 * 1024), options.SettleSeconds)
             : Native.FreeSpace(volume.Root);
         foreach (var kv in skipped) report.Skipped[kv.Key] = kv.Value;
         report.Errors.AddRange(errors);

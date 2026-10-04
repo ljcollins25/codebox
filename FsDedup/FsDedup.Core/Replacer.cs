@@ -26,41 +26,48 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
         bool begun = false, swapStarted = false, swapped = false;
         try
         {
-            // Hold D open without write sharing from here to the swap (delete sharing stays so ReplaceFile can rename it).
             try { held = Native.OpenRead(dup.Path, FileShare.Read | FileShare.Delete); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return new(ReplaceStatus.Skipped, SkipReason.Locked);
-            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(ReplaceStatus.Skipped, SkipReason.Locked); }
             var now = Native.ReadIdentity(held);
             if (!now.SameContentKey(dup.Id)) return new(ReplaceStatus.Skipped, SkipReason.ChangedSinceHashed);
-            if (now.Links > 1) return new(ReplaceStatus.Skipped, SkipReason.HardLinked);
+            if (strategy is CloneStrategy && now.Links > 1) return new(ReplaceStatus.Skipped, SkipReason.HardLinked);
             if (now.IsReparsePoint) return new(ReplaceStatus.Skipped, SkipReason.ReparsePoint);
             if (now.IsEncrypted) return new(ReplaceStatus.Skipped, SkipReason.Encrypted);
-            if (now.IsReadOnly) return new(ReplaceStatus.Skipped, SkipReason.ReadOnly);
+            if (strategy is CloneStrategy && now.IsReadOnly) return new(ReplaceStatus.Skipped, SkipReason.ReadOnly);
+
             var streamsBefore = Native.AlternateStreams(dup.Path);
             var securityBefore = Sddl(dup.Path);
+            DateTime originalCreationTime = File.GetCreationTimeUtc(original.Path);
 
-            journal.Begin(id, dup.Path, temp, backup);
+            if (strategy is HardLinkStrategy)
+            {
+                string? mismatch = HardLinkMetadataMismatch(original.Path, dup.Path);
+                if (mismatch is not null) return new(ReplaceStatus.Skipped, mismatch);
+            }
+
+            journal.Begin(id, dup.Path, temp, backup, strategy is HardLinkStrategy, strategy is HardLinkStrategy ? original.Path : null,
+                strategy is HardLinkStrategy ? originalCreationTime.ToFileTimeUtc() : null);
             begun = true;
-
-            // 1. The clone, in a hidden temp file next to D, with D's times (ReplaceFile carries over D's ACL, which is checked below).
             strategy.Materialize(original.Path, temp, volume);
-            File.SetCreationTimeUtc(temp, DateTime.FromFileTimeUtc(now.CreationTicks));
-            File.SetLastWriteTimeUtc(temp, DateTime.FromFileTimeUtc(now.WriteTicks));
-
-            // 2. Byte-for-byte: the temp file against D itself.
+            if (strategy is CloneStrategy)
+            {
+                File.SetCreationTimeUtc(temp, DateTime.FromFileTimeUtc(now.CreationTicks));
+                File.SetLastWriteTimeUtc(temp, DateTime.FromFileTimeUtc(now.WriteTicks));
+            }
             if (!SameBytes(held, temp, now.Size)) return new(ReplaceStatus.Skipped, SkipReason.VerifyFailed);
-
             hooks.BeforeSwap?.Invoke(dup.Path);
 
-            // 3. D unchanged since it was hashed (and still the file at this path)?
             var again = Native.ReadIdentity(held);
             var byPath = Native.ReadIdentity(dup.Path);
-            if (!again.SameContentKey(dup.Id) || !byPath.SameContentKey(again) || again.Links != 1)
+            if (!again.SameContentKey(dup.Id) || !byPath.SameContentKey(again) ||
+                (strategy is CloneStrategy && again.Links != 1))
                 return new(ReplaceStatus.Skipped, SkipReason.ChangedSinceHashed);
+            if (strategy is HardLinkStrategy)
+            {
+                string? mismatch = HardLinkMetadataMismatch(original.Path, dup.Path);
+                if (mismatch is not null) return new(ReplaceStatus.Skipped, mismatch);
+            }
 
-            // 4. The swap. ReplaceFile keeps D's ACL, attributes, creation time and named streams (checked below).
             journal.Swapping(id);
             swapStarted = true;
             if (!Native.ReplaceFile(dup.Path, temp, backup, out var error))
@@ -70,8 +77,32 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
             }
             swapped = true;
             journal.Swapped(id);
-
             var after = Native.ReadIdentity(dup.Path);
+
+            if (strategy is HardLinkStrategy)
+            {
+                // ReplaceFile propagates D's creation time onto a hard-linked file; restore C's metadata explicitly.
+                File.SetCreationTimeUtc(original.Path, originalCreationTime);
+                bool sameId =
+ after.VolumeSerial == Native.ReadIdentity(original.Path).VolumeSerial &&
+                    after.FileId == Native.ReadIdentity(original.Path).FileId;
+                bool sameMetadata = HardLinkMetadataMismatch(original.Path, dup.Path) is null &&
+                    File.GetCreationTimeUtc(dup.Path) == File.GetCreationTimeUtc(original.Path) &&
+                    File.GetLastWriteTimeUtc(dup.Path) == File.GetLastWriteTimeUtc(original.Path) &&
+                    Native.AlternateStreams(dup.Path).SequenceEqual(Native.AlternateStreams(original.Path));
+                if (!sameId || !sameMetadata)
+                {
+                    held.Dispose(); held = null;
+                    File.Move(backup, dup.Path, overwrite: true);
+                    journal.End(id, "rolled-back"); begun = false;
+                    return new(ReplaceStatus.Failed, "hard-link identity or metadata check failed; original restored");
+                }
+                held.Dispose(); held = null;
+                DeleteWithRetry(backup);
+                journal.End(id, "done"); begun = false;
+                return new(ReplaceStatus.Replaced, NewIdentity: after);
+            }
+
             if (after.WriteTicks != now.WriteTicks) File.SetLastWriteTimeUtc(dup.Path, DateTime.FromFileTimeUtc(now.WriteTicks));
             after = Native.ReadIdentity(dup.Path);
             var differences = new List<string>();
@@ -79,29 +110,21 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
             if (after.CreationTicks != now.CreationTicks) differences.Add("creation time");
             if (after.Attributes != now.Attributes) differences.Add($"attributes {now.Attributes:x} -> {after.Attributes:x}");
             if (!Native.AlternateStreams(dup.Path).SequenceEqual(streamsBefore)) differences.Add("named streams");
-            var securityAfter = Sddl(dup.Path);
-            if (securityAfter != securityBefore) differences.Add($"ACL ({securityBefore} -> {securityAfter})");
+            if (Sddl(dup.Path) != securityBefore) differences.Add("ACL");
             if (differences.Count > 0)
             {
-                // Something was not carried over: put the old file back.
                 held.Dispose(); held = null;
                 File.Move(backup, dup.Path, overwrite: true);
-                journal.End(id, "rolled-back");
-                begun = false;
-                return new(ReplaceStatus.Failed, "differed after the swap (" + string.Join("; ", differences) + "); original restored");
+                journal.End(id, "rolled-back"); begun = false;
+                return new(ReplaceStatus.Failed, "metadata or streams differed after the swap; original restored");
             }
 
-            // 5. Only now is the backup (D's old clusters) released.
             held.Dispose(); held = null;
             DeleteWithRetry(backup);
-            journal.End(id, "done");
-            begun = false;
+            journal.End(id, "done"); begun = false;
             return new(ReplaceStatus.Replaced, NewIdentity: after);
         }
-        catch (TooManyReferencesException)
-        {
-            return new(ReplaceStatus.TooManyReferences);
-        }
+        catch (TooManyReferencesException) { return new(ReplaceStatus.TooManyReferences); }
         catch (Exception ex)
         {
             if (swapStarted && !swapped) RestoreAfterFailedSwap(dup.Path, backup);
@@ -112,9 +135,7 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
             held?.Dispose();
             if (!swapped || File.Exists(temp)) TryDelete(temp);
             if (begun)
-            {
-                try { journal.End(id, swapped ? "done-backup-left" : "aborted"); } catch { /* journal is best effort here */ }
-            }
+                try { journal.End(id, swapped ? "done-backup-left" : "aborted"); } catch { /* journal uses recovery */ }
         }
     }
 
@@ -151,6 +172,17 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
     /// flag (AI/AR) to the file ReplaceFile produces; it carries no permission, so it is left out of the comparison.
     /// </summary>
     public static string Normalize(string sddl) => System.Text.RegularExpressions.Regex.Replace(sddl, @"D:(P)?(?:AI|AR)+", "D:$1");
+
+    public static string? HardLinkMetadataMismatch(string original, string duplicate)
+    {
+
+        if (Sddl(original) != Sddl(duplicate)) return SkipReason.HardLinkAclMismatch;
+        const uint mask = Native.FILE_ATTRIBUTE_READONLY | Native.FILE_ATTRIBUTE_HIDDEN | Native.FILE_ATTRIBUTE_SYSTEM;
+        var originalId = Native.ReadIdentity(original);
+        var duplicateId = Native.ReadIdentity(duplicate);
+        if ((originalId.Attributes & mask) != (duplicateId.Attributes & mask))
+            return SkipReason.HardLinkAttributesMismatch;
+        return null;    }
 
     private static bool SameBytes
 (SafeFileHandle a, string tempPath, long size)
