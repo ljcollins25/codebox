@@ -94,7 +94,28 @@ public static class Native
     public static long FreeSpace(string root) =>
         GetDiskFreeSpaceExW(root, out var free, out _, out _) ? (long)free : -1;
 
-    // ---- streams --------------------------------------------------------------------------------------------
+    /// <summary>
+    /// Free space once it stops moving. ReFS gives back the clusters of deleted or replaced files a few seconds after
+    /// the fact (observed: 10-15 s, in a jump), so a reading taken right after a run understates what it freed. Waits until
+    /// the value has not moved for <paramref name="stableSeconds"/> (at most <paramref name="maxSeconds"/>); 0 reads it once.
+    /// </summary>
+    public static long SettledFreeSpace(string root, int stableSeconds, int maxSeconds)
+    {
+        long last = FreeSpace(root);
+        if (stableSeconds <= 0) return last;
+        var deadline = DateTime.UtcNow.AddSeconds(maxSeconds);
+        int stable = 0;
+        while (stable < stableSeconds * 2 && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(500);
+            long now = FreeSpace(root);
+            stable = now == last ? stable + 1 : 0;
+            last = now;
+        }
+        return last;
+    }
+
+    // ---- streams -----------------------------------------------------------------------------------------
 
     /// <summary>Names and sizes of the named (alternate) data streams, excluding the main one; sorted.</summary>
     public static List<string> AlternateStreams(string path)

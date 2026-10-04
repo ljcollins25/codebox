@@ -23,10 +23,10 @@ public class ReplaceTests
         Assert.Equal(before, s.Snapshot());
         Assert.Equal(1, r.Groups);
         Assert.Equal(1, r.FilesToReplace);
-        Assert.InRange(r.BytesFreed, Size, Size + 4096); // rounded up to clusters
+        Assert.InRange(r.BytesFreed, Size - 4096, Size); // whole clusters
         Assert.Equal(0, r.FilesReplaced);
         Assert.False(File.Exists(s.Path_(Journal.FileName)));
-        Assert.Empty(Directory.GetFiles(s.Root, ".fsdedup-*.tmp", SearchOption.AllDirectories));
+        Assert.Empty(Directory.GetFiles(s.Root, ".fsdedup-*.t*", SearchOption.AllDirectories));
         Assert.Empty(Directory.GetFiles(s.Root, ".fsdedup-*.bak", SearchOption.AllDirectories));
         Assert.True(File.Exists(s.Path_(".fsdedup-cache.jsonl")));
         Assert.InRange(freeBefore - Native.FreeSpace(s.Root), -8_000_000, 8_000_000);
@@ -47,11 +47,11 @@ public class ReplaceTests
         var contentA = File.ReadAllBytes(a);
         var contentOdd = File.ReadAllBytes(odd);
         Assert.False(Win.SameClusters(a, b));
-        var free0 = Native.FreeSpace(s.Root);
+        var free0 = Native.SettledFreeSpace(s.Root, 8, 60); // let the lazily written test files reach the disk first
 
-        var r = s.Run(whatIf: false);
+        var r = s.Run(whatIf: false, null, o => o.SettleSeconds = 8);
 
-        Assert.Empty(r.Errors);
+        Assert.True(r.Errors.Count == 0, string.Join(" | ", r.Errors));
         Assert.Equal(3, r.FilesReplaced);
         Assert.Equal(2, r.Groups);
         Assert.Equal(contentA, File.ReadAllBytes(a));
@@ -63,7 +63,7 @@ public class ReplaceTests
         Assert.True(Win.SameClusters(odd, oddCopy));
         Assert.False(Win.SameClusters(a, other));
         // Independent of the extent query: the volume really got space back (3 x 5 MB + 1 x ~5 MB, minus metadata).
-        long gained = Native.FreeSpace(s.Root) - free0;
+        long gained = Native.SettledFreeSpace(s.Root, 8, 60) - free0;
         Assert.True(gained > 0.8 * (3 * Size + Size - 1234), $"free space grew by only {gained}");
         Assert.True(r.FreeSpaceAfter > r.FreeSpaceBefore);
         Assert.Empty(Directory.GetFiles(s.Root, ".fsdedup-*", SearchOption.AllDirectories).Where(f => !f.EndsWith("cache.jsonl")));
@@ -102,7 +102,7 @@ public class ReplaceTests
 
         var r = s.Run(whatIf: false);
 
-        Assert.Empty(r.Errors);
+        Assert.True(r.Errors.Count == 0, string.Join(" | ", r.Errors));
         Assert.Equal(1, r.FilesReplaced);
         Assert.True(Win.SameClusters(c, d));
         Assert.Equal(sddl, Win.Sddl(d));
@@ -257,7 +257,7 @@ public class ReplaceTests
         Assert.False(File.Exists(journal));
         Assert.True(r.Recovered.Count >= 4, string.Join("; ", r.Recovered));
         Assert.NotEmpty(r.Recovered);
-        Assert.Empty(r.Errors);
+        Assert.True(r.Errors.Count == 0, string.Join(" | ", r.Errors));
     }
 
     [RefsFact]

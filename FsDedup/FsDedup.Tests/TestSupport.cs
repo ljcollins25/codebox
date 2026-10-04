@@ -59,7 +59,7 @@ public sealed class Scratch : IDisposable
 
     public DedupReport Run(bool whatIf, RunHooks? hooks = null, Action<DedupOptions>? configure = null)
     {
-        var o = new DedupOptions { Root = Root, WhatIf = whatIf, MinSize = 1024, Threads = 2 };
+        var o = new DedupOptions { Root = Root, WhatIf = whatIf, MinSize = 1024, Threads = 2, SettleSeconds = 0 };
         configure?.Invoke(o);
         return new DedupEngine(o, hooks, null).Run();
     }
@@ -100,10 +100,12 @@ internal static class Win
         using var x = Native.OpenRead(a, FileShare.ReadWrite | FileShare.Delete, false);
         using var y = Native.OpenRead(b, FileShare.ReadWrite | FileShare.Delete, false);
         var ea = Native.GetExtents(x);
-        return ea.Count > 0 && ea.SequenceEqual(Native.GetExtents(y));
+        return CloneStrategy.SharedClusters(ea, Native.GetExtents(y), RandomAccess.GetLength(x), 4096);
     }
 
-    public static string Sddl(string path) =>
-        new FileInfo(path).GetAccessControl(System.Security.AccessControl.AccessControlSections.Access | System.Security.AccessControl.AccessControlSections.Owner | System.Security.AccessControl.AccessControlSections.Group)
-            .GetSecurityDescriptorSddlForm(System.Security.AccessControl.AccessControlSections.Access | System.Security.AccessControl.AccessControlSections.Owner | System.Security.AccessControl.AccessControlSections.Group);
+    public static string Sddl(string path)
+    {
+        const System.Security.AccessControl.AccessControlSections sections = System.Security.AccessControl.AccessControlSections.Access | System.Security.AccessControl.AccessControlSections.Owner | System.Security.AccessControl.AccessControlSections.Group;
+        return Replacer.Normalize(new FileInfo(path).GetAccessControl(sections).GetSecurityDescriptorSddlForm(sections));
+    }
 }

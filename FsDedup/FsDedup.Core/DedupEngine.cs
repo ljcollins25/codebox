@@ -37,7 +37,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         else if (JournalRecovery.CountPending(root) is > 0 and var pending)
             report.Errors.Add($"note: {pending} interrupted operation(s) in {journalPath}; a real run will recover them first.");
 
-        report.FreeSpaceBefore = Native.FreeSpace(volume.Root);
+        report.FreeSpaceBefore = options.WhatIf ? Native.FreeSpace(volume.Root) : Native.SettledFreeSpace(volume.Root, Math.Min(options.SettleSeconds, 3), 10);
 
         var skipped = new ConcurrentDictionary<string, long>();
         var errors = new ConcurrentBag<string>();
@@ -45,7 +45,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         var cache = HashCache.Load(cachePath);
 
         // 1. Walk.
-        var scanner = new Scanner(root, options.MinSize, new HashSet<string>(new[] { cachePath, cachePath + ".tmp", journalPath }, StringComparer.OrdinalIgnoreCase), skipped, errorList);
+        var scanner = new Scanner(root, Math.Max(options.MinSize, volume.ClusterSize), new HashSet<string>(new[] { cachePath, cachePath + ".tmp", journalPath }, StringComparer.OrdinalIgnoreCase), skipped, errorList);
         var files = scanner.Scan();
         report.FilesScanned = scanner.FilesScanned;
         var seen = new HashSet<CacheKey>(files.Select(f => f.Key));
@@ -87,10 +87,10 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
                 var dups = new List<FileEntry>();
                 var shared = new List<FileEntry>();
                 foreach (var d in part.Skip(1))
-                    (volume.SupportsBlockCloning && strategy.AlreadyShared(original.Path, d.Path) ? shared : dups).Add(d);
+                    (volume.SupportsBlockCloning && strategy.AlreadyShared(original.Path, d.Path, volume) ? shared : dups).Add(d);
                 report.AlreadyShared += shared.Count;
                 report.FilesToReplace += dups.Count;
-                report.BytesFreed += dups.Count * RoundUp(original.Id.Size, volume.ClusterSize);
+                report.BytesFreed += dups.Count * Whole(original.Id.Size, volume.ClusterSize);
                 var c = new Chunk(original, dups, shared)
                 {
                     Report = new GroupReport
@@ -136,7 +136,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
                     {
                         case ReplaceStatus.Replaced:
                             report.FilesReplaced++;
-                            report.BytesFreed += RoundUp(d.Id.Size, volume.ClusterSize);
+                            report.BytesFreed += Whole(d.Id.Size, volume.ClusterSize);
                             if (outcome.NewIdentity is { } ni)
                             {
                                 var newKey = new CacheKey(ni.VolumeSerial, ni.FileId, ni.Size, ni.WriteTicks);
@@ -164,7 +164,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         // 7. Cache, free space, report.
         try { cache.Save(cachePath, seen); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { errorList.Add($"cache not written: {ex.Message}"); }
-        report.FreeSpaceAfter = Native.FreeSpace(volume.Root);
+        report.FreeSpaceAfter = report.FilesReplaced > 0 ? Native.SettledFreeSpace(volume.Root, options.SettleSeconds, 60) : Native.FreeSpace(volume.Root);
         foreach (var kv in skipped) report.Skipped[kv.Key] = kv.Value;
         report.Errors.AddRange(errors);
         report.Errors.AddRange(errorList);
@@ -172,7 +172,8 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         return report;
     }
 
-    private static long RoundUp(long size, long cluster) => (size + cluster - 1) / cluster * cluster;
+    /// <summary>Bytes in whole clusters: what sharing can free (a final partial cluster is copied, not shared).</summary>
+    private static long Whole(long size, long cluster) => size / cluster * cluster;
 
     /// <summary>Gives every file the hash it lacks (cache first, then a read), in parallel; failures drop out of the run.</summary>
     private void HashAll(List<FileEntry> files, Action<FileEntry, Microsoft.Win32.SafeHandles.SafeFileHandle> compute,

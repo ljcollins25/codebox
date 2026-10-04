@@ -15,6 +15,12 @@ public sealed class DedupOptions
 
     /// <summary>"clone" is the only mode implemented; "hardlink" is reserved (see <see cref="IDedupStrategy"/>).</summary>
     public string Mode { get; set; } = "clone";
+
+    /// <summary>
+    /// Seconds the volume's free space must stay unchanged before it is read for the report (ReFS returns freed clusters
+    /// 10-15 s late). 0 reads it at once.
+    /// </summary>
+    public int SettleSeconds { get; set; } = 8;
 }
 
 /// <summary>Test seams: called between the steps of a replacement so a test can change a file at an exact moment.</summary>

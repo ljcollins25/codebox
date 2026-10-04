@@ -20,7 +20,7 @@ public interface IDedupStrategy
     void CheckVolume(VolumeInfo volume);
 
     /// <summary>True when the duplicate already shares all its storage with the original.</summary>
-    bool AlreadyShared(string original, string duplicate);
+    bool AlreadyShared(string original, string duplicate, VolumeInfo volume);
 
     /// <summary>Creates <paramref name="tempPath"/> (new, hidden) so that it shares the original's storage and has its content.</summary>
     void Materialize(string original, string tempPath, VolumeInfo volume);
@@ -60,15 +60,14 @@ public sealed class CloneStrategy : IDedupStrategy
             throw new NotSupportedException($"volume {volume.Root} ({volume.FileSystem}) does not support block cloning; ReFS is required.");
     }
 
-    public bool AlreadyShared(string original, string duplicate)
+    public bool AlreadyShared(string original, string duplicate, VolumeInfo volume)
     {
         try
         {
             using var a = Native.OpenRead(original, FileShare.ReadWrite | FileShare.Delete, false);
             using var b = Native.OpenRead(duplicate, FileShare.ReadWrite | FileShare.Delete, false);
-            var ea = Native.GetExtents(a);
-            var eb = Native.GetExtents(b);
-            return ea.Count > 0 && ea.SequenceEqual(eb);
+            return SharedClusters(Native.GetExtents(a), Native.GetExtents(b), RandomAccess.GetLength(a), volume.ClusterSize);
+
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
         {
@@ -76,8 +75,32 @@ public sealed class CloneStrategy : IDedupStrategy
         }
     }
 
+    /// <summary>
+    /// True when the two files map every whole cluster of their data to the same physical clusters. ReFS copies a final
+    /// partial cluster instead of sharing it (observed: the clone's last extent is a new allocation), so only whole
+    /// clusters count. Unallocated extents (Lcn -1: holes, or data not yet written out) prove nothing and never count.
+    /// </summary>
+    public static bool SharedClusters(List<Extent> a, List<Extent> b, long length, long clusterSize)
+    {
+        long whole = length / clusterSize;
+        var ca = Clip(a, whole);
+        return whole > 0 && ca.Count > 0 && ca.All(x => x.Lcn >= 0) && ca.SequenceEqual(Clip(b, whole));
+    }
+
+    private static List<Extent> Clip(List<Extent> extents, long clusters)
+    {
+        var result = new List<Extent>();
+        foreach (var e in extents)
+        {
+            if (e.Vcn >= clusters) break;
+            result.Add(e.Vcn + e.Length > clusters ? e with { Length = clusters - e.Vcn } : e);
+        }
+        return result;
+    }
+
     public void Materialize(string original, string tempPath, VolumeInfo volume)
     {
+
         using var src = Native.OpenRead(original, FileShare.Read, false);
         var size = Native.ReadIdentity(src).Size;
         var integrity = Native.GetIntegrity(src);

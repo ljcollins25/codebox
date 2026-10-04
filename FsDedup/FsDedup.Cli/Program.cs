@@ -17,6 +17,7 @@ internal static class Cli
           --cache path    hash cache file (default: <folder>\.fsdedup-cache.jsonl)
           --verbose       list every group and action
           --json          machine-readable report on stdout
+          --settle N      seconds free space must stay unchanged before it is read for the report (default 8; 0 = read at once)
           --mode clone    how duplicates share storage (only 'clone', ReFS block cloning, exists)
         """;
 
@@ -65,6 +66,9 @@ internal static class Cli
                     break;
                 case "--cache": o.CachePath = Value(); break;
                 case "--mode": o.Mode = Value(); break;
+                case "--settle":
+                    o.SettleSeconds = int.TryParse(Value(), out var st) && st >= 0 ? st : throw new ArgumentException("--settle needs a number of seconds");
+                    break;
                 case "-h": case "--help": case "-?": throw new ArgumentException("");
                 default:
                     if (a.StartsWith('-')) throw new ArgumentException($"unknown option {a}");

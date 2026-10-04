@@ -39,13 +39,13 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
             if (now.IsEncrypted) return new(ReplaceStatus.Skipped, SkipReason.Encrypted);
             if (now.IsReadOnly) return new(ReplaceStatus.Skipped, SkipReason.ReadOnly);
             var streamsBefore = Native.AlternateStreams(dup.Path);
+            var securityBefore = Sddl(dup.Path);
 
             journal.Begin(id, dup.Path, temp, backup);
             begun = true;
 
-            // 1. The clone, in a hidden temp file next to D, with D's ACL and times.
+            // 1. The clone, in a hidden temp file next to D, with D's times (ReplaceFile carries over D's ACL, which is checked below).
             strategy.Materialize(original.Path, temp, volume);
-            CopySecurity(dup.Path, temp);
             File.SetCreationTimeUtc(temp, DateTime.FromFileTimeUtc(now.CreationTicks));
             File.SetLastWriteTimeUtc(temp, DateTime.FromFileTimeUtc(now.WriteTicks));
 
@@ -74,15 +74,21 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
             var after = Native.ReadIdentity(dup.Path);
             if (after.WriteTicks != now.WriteTicks) File.SetLastWriteTimeUtc(dup.Path, DateTime.FromFileTimeUtc(now.WriteTicks));
             after = Native.ReadIdentity(dup.Path);
-            if (after.WriteTicks != now.WriteTicks || after.CreationTicks != now.CreationTicks || after.Attributes != now.Attributes
-                || !Native.AlternateStreams(dup.Path).SequenceEqual(streamsBefore))
+            var differences = new List<string>();
+            if (after.WriteTicks != now.WriteTicks) differences.Add("last-write time");
+            if (after.CreationTicks != now.CreationTicks) differences.Add("creation time");
+            if (after.Attributes != now.Attributes) differences.Add($"attributes {now.Attributes:x} -> {after.Attributes:x}");
+            if (!Native.AlternateStreams(dup.Path).SequenceEqual(streamsBefore)) differences.Add("named streams");
+            var securityAfter = Sddl(dup.Path);
+            if (securityAfter != securityBefore) differences.Add($"ACL ({securityBefore} -> {securityAfter})");
+            if (differences.Count > 0)
             {
                 // Something was not carried over: put the old file back.
                 held.Dispose(); held = null;
                 File.Move(backup, dup.Path, overwrite: true);
                 journal.End(id, "rolled-back");
                 begun = false;
-                return new(ReplaceStatus.Failed, "metadata or streams differed after the swap; original restored");
+                return new(ReplaceStatus.Failed, "differed after the swap (" + string.Join("; ", differences) + "); original restored");
             }
 
             // 5. Only now is the backup (D's old clusters) released.
@@ -133,17 +139,21 @@ public sealed class Replacer(IDedupStrategy strategy, VolumeInfo volume, Journal
         }
     }
 
-    private static void CopySecurity(string from, string to)
+    private static string Sddl(string path)
     {
         const AccessControlSections sections = AccessControlSections.Access | AccessControlSections.Owner | AccessControlSections.Group;
-        var sec = new FileInfo(from).GetAccessControl(sections);
-        new FileInfo(to).SetAccessControl(sec);
-        if (new FileInfo(to).GetAccessControl(sections).GetSecurityDescriptorSddlForm(sections)
-            != sec.GetSecurityDescriptorSddlForm(sections))
-            throw new IOException("could not copy the security descriptor exactly");
+        return Normalize(new FileInfo(path).GetAccessControl(sections).GetSecurityDescriptorSddlForm(sections));
+
     }
 
-    private static bool SameBytes(SafeFileHandle a, string tempPath, long size)
+    /// <summary>
+    /// Owner, group and the DACL's entries and protection must survive. Windows may add the "auto-inherited" control
+    /// flag (AI/AR) to the file ReplaceFile produces; it carries no permission, so it is left out of the comparison.
+    /// </summary>
+    public static string Normalize(string sddl) => System.Text.RegularExpressions.Regex.Replace(sddl, @"D:(P)?(?:AI|AR)+", "D:$1");
+
+    private static bool SameBytes
+(SafeFileHandle a, string tempPath, long size)
     {
         using var b = Native.OpenRead(tempPath, FileShare.Read);
         if (RandomAccess.GetLength(a) != size || RandomAccess.GetLength(b) != size) return false;

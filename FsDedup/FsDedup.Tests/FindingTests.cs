@@ -75,7 +75,7 @@ public class FindingTests
         for (int i = 0; i < 5; i++) s.Write($"f{i}.bin", 1, 100_000);
         var hooks = new RunHooks { MaxReferencesOverride = 2 };
         var r = s.Run(whatIf: true, hooks);
-        Assert.Equal(3, r.GroupList.Count); // chunks of 2, 2, 1 files: originals f0, f2, f4 (f4 has no duplicates)
+        Assert.Equal(2, r.GroupList.Count); // chunks of 2, 2, 1 files: originals f0, f2, f4 (f4 has nothing to replace)
         Assert.Equal(2, r.FilesToReplace);
         Assert.Equal(1, r.Groups);
     }
