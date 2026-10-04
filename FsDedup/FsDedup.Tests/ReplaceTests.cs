@@ -49,7 +49,7 @@ public class ReplaceTests
         Assert.False(Win.SameClusters(a, b));
         var free0 = Native.SettledFreeSpace(s.Root, 8, 60); // let the lazily written test files reach the disk first
 
-        var r = s.Run(whatIf: false, null, o => o.SettleSeconds = 8);
+        var r = s.Run(whatIf: false, null, o => o.SettleSeconds = 30);
 
         Assert.True(r.Errors.Count == 0, string.Join(" | ", r.Errors));
         Assert.Equal(3, r.FilesReplaced);
@@ -63,7 +63,8 @@ public class ReplaceTests
         Assert.True(Win.SameClusters(odd, oddCopy));
         Assert.False(Win.SameClusters(a, other));
         // Independent of the extent query: the volume really got space back (3 x 5 MB + 1 x ~5 MB, minus metadata).
-        long gained = Native.SettledFreeSpace(s.Root, 8, 60) - free0;
+        long target = (long)(0.8 * (3 * Size + Size - 1234));
+        long gained = Native.WaitForFreeSpace(s.Root, f => f - free0 > target, 60) - free0;
         Assert.True(gained > 0.8 * (3 * Size + Size - 1234), $"free space grew by only {gained}");
         Assert.True(r.FreeSpaceAfter > r.FreeSpaceBefore);
         Assert.Empty(Directory.GetFiles(s.Root, ".fsdedup-*", SearchOption.AllDirectories).Where(f => !f.EndsWith("cache.jsonl")));

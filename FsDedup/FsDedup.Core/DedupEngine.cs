@@ -114,6 +114,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         }
         else if (chunks.Any(c => c.Dups.Count > 0))
         {
+            var replaceTimer = Stopwatch.StartNew();
             report.BytesFreed = 0;
             report.FilesToReplace = 0;
             using var journal = new Journal(root);
@@ -156,6 +157,7 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
                     }
                 }
             }
+            report.ReplaceSeconds = replaceTimer.Elapsed.TotalSeconds;
             string jp = journal.Path;
             journal.Dispose();
             try { File.Delete(jp); } catch (IOException) { /* a leftover journal is harmless: recovery has nothing pending */ }
@@ -164,7 +166,9 @@ public sealed class DedupEngine(DedupOptions options, RunHooks? hooks = null, Te
         // 7. Cache, free space, report.
         try { cache.Save(cachePath, seen); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { errorList.Add($"cache not written: {ex.Message}"); }
-        report.FreeSpaceAfter = report.FilesReplaced > 0 ? Native.SettledFreeSpace(volume.Root, options.SettleSeconds, 60) : Native.FreeSpace(volume.Root);
+        report.FreeSpaceAfter = report.FilesReplaced > 0 && options.SettleSeconds > 0
+            ? Native.WaitForFreeSpace(volume.Root, free => free - report.FreeSpaceBefore >= report.BytesFreed * 0.9, options.SettleSeconds)
+            : Native.FreeSpace(volume.Root);
         foreach (var kv in skipped) report.Skipped[kv.Key] = kv.Value;
         report.Errors.AddRange(errors);
         report.Errors.AddRange(errorList);
@@ -216,7 +220,6 @@ internal sealed class ProgressPrinter : IDisposable
     private readonly Progress progress;
     private readonly TextWriter log;
     private readonly Stopwatch clock = Stopwatch.StartNew();
-    private volatile bool printed;
 
     public ProgressPrinter(Progress progress, TextWriter log)
     {
@@ -227,7 +230,6 @@ internal sealed class ProgressPrinter : IDisposable
     private void Print()
     {
         double mb = progress.BytesHashed / 1048576.0;
-        printed = true;
         log.WriteLine($"hashing: {mb:F0} MB, {mb / Math.Max(clock.Elapsed.TotalSeconds, 0.001):F0} MB/s, {progress.FilesHashed + progress.FilesFromCache} of {progress.FilesPlanned} files");
     }
 

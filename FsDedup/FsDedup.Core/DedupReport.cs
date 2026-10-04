@@ -32,6 +32,7 @@ public sealed class DedupReport
     public List<string> Recovered { get; set; } = new();
     public List<string> Errors { get; set; } = new();
     public List<GroupReport> GroupList { get; set; } = new();
+    public double ReplaceSeconds { get; set; }
     public double ElapsedSeconds { get; set; }
 }
 

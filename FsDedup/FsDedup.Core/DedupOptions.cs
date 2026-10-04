@@ -17,10 +17,10 @@ public sealed class DedupOptions
     public string Mode { get; set; } = "clone";
 
     /// <summary>
-    /// Seconds the volume's free space must stay unchanged before it is read for the report (ReFS returns freed clusters
-    /// 10-15 s late). 0 reads it at once.
+    /// Longest wait, in seconds, for the volume's free space to show the bytes freed (ReFS returns freed clusters
+    /// 10-15 s late, in one jump). The wait ends as soon as 90% of them are back. 0 reads free space at once.
     /// </summary>
-    public int SettleSeconds { get; set; } = 8;
+    public int SettleSeconds { get; set; } = 30;
 }
 
 /// <summary>Test seams: called between the steps of a replacement so a test can change a file at an exact moment.</summary>

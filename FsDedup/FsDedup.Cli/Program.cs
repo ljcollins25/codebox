@@ -17,7 +17,7 @@ internal static class Cli
           --cache path    hash cache file (default: <folder>\.fsdedup-cache.jsonl)
           --verbose       list every group and action
           --json          machine-readable report on stdout
-          --settle N      seconds free space must stay unchanged before it is read for the report (default 8; 0 = read at once)
+          --settle N      longest wait for free space to show what was freed (default 30 s; 0 = read at once)
           --mode clone    how duplicates share storage (only 'clone', ReFS block cloning, exists)
         """;
 
@@ -118,7 +118,7 @@ internal static class Cli
         if (r.WhatIf) w.WriteLine($"would replace {r.FilesToReplace} file(s), freeing {Bytes(r.BytesFreed)}");
         else
         {
-            w.WriteLine($"replaced {r.FilesReplaced} file(s), freed {Bytes(r.BytesFreed)} (sum of replaced file sizes)");
+            w.WriteLine($"replaced {r.FilesReplaced} file(s), freed {Bytes(r.BytesFreed)} (whole clusters of the replaced files) in {r.ReplaceSeconds:F1} s");
             w.WriteLine($"volume free space: {Bytes(r.FreeSpaceBefore)} before, {Bytes(r.FreeSpaceAfter)} after ({Bytes(r.FreeSpaceAfter - r.FreeSpaceBefore)} gained)");
         }
         foreach (var e in r.Errors) w.WriteLine(e.StartsWith("note:") ? e : $"error: {e}");

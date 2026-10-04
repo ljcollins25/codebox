@@ -115,6 +115,19 @@ public static class Native
         return last;
     }
 
+    /// <summary>Polls free space every half second until <paramref name="reached"/> says so or the time is up; returns the last reading.</summary>
+    public static long WaitForFreeSpace(string root, Func<long, bool> reached, int maxSeconds)
+    {
+        long last = FreeSpace(root);
+        var deadline = DateTime.UtcNow.AddSeconds(maxSeconds);
+        while (!reached(last) && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(500);
+            last = FreeSpace(root);
+        }
+        return last;
+    }
+
     // ---- streams -----------------------------------------------------------------------------------------
 
     /// <summary>Names and sizes of the named (alternate) data streams, excluding the main one; sorted.</summary>
