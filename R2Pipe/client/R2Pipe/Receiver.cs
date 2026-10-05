@@ -190,7 +190,7 @@ internal static class Receiver
                     if (item is StateItem si)
                     {
                         tracker.Update(si.State); gotState.TrySetResult();
-                        if (si.State.Meta.Status is "aborted" or "expired" or "done") return;
+                        if (si.State.Meta.Status is "aborted" or "expired") return;
                     }
                     else if (item is InlineItem ii)
                     {
@@ -205,6 +205,8 @@ internal static class Receiver
                         meter.AddBytes(data.Length);
                         pos.Advance(next + data.Length);
                     }
+                    // finished when the sender is done and every inline byte has arrived (they all precede the parts)
+                    if (tracker.Meta is { Status: "done" or "complete", TotalParts: not null } mm && pos.Pos >= mm.InlineSize && mm.Status == "done") return;
                 }
             }
             catch (OperationCanceledException) { }
