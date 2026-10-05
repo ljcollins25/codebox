@@ -13,6 +13,7 @@ RUN apk add --no-cache ca-certificates && mkdir -p /data
 COPY --from=build /go/bin/chisel /usr/local/bin/chisel
 COPY --from=build /out/router /usr/local/bin/router
 ENV LISTEN=:8080 AUTHFILE=/data/authfile.json CHISEL_BIN=/usr/local/bin/chisel
+LABEL tunnelbus.config="host-routing-1"
 EXPOSE 8080
 # Keep the Go GC lean for the 256 MiB "lite" instance.
 ENV GOMEMLIMIT=96MiB
