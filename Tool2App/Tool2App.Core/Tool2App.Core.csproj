@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Tool2App</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Microsoft.NET.HostModel (HostWriter.CreateAppHost, Bundler) is not published for current .NET on nuget.org
+    (the newest package is 5.0.0-preview.1, whose Bundler cannot write the v6 bundle format that .NET 8+ hosts read).
+    The SDK ships a current build next to msbuild, so we reference that DLL from the SDK that is building us:
+    $(MSBuildToolsPath) is <dotnet root>/sdk/<version>/ on Windows and Linux alike. Private=true copies it beside
+    our own assemblies so the tool also runs without an SDK (a dotnet tool or a plain build output).
+  -->
+  <ItemGroup>
+    <Reference Include="Microsoft.NET.HostModel">
+      <HintPath>$(MSBuildToolsPath)/Microsoft.NET.HostModel.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CheckHostModel" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(MSBuildToolsPath)/Microsoft.NET.HostModel.dll')">
+    <Error Text="Microsoft.NET.HostModel.dll was not found in the SDK at $(MSBuildToolsPath). Build with the .NET 10 SDK." />
+  </Target>
+
+</Project>

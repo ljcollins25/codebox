@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>tool2app</AssemblyName>
+    <RootNamespace>Tool2App.Cli</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- also installable as a dotnet tool: dotnet pack, then dotnet tool install -g tool2app -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>tool2app</ToolCommandName>
+    <PackageId>tool2app</PackageId>
+    <Description>Turn a .NET tool package into a standalone app.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tool2App.Core\Tool2App.Core.csproj" />
+  </ItemGroup>
+
+</Project>
