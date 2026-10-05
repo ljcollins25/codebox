@@ -76,3 +76,27 @@ test("access-setup creates token, policies, app; the secret goes to the file, no
   assert.equal(app.policies.length, 2);
   assert.deepEqual(JSON.parse(r.stdout), { team: "myteam.cloudflareaccess.com", aud: "AUD-TAG", application: "*.example.com", serviceTokenId: "T1" });
 });
+
+test("access-setup --github-org uses the GitHub login method id, and fails clearly without one", async () => {
+  const mk = (idps) => fakeApi((m, u) => {
+    if (m === "GET" && u.endsWith("/identity_providers")) return idps;
+    if (m === "GET" && u.endsWith("/organizations")) return { auth_domain: "t.cloudflareaccess.com" };
+    if (m === "POST" && u.endsWith("/service_tokens")) return { id: "T1", client_id: "c", client_secret: "s" };
+    if (m === "POST" && u.endsWith("/policies")) return { id: "P" + Math.random().toString(36).slice(2, 6) };
+    if (m === "POST" && u.endsWith("/apps")) return { id: "A1", aud: "AUD" };
+    return [];
+  });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tb-"));
+  let f = await mk([{ id: "IDP1", type: "github" }]);
+  let r = await run("access-setup.mjs", ["--zone", "z.dev", "--github-org", "myorg", "--out", path.join(dir, "a.json")], { CF_API_BASE: f.base, CLOUDFLARE_ACCOUNT_ID: "ACC" });
+  f.srv.close();
+  assert.equal(r.code, 0, r.stderr);
+  const pol = f.calls.find((c) => c.method === "POST" && c.url.endsWith("/policies")).body;
+  assert.deepEqual(pol.include, [{ "github-organization": { name: "myorg", identity_provider_id: "IDP1" } }]);
+  f = await mk([]);
+  r = await run("access-setup.mjs", ["--zone", "z.dev", "--github-org", "myorg", "--out", path.join(dir, "b.json")], { CF_API_BASE: f.base, CLOUDFLARE_ACCOUNT_ID: "ACC" });
+  f.srv.close();
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /GitHub login method/);
+  assert.equal(f.calls.filter((c) => c.method === "POST").length, 0);
+});

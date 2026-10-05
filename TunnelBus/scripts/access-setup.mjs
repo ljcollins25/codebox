@@ -57,9 +57,16 @@ async function policy(name, body) {
   if (hit) return hit.id;
   return (await cf.post(`${A}/policies`, { name, ...body })).result.id;
 }
+// The GitHub-organization rule needs the id of a configured GitHub login method.
+let githubIdp;
+if (a["github-org"]) {
+  const idps = (await cf.get(`${A}/identity_providers`)).result ?? [];
+  githubIdp = idps.find((i) => i.type === "github")?.id;
+  if (!githubIdp && !a["dry-run"]) throw new Error("no GitHub login method configured: Zero Trust > Settings > Authentication > Login methods > Add > GitHub");
+}
 const include = [
   ...(a.email ?? []).map((email) => ({ email: { email } })),
-  ...(a["github-org"] ? [{ "github-organization": { name: a["github-org"] } }] : []),
+  ...(a["github-org"] ? [{ "github-organization": { name: a["github-org"], identity_provider_id: githubIdp } }] : []),
 ];
 const humans = await policy("tunnel-bus: allow me", { decision: "allow", include });
 const machines = await policy("tunnel-bus: service tokens", { decision: "non_identity", include: [{ service_token: { token_id: tok.id } }] });
