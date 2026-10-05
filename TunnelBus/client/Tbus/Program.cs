@@ -34,7 +34,7 @@ internal static class App
           tbus login --admin-token               store the bus admin token (prompts, no echo)
           tbus logout                            forget stored credentials
         environment: TUNNEL_BUS_ADMIN_TOKEN, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET, TUNNEL_BUS_URL, TUNNEL_BUS_DOMAIN,
-                     TBUS_CHISEL (path to a chisel binary), TBUS_HOME (state folder)
+                     TBUS_HOME (state folder)
         """;
 
     public static async Task<int> RunAsync(string[] args, Host host, CancellationToken ct)
@@ -63,7 +63,7 @@ internal static class App
         catch (OperationCanceledException) { return 0; }
     }
 
-    private static int Version(Host host) { host.Out.WriteLine("tbus 1.0.0 (chisel " + ChiselLocator.Version + ")"); return 0; }
+    private static int Version(Host host) { host.Out.WriteLine("tbus 1.0.0 (chisel " + ChiselClient.Version + " protocol, built in)"); return 0; }
 
     internal static (List<string> positional, Dictionary<string, string?> options) ParseOptions(string[] args, string[] valueOptions, string[] flags)
     {
@@ -99,7 +99,7 @@ internal static class App
         var creds = new Credentials(host);
         var admin = creds.RequireAdminToken();
         using var bus = new BusClient(config.Bus, admin, creds.AccessHeaders());
-        return await new ShareRunner(host, config, creds, log, bus, new ChiselLocator(host, log)).RunAsync(specs, ct);
+        return await new ShareRunner(host, config, creds, log, bus).RunAsync(specs, ct);
     }
 
     private static BusClient Client(Host host, out AppConfig config)

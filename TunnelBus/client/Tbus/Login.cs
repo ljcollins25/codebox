@@ -38,9 +38,20 @@ internal static class Login
         return await BrowserLogin(host, log, creds, ct);
     }
 
+    private static string? FindOnPath(Host host, string name)
+    {
+        var exts = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", ".bat" } : new[] { "" };
+        foreach (var dir in (host.GetEnv("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            foreach (var ext in exts)
+            {
+                try { var f = Path.Combine(dir.Trim('"'), name + ext); if (File.Exists(f)) return f; } catch (ArgumentException) { }
+            }
+        return null;
+    }
+
     private static async Task<int> BrowserLogin(Host host, Log log, Credentials creds, CancellationToken ct)
     {
-        var cf = new ChiselLocator(host, log).FindOnPath("cloudflared")
+        var cf = FindOnPath(host, "cloudflared")
             ?? throw new UserError("Browser login needs cloudflared (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), which is not on PATH. Install it, or use: tbus login --service-token");
         var app = AppConfig.Load(host).Bus;
         log.Info("starting 'cloudflared access login' - finish the GitHub sign-in in the browser");

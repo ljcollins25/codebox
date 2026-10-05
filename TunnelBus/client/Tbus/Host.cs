@@ -8,11 +8,13 @@ internal sealed class Host
     public TextWriter Out { get; init; } = Console.Out;
     public TextWriter Err { get; init; } = Console.Error;
     public Func<string, string?> GetEnv { get; init; } = Environment.GetEnvironmentVariable;
-    /// <summary>State folder: config.json, secrets, cached chisel. TBUS_HOME overrides it.</summary>
+    /// <summary>State folder: config.json and secrets. TBUS_HOME overrides it.</summary>
     public string Home { get; init; } = DefaultHome(Environment.GetEnvironmentVariable);
     /// <summary>Prompts and reads one line; hidden = no echo. Null when no console input.</summary>
     public Func<string, bool, string?> Prompt { get; init; } = ConsolePrompt;
     public string MachineName { get; init; } = Environment.MachineName;
+    /// <summary>chisel --keepalive: how often the connection is pinged.</summary>
+    public TimeSpan KeepAlive { get; init; } = TimeSpan.FromSeconds(25);
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(10);
     public TimeSpan BackoffStart { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan BackoffMax { get; init; } = TimeSpan.FromSeconds(30);

@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Tbus.Tests" />
+    <InternalsVisibleTo Include="Tbus.Bench" />
   </ItemGroup>
 
   <!-- same switch the Hermes CLI uses: dotnet pack -p:_IsPacking=true gives a framework-dependent dotnet tool -->
@@ -36,6 +37,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.42" />
   </ItemGroup>
 
 </Project>
