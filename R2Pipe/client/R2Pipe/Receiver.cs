@@ -204,7 +204,7 @@ internal static class Receiver
                     if (info.State == "acked")
                     {
                         if (!resume.Done.Contains(n)) throw new PipeException($"part {n} was already received and deleted, and is not in the resume file");
-                        await gate.WaitTurn(n).ConfigureAwait(false);
+                        await gate.WaitTurn(n).WaitAsync(linked.Token).ConfigureAwait(false);
                         lock (wlock) { total += info.Size; count++; resumed++; hashValid = false; }
                         meter.AddBytes(info.Size); meter.PartDone(); meter.PartResumed();
                         gate.Done(n);
@@ -221,7 +221,7 @@ internal static class Receiver
                             if (sha != info.Sha256) throw new IOException($"part {n}: checksum mismatch (got {sha[..12]}…, expected {info.Sha256[..12]}…)");
                             return 0;
                         }, o.Delay, linked.Token, (a, e) => { meter.Retried(); o.Info?.Invoke($"part {n}: attempt {a} failed ({e.Message}), retrying"); }).ConfigureAwait(false);
-                        await gate.WaitTurn(n).ConfigureAwait(false);
+                        await gate.WaitTurn(n).WaitAsync(linked.Token).ConfigureAwait(false);
                         await sink.WriteAsync((n - 1) * partSize, buf, (int)info.Size, linked.Token).ConfigureAwait(false);
                         lock (wlock) { overall.AppendData(buf, 0, (int)info.Size); total += info.Size; count++; }
                         meter.AddBytes(info.Size);
