@@ -24,7 +24,7 @@ export class Transfer implements DurableObject {
     for (const ws of this.ctx.getWebSockets()) { try { ws.send(msg); } catch { /* closed */ } }
     const w = this.waiters; this.waiters = []; for (const f of w) f();
     const done = meta.status === "aborted" || meta.status === "done";
-    await this.env.REGISTRY.get(this.env.REGISTRY.idFromName("registry")).fetch("https://do/upsert", { method: "POST", body: JSON.stringify({ id: meta.id, name: meta.name, size: meta.size, totalSize: meta.totalSize, status: meta.status, createdAt: meta.createdAt, expiresAt: meta.expiresAt, mode: meta.mode, remove: done }) }).catch(() => {});
+    await this.env.REGISTRY.get(this.env.REGISTRY.idFromName("registry")).fetch("https://do/upsert", { method: "POST", body: JSON.stringify({ id: meta.id, name: meta.name, size: meta.size, totalSize: meta.totalSize, status: meta.status, createdAt: meta.createdAt, expiresAt: meta.expiresAt, mode: meta.mode, version: meta.version, remove: done }) }).catch(() => {});
   }
 
   private async getUrl(m: Meta, key: string, n: number, base: string): Promise<string> {
@@ -182,12 +182,14 @@ export class Registry implements DurableObject {
     const p = new URL(req.url).pathname;
     if (p === "/upsert") {
       const b = (await req.json()) as any;
-      if (b.remove) await this.ctx.storage.delete("t:" + b.id);
-      else await this.ctx.storage.put("t:" + b.id, b);
+      // Upserts from parallel acks can arrive out of order: keep the newest version and leave a tombstone for finished transfers
+      const old = (await this.ctx.storage.get("t:" + b.id)) as any;
+      if (old && typeof b.version === "number" && typeof old.version === "number" && b.version <= old.version) return json({ ok: true, stale: true });
+      await this.ctx.storage.put("t:" + b.id, b.remove ? { id: b.id, removed: true, version: b.version ?? 0, expiresAt: b.expiresAt ?? Date.now() + 3600_000 } : b);
       return json({ ok: true });
     }
     const all = [...(await this.ctx.storage.list({ prefix: "t:" })).values()] as any[];
     const cutoff = Date.now();
-    return json({ transfers: all.filter((x) => x.expiresAt > cutoff).sort((a, b) => b.createdAt - a.createdAt) });
+    return json({ transfers: all.filter((x) => !x.removed && x.expiresAt > cutoff).sort((a, b) => b.createdAt - a.createdAt) });
   }
 }
