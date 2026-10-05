@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -29,7 +30,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	rt := &Router{Reg: reg, AdminToken: token, started: time.Now()}
+	rt := &Router{Reg: reg, AdminToken: token, started: time.Now(),
+		BaseDomain: strings.ToLower(strings.Trim(os.Getenv("BUS_BASE_DOMAIN"), ". ")), ControlHost: strings.ToLower(os.Getenv("BUS_CONTROL_HOST"))}
 	if bin := env("CHISEL_BIN", "chisel"); bin != "none" {
 		cp := env("CHISEL_PORT", "8081")
 		rt.ChiselAddr = "127.0.0.1:" + cp

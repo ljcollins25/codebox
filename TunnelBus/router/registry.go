@@ -16,7 +16,9 @@ import (
 
 // NameRe is the set of valid provider names. Leading "_" is reserved for the
 // router's own paths (/_api, /_chisel, /_health).
-var NameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+var NameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`) // no "--": that separates a host prefix from the name
+
+const maxNameLen = 40
 
 // Entry is one live registration.
 type Entry struct {
@@ -64,8 +66,8 @@ func (r *Registry) derive(label string) string {
 
 // Register is idempotent: an existing name keeps its port and credentials.
 func (r *Registry) Register(name string) (Entry, bool, error) {
-	if !NameRe.MatchString(name) {
-		return Entry{}, false, fmt.Errorf("invalid name %q (want %s)", name, NameRe)
+	if len(name) > maxNameLen || !NameRe.MatchString(name) {
+		return Entry{}, false, fmt.Errorf("invalid name %q (want %s, max %d chars)", name, NameRe, maxNameLen)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

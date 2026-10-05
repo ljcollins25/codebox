@@ -18,7 +18,12 @@ type Router struct {
 	Reg        *Registry
 	AdminToken string
 	ChiselAddr string // host:port of the local chisel server ("" = none)
-	started    time.Time
+	// BaseDomain enables host routing: <name>.<BaseDomain> and <prefix>--<name>.<BaseDomain>.
+	BaseDomain string
+	// ControlHost serves /_api, /_chisel and /_health under BaseDomain (e.g. bus.example.com).
+	// It is never a provider host.
+	ControlHost string
+	started     time.Time
 }
 
 const (
@@ -26,25 +31,80 @@ const (
 	chiselPrefix = "/_chisel"
 )
 
+// Target is where a request goes.
+type Target struct {
+	Name       string
+	Path       string // path to forward
+	HostPrefix string // host routing only: everything left of "--" in the label ("3000" in 3000--hexad)
+	ByHost     bool
+}
+
+// HostOf is the public host of a request, without port. The Worker sets X-Bus-Host
+// (it always overwrites any client value); direct callers (tests, local runs) fall back to Host.
+func HostOf(req *http.Request) string {
+	h := req.Header.Get("X-Bus-Host")
+	if h == "" {
+		h = req.Host
+	}
+	if i := strings.LastIndexByte(h, ':'); i >= 0 && !strings.Contains(h[i:], "]") {
+		h = h[:i]
+	}
+	return strings.ToLower(h)
+}
+
+// hostMode reports whether the request's host is a provider host under BaseDomain.
+func (rt *Router) hostMode(host string) bool {
+	if rt.BaseDomain == "" {
+		return false
+	}
+	return strings.HasSuffix(host, "."+rt.BaseDomain) && host != rt.ControlHost
+}
+
+// SplitLabel splits a host label into its pass-through prefix and the provider name.
+// "hexad" -> ("", "hexad"); "3000--hexad" -> ("3000", "hexad"); "a--b--hexad" -> ("a--b", "hexad").
+// The provider name is what follows the LAST "--"; names never contain "--".
+func SplitLabel(label string) (prefix, name string) {
+	if i := strings.LastIndex(label, "--"); i >= 0 {
+		return label[:i], label[i+2:]
+	}
+	return "", label
+}
+
 // Resolve finds the provider a request is for and the path to forward.
-// This is the one place to add subdomain routing later: look at req.Host
-// (<name>.bus.example.com) first and, when it matches, return the path unchanged.
-func (rt *Router) Resolve(req *http.Request) (name, forwardPath string, ok bool) {
+//   - host routing (BaseDomain set, host under it): the label directly left of
+//     BaseDomain; path unchanged. Single label only: "a.b.example.com" is not routed.
+//   - otherwise path routing (workers.dev): the first path segment, which is stripped.
+func (rt *Router) Resolve(req *http.Request) (Target, bool) {
+	host := HostOf(req)
+	if rt.hostMode(host) {
+		label := strings.TrimSuffix(host, "."+rt.BaseDomain)
+		if label == "" || strings.Contains(label, ".") || strings.HasPrefix(label, "--") {
+			return Target{}, false
+		}
+		prefix, name := SplitLabel(label)
+		if !NameRe.MatchString(name) {
+			return Target{}, false
+		}
+		return Target{Name: name, Path: req.URL.Path, HostPrefix: prefix, ByHost: true}, true
+	}
 	p := req.URL.Path
 	if !strings.HasPrefix(p, "/") || len(p) < 2 {
-		return "", "", false
+		return Target{}, false
 	}
 	rest := p[1:]
-	name = rest
-	forwardPath = "/"
+	name, fwd := rest, "/"
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		name, forwardPath = rest[:i], rest[i:]
+		name, fwd = rest[:i], rest[i:]
 	}
-	return name, forwardPath, NameRe.MatchString(name)
+	return Target{Name: name, Path: fwd}, NameRe.MatchString(name)
 }
 
 func (rt *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	p := req.URL.Path
+	if rt.hostMode(HostOf(req)) {
+		rt.toProvider(w, req)
+		return
+	}
 	switch {
 	case p == "/_health":
 		writeJSON(w, 200, map[string]any{"ok": true, "uptimeSeconds": int(time.Since(rt.started).Seconds()), "providers": len(rt.Reg.List())})
@@ -83,6 +143,10 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&body); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "bad json: " + err.Error()})
+			return
+		}
+		if rt.ControlHost != "" && body.Name == strings.SplitN(rt.ControlHost, ".", 2)[0] {
+			writeJSON(w, 400, map[string]string{"error": "name is reserved for the control host"})
 			return
 		}
 		e, created, err := rt.Reg.Register(body.Name)
@@ -131,7 +195,7 @@ func portOpen(port int) bool {
 // newProxy builds a reverse proxy to host:port that rewrites the path.
 // ReverseProxy passes WebSocket upgrades through; FlushInterval -1 flushes
 // every write, so SSE and streaming bodies are not buffered.
-func newProxy(hostport, path, prefix string) *httputil.ReverseProxy {
+func newProxy(hostport, path, prefix, publicHost, hostPrefix string) *httputil.ReverseProxy {
 	target := &url.URL{Scheme: "http", Host: hostport}
 	return &httputil.ReverseProxy{
 		FlushInterval: -1,
@@ -139,8 +203,17 @@ func newProxy(hostport, path, prefix string) *httputil.ReverseProxy {
 			pr.SetURL(target)
 			pr.Out.URL.Path = path
 			pr.Out.URL.RawPath = ""
-			pr.Out.Host = pr.In.Host // keep the public Host (WebSocket Origin checks, absolute URLs)
+			if publicHost == "" {
+				publicHost = pr.In.Host
+			}
+			pr.Out.Host = publicHost // keep the public Host (WebSocket Origin checks, absolute URLs)
 			pr.SetXForwarded()
+			pr.Out.Header.Set("X-Forwarded-Host", publicHost)
+			pr.Out.Header.Del("X-Bus-Host")
+			pr.Out.Header.Del("X-Bus-Host-Prefix")
+			if hostPrefix != "" {
+				pr.Out.Header.Set("X-Bus-Host-Prefix", hostPrefix)
+			}
 			if prefix != "" {
 				pr.Out.Header.Set("X-Forwarded-Prefix", prefix)
 			}
@@ -160,25 +233,30 @@ func (rt *Router) toChisel(w http.ResponseWriter, req *http.Request) {
 	if path == "" {
 		path = "/"
 	}
-	newProxy(rt.ChiselAddr, path, "").ServeHTTP(w, req)
+	newProxy(rt.ChiselAddr, path, "", "", "").ServeHTTP(w, req)
 }
 
 func (rt *Router) toProvider(w http.ResponseWriter, req *http.Request) {
-	name, fwd, ok := rt.Resolve(req)
+	t, ok := rt.Resolve(req)
 	if !ok {
-		http.Error(w, "tunnel bus: use /<name>/... (see /_health)", http.StatusNotFound)
+		http.Error(w, "tunnel bus: unknown host or path (see /_health)", http.StatusNotFound)
 		return
 	}
-	e, found := rt.Reg.Get(name)
+	e, found := rt.Reg.Get(t.Name)
 	if !found {
-		http.Error(w, fmt.Sprintf("tunnel bus: %q is not registered", name), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("tunnel bus: %q is not registered", t.Name), http.StatusNotFound)
 		return
 	}
-	if fwd == "/" && !strings.HasSuffix(req.URL.Path, "/") {
-		http.Redirect(w, req, "/"+name+"/"+queryOf(req), http.StatusTemporaryRedirect)
+	hostport := "127.0.0.1:" + strconv.Itoa(e.Port)
+	if t.ByHost {
+		newProxy(hostport, t.Path, "", HostOf(req), t.HostPrefix).ServeHTTP(w, req)
 		return
 	}
-	newProxy("127.0.0.1:"+strconv.Itoa(e.Port), fwd, "/"+name).ServeHTTP(w, req)
+	if t.Path == "/" && !strings.HasSuffix(req.URL.Path, "/") {
+		http.Redirect(w, req, "/"+t.Name+"/"+queryOf(req), http.StatusTemporaryRedirect)
+		return
+	}
+	newProxy(hostport, t.Path, "/"+t.Name, "", "").ServeHTTP(w, req)
 }
 
 func queryOf(r *http.Request) string {
