@@ -37,6 +37,13 @@ if (!team) {
   team = org.result.auth_domain;
 }
 
+// The GitHub-organization rule needs the id of a configured GitHub login method.
+let githubIdp;
+if (a["github-org"]) {
+  const idps = (await cf.get(`${A}/identity_providers`)).result ?? [];
+  githubIdp = idps.find((i) => i.type === "github")?.id;
+  if (!githubIdp && !a["dry-run"]) throw new Error("no GitHub login method configured: Zero Trust > Settings > Authentication > Login methods > Add > GitHub");
+}
 // 1. Service token (one per consumer; the secret is only returned at creation).
 const tokens = (await cf.get(`${A}/service_tokens`)).result ?? [];
 let tok = tokens.find((t) => t.name === a["token-name"]);
@@ -56,13 +63,6 @@ async function policy(name, body) {
   const hit = existingPolicies.find((p) => p.name === name);
   if (hit) return hit.id;
   return (await cf.post(`${A}/policies`, { name, ...body })).result.id;
-}
-// The GitHub-organization rule needs the id of a configured GitHub login method.
-let githubIdp;
-if (a["github-org"]) {
-  const idps = (await cf.get(`${A}/identity_providers`)).result ?? [];
-  githubIdp = idps.find((i) => i.type === "github")?.id;
-  if (!githubIdp && !a["dry-run"]) throw new Error("no GitHub login method configured: Zero Trust > Settings > Authentication > Login methods > Add > GitHub");
 }
 const include = [
   ...(a.email ?? []).map((email) => ({ email: { email } })),

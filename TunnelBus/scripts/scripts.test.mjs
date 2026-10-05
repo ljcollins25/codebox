@@ -90,7 +90,7 @@ test("access-setup --github-org uses the GitHub login method id, and fails clear
   let f = await mk([{ id: "IDP1", type: "github" }]);
   let r = await run("access-setup.mjs", ["--zone", "z.dev", "--github-org", "myorg", "--out", path.join(dir, "a.json")], { CF_API_BASE: f.base, CLOUDFLARE_ACCOUNT_ID: "ACC" });
   f.srv.close();
-  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.code, 0, r.stderr + r.stdout);
   const pol = f.calls.find((c) => c.method === "POST" && c.url.endsWith("/policies")).body;
   assert.deepEqual(pol.include, [{ "github-organization": { name: "myorg", identity_provider_id: "IDP1" } }]);
   f = await mk([]);
