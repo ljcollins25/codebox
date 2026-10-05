@@ -63,7 +63,7 @@ internal sealed class WsFeed : IReceiveFeed
     public async ValueTask DisposeAsync()
     {
         try { if (_ws.State == WebSocketState.Open) await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", new CancellationTokenSource(1000).Token).ConfigureAwait(false); } catch { }
-        _ws.Dispose();
+        _ws.Abort(); _ws.Dispose();
     }
 }
 
