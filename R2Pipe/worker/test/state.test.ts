@@ -90,6 +90,33 @@ describe("transfer state machine", () => {
     expect((await f2.core.meta()).status).toBe("done");
   });
 
+  it("inline bytes: ordered, bounded, replayable, and parts must start right after them", async () => {
+    const f = fakes();
+    await f.core.create({ id: "ti", mode: "binding", partSize: MB });
+    const b = (n: number) => new Uint8Array(n).buffer;
+    await f.core.inlineAppend(0, b(100));
+    await f.core.inlineAppend(100, b(50));
+    expect(await code(f.core.inlineAppend(120, b(1)))).toBe(409);               // gap or overlap
+    expect(await code(f.core.inlineAppend(150, new Uint8Array(1024 * 1024).buffer))).toBe(413);
+    expect((await f.core.inlineChunks()).map((c) => [c.offset, c.data.byteLength])).toEqual([[0, 100], [100, 50]]);
+    f.objs.set(partKey("ti", 1), 10);
+    expect(await code(f.core.partReady(1, { offset: 0, size: 10, sha256: H }))).toBe(0);       // accepted here, but complete will refuse the gap
+    expect(await code(f.core.complete({ parts: 1, size: 160, sha256: H, inline: 150 }))).toBe(409);
+    expect(await code(f.core.inlineAppend(150, b(1)))).toBe(409);               // inline must come before the parts
+    await f.core.abort();
+    const g = fakes();
+    await g.core.create({ id: "tj", mode: "binding", partSize: MB });
+    await g.core.inlineAppend(0, b(100));
+    g.objs.set(partKey("tj", 1), 10);
+    await g.core.partReady(1, { offset: 100, size: 10, sha256: H });
+    expect((await g.core.complete({ parts: 1, size: 110, sha256: H, inline: 100 })).meta.status).toBe("complete");
+    const h = fakes();
+    await h.core.create({ id: "tk", mode: "binding", partSize: MB });
+    await h.core.inlineAppend(0, b(100));
+    expect(await code(h.core.complete({ parts: 0, size: 100, sha256: H, inline: 99 }))).toBe(409);
+    expect((await h.core.complete({ parts: 0, size: 100, sha256: H, inline: 100 })).meta.status).toBe("done");
+  });
+
   it("an empty transfer completes at once; a part beyond the total is refused", async () => {
     const f = fakes();
     await f.core.create({ id: "t5", mode: "binding", partSize: MB });
