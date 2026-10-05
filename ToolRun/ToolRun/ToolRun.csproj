@@ -1,0 +1,93 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>toolrun</AssemblyName>
+    <RootNamespace>ToolRun</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Version>1.0.0</Version>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>false</UseSystemResourceKeys>
+    <!-- also installable as a dotnet tool: dotnet pack, then dotnet tool install -g toolrun -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>toolrun</ToolCommandName>
+    <PackageId>toolrun</PackageId>
+    <Description>Download and run a .NET tool from NuGet in one command, with or without .NET installed.</Description>
+  </PropertyGroup>
+
+  <!-- Release shape: dotnet publish ToolRun/ToolRun -c Release -r linux-x64   (win-x64, osx-arm64 likewise) gives ONE self-contained executable. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- the bundle is compressed: with the embedded runtime on top this is about the size of the plain bundle (see README) -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <!-- AppHost creation: HostWriter from the SDK's Microsoft.NET.HostModel, as in Tool2App.Core -->
+  <ItemGroup>
+    <Reference Include="Microsoft.NET.HostModel">
+      <HintPath>$(MSBuildToolsPath)/Microsoft.NET.HostModel.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    Release builds (-r <rid>) carry a dotnet root of their own runtime inside the executable: the runtime pack the single-file app is built from, in the layout the
+    host expects (host/fxr/<v>/hostfxr, shared/Microsoft.NETCore.App/<v>/...), as a zip resource, plus the generic apphost. toolrun unpacks them into its cache on first use,
+    so running a tool needs no download. -p:EmbedRuntime=false builds without (the runtime pack is then downloaded on first use).
+  -->
+  <PropertyGroup>
+    <EmbedRuntime Condition="'$(EmbedRuntime)' == ''">true</EmbedRuntime>
+  </PropertyGroup>
+  <Target Name="StageEmbeddedRuntime" Condition="'$(RuntimeIdentifier)' != '' AND '$(EmbedRuntime)' == 'true'" DependsOnTargets="ResolveFrameworkReferences" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <_CorePack Include="@(ResolvedRuntimePack)" Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_PackDir>%(_CorePack.PackageDirectory)</_PackDir>
+      <_PackVer>%(_CorePack.NuGetPackageVersion)</_PackVer>
+      <_Stage>$(IntermediateOutputPath)embedded-root/</_Stage>
+      <_Native>$(_PackDir)/runtimes/$(RuntimeIdentifier)/native</_Native>
+      <_Lib>$(_PackDir)/runtimes/$(RuntimeIdentifier)/lib/$(TargetFramework)</_Lib>
+    </PropertyGroup>
+    <Error Condition="'$(_PackDir)' == '' OR !Exists('$(_Lib)')" Text="The Microsoft.NETCore.App runtime pack for $(RuntimeIdentifier) was not found (looked in '$(_Lib)'); use -p:EmbedRuntime=false to build without an embedded runtime." />
+    <ItemGroup>
+      <_StageLib Include="$(_Lib)/*" Exclude="$(_Lib)/*.runtimeconfig.json" />
+      <_StageHostfxr Include="$(_Native)/*hostfxr*" />
+      <_StageNative Include="$(_Native)/*" Exclude="@(_StageHostfxr)" />
+    </ItemGroup>
+    <RemoveDir Directories="$(_Stage)" />
+    <Copy SourceFiles="@(_StageLib)" DestinationFolder="$(_Stage)shared/Microsoft.NETCore.App/$(_PackVer)" />
+    <Copy SourceFiles="@(_StageNative)" DestinationFolder="$(_Stage)shared/Microsoft.NETCore.App/$(_PackVer)" />
+    <Copy SourceFiles="@(_StageHostfxr)" DestinationFolder="$(_Stage)host/fxr/$(_PackVer)" />
+    <Delete Files="$(IntermediateOutputPath)toolrun.runtime.zip" />
+    <ZipDirectory SourceDirectory="$(_Stage)" DestinationFile="$(IntermediateOutputPath)toolrun.runtime.zip" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(IntermediateOutputPath)toolrun.runtime.zip" LogicalName="toolrun.runtime.zip" />
+      <_AppHostPack Include="@(ResolvedAppHostPack)" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_AppHostFile>%(_AppHostPack.PackageDirectory)/runtimes/$(RuntimeIdentifier)/native/apphost$(_NativeExecutableExtension)</_AppHostFile>
+    </PropertyGroup>
+    <ItemGroup Condition="Exists('$(_AppHostFile)')">
+      <EmbeddedResource Include="$(_AppHostFile)" LogicalName="toolrun.apphost" />
+    </ItemGroup>
+    <Message Importance="high" Text="Embedding the .NET $(_PackVer) runtime ($(RuntimeIdentifier)) and the apphost ($(_AppHostFile)) in toolrun" />
+  </Target>
+
+  <!-- -p:BundleAspNetCore=true puts the ASP.NET Core shared framework into toolrun too, so web tools can also run in-process (bigger file) -->
+  <ItemGroup Condition="'$(BundleAspNetCore)' == 'true'">
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Tool2App\Tool2App.Core\Tool2App.Core.csproj" />
+    <InternalsVisibleTo Include="ToolRun.Tests" />
+  </ItemGroup>
+
+</Project>

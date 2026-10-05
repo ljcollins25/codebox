@@ -98,6 +98,7 @@ public sealed class PackageStore
 {
     private readonly IPackageFeed _feed;
     public string CacheDir { get; }
+    public string Description => _feed.Description;
     public Action<string>? Log { get; set; }
 
     public PackageStore(IPackageFeed feed, string? cacheDir = null)
