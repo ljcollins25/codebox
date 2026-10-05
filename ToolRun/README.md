@@ -128,7 +128,7 @@ toolrun can also be turned into a standalone app by **tool2app** (`tool2app tool
 
 ## Tests
 
-`dotnet test ToolRun/ToolRun.Tests` (92 tests, about 10 s): argument splitting, version resolution (latest stable, prerelease, explicit, `--update`), cache layout and reuse with the network
+`dotnet test ToolRun/ToolRun.Tests` (101 tests, about 10 s): argument splitting, version resolution (latest stable, prerelease, explicit, `--update`), cache layout and reuse with the network
 proven unused, roll-forward tables, the private root (layout, reuse, ASP.NET Core added to the same root, `--runtime-version`, `--no-download-runtime`, an embedded runtime and apphost needing no network, which
 tools get `DOTNET_ROLL_FORWARD`), `--prefer-installed`, the `--which` dry run, nuget.config / config / env precedence, the v3 to v2 fallback, a multi-source feed — against a loopback NuGet v2/v3 server with fake runtime and host
 packs — and **real processes through the real host**: `toolrun.dll` installs the compiled TestChild program as a tool and runs it through an apphost on a private root made of this machine's runtime
@@ -144,5 +144,5 @@ net10 root, and SIGTERM/SIGINT forwarding (Unix only). Those run only where an S
 - A tool runs on a newer major than it was built for (net8 on net10) through roll-forward, as with any `DOTNET_ROLL_FORWARD=Major` run; a tool that breaks on a newer runtime needs `--prefer-installed` with its own .NET or `--runtime-version`.
 - Installs are extract-then-move: on Windows a virus scanner or indexer can briefly hold the freshly extracted files, so every move (tool folder, runtime folders, apphost) is retried 10 times over about 5 s on access/IO errors, a finished install that another process put there meanwhile is accepted, and as a last resort the folder is copied instead.
 - Tools shipping native executables beside the dll lose their execute bit on Linux/macOS (zip extraction); the entry apphost is fixed up.
-- The macOS arm64 binary is untested by me (built on a macOS runner by the workflow, not run there).
+- **macOS is untested.** Nobody has run the test suite on a Mac, so the release workflow runs the tests on Linux and Windows only and just builds osx-arm64 (plus a smoke test of the published file and a real tool, which may fail without blocking the release). Apphosts made on macOS from a real Mach-O host are ad-hoc signed by HostModel, as arm64 requires; a template that is not Mach-O is never signed.
 - toolrun does not self-update, and `--update` never removes older cached versions (`--clean <id>` does).

@@ -15,11 +15,31 @@ public static class AppHosts
         var template = await TemplateAsync(rid, hostVersionHint, systemRoot, home, packs, info, ct).ConfigureAwait(false);
         var tmp = exe + "." + Guid.NewGuid().ToString("N") + ".tmp";
         HostWriter.CreateAppHost(template, tmp, Path.GetFileName(entryPath), windowsGraphicalUserInterface: false,
-            enableMacOSCodeSign: rid.IsMac && OperatingSystem.IsMacOS());
+            enableMacOSCodeSign: ShouldSign(rid, template, OperatingSystem.IsMacOS()));
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         SafeMove.File(tmp, exe);
         return exe;
+    }
+
+    /// <summary>
+    /// arm64 macOS refuses unsigned binaries, so a real apphost made on a Mac is signed (ad hoc) by HostModel. HostModel can only sign a Mach-O file and throws on anything else,
+    /// so never for a template that is not one (a stand-in) and never when not running on macOS (the signing tool is macOS's).
+    /// </summary>
+    public static bool ShouldSign(Rid rid, string template, bool runningOnMac) => rid.IsMac && runningOnMac && IsMachO(template);
+
+    /// <summary>Mach-O thin (32/64 bit, either byte order) or fat magic number.</summary>
+    public static bool IsMachO(string path)
+    {
+        try
+        {
+            using var f = File.OpenRead(path);
+            Span<byte> m = stackalloc byte[4];
+            if (f.Read(m) < 4) return false;
+            uint be = (uint)(m[0] << 24 | m[1] << 16 | m[2] << 8 | m[3]);
+            return be is 0xFEEDFACE or 0xFEEDFACF or 0xCEFAEDFE or 0xCFFAEDFE or 0xCAFEBABE or 0xBEBAFECA or 0xCAFEBABF or 0xBFBAFECA;
+        }
+        catch (IOException) { return false; }
     }
 
     /// <summary>The generic apphost: cached in the home folder; else the one inside toolrun; else an installed SDK's host pack; else the host pack from NuGet.</summary>

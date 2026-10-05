@@ -57,7 +57,9 @@ jobs:
     - name: Build
       run: dotnet build ToolRun/ToolRun.sln -c Release --no-restore
 
+    # Tests run on Linux and Windows. The osx-arm64 job only builds (nobody has run the suite on a Mac); it smoke-tests the published file below.
     - name: Test
+      if: matrix.rid != 'osx-arm64'
       run: dotnet test ToolRun/ToolRun.sln -c Release --no-build
 
     # a runtime identifier turns on self-contained single-file, compression and the embedded runtime (see ToolRun.csproj)
@@ -85,6 +87,15 @@ jobs:
         if [ "${{ matrix.rid }}" = "win-x64" ]; then out/toolrun.exe --version; \
         elif [ "${{ matrix.rid }}" = "linux-x64" ]; then out/toolrun --version; \
         else out/toolrun-osx-arm64 --version; fi
+
+    # real apphosts on arm64 macOS must be (ad-hoc) signed or they will not start: run a real tool through the published toolrun
+    - name: Smoke test a real tool (osx-arm64)
+      if: matrix.rid == 'osx-arm64'
+      continue-on-error: true
+      run: |
+        export TOOLRUN_HOME="$RUNNER_TEMP/toolrun-home"
+        out/toolrun-osx-arm64 dotnet-outdated-tool --verbose -- --version
+        codesign -dv "$TOOLRUN_HOME"/tools/dotnet-outdated-tool/*/tools/*/any/dotnet-outdated
 
     - name: Upload
       uses: actions/upload-artifact@v4
