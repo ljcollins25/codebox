@@ -69,7 +69,9 @@ public class InlineTests
     {
         var s = new FakeServer();
         await Run(s, Util.Random(3000 + 9 * 1024), Opts(first: 1024, max: 1024));
-        Assert.Equal(3, s.PutUrlBatches);   // 9 parts / batch of 4
+        // 9 parts in batches of 4: at least 3 requests, and batched (far fewer than one per part). Parts in flight can ask before a
+        // batch arrives, so the exact count depends on timing (it was 4 once on a loaded Windows machine).
+        Assert.InRange(s.PutUrlBatches, 3, 5);
     }
 
     [Fact]
