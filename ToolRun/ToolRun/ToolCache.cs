@@ -141,8 +141,8 @@ public sealed class ToolCache
                 }
                 File.WriteAllText(Path.Combine(tmp, MetaFile), JsonSerializer.Serialize(meta, Json));
 
-                try { Directory.Move(tmp, final); }
-                catch (IOException) when (Directory.Exists(final) && Read(final) is not null) { /* another toolrun installed it first */ }
+                // a finished folder already there means another toolrun installed it first
+                SafeMove.Dir(tmp, final, () => Read(final) is not null);
                 log($"installed {meta.Id} {version} ({ToolRunHome.FormatSize(ToolRunHome.SizeOf(final))}) to {final}");
                 return new CachedTool(Read(final) ?? meta, final);
             }
@@ -150,7 +150,7 @@ public sealed class ToolCache
         }
         finally
         {
-            try { if (Directory.Exists(tmp)) ToolRunHome.DeleteDir(tmp); } catch (IOException) { }
+            SafeMove.DiscardQuietly(tmp);
             foreach (var p in downloaded) ToolRunHome.DeleteDownload(p);
         }
     }

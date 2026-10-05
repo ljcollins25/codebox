@@ -1,0 +1,128 @@
+name: Build and Release ToolRun
+run-name: ToolRun R#${{ github.run_number }} (${{ github.event.repository.updated_at }}) [${{ github.event.head_commit.message }}]
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ToolRun/**'
+      - 'Tool2App/Tool2App.Core/**'
+      - '.github/workflows/buildtoolrun.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build toolrun (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            file: toolrun.exe
+          - os: ubuntu-latest
+            rid: linux-x64
+            file: toolrun
+          # built on a Mac so the SDK ad-hoc signs the executable (arm64 macOS will not run an unsigned one)
+          - os: macos-14
+            rid: osx-arm64
+            file: toolrun
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Restore dependencies
+      run: dotnet restore ToolRun/ToolRun.sln
+
+    - name: Build
+      run: dotnet build ToolRun/ToolRun.sln -c Release --no-restore
+
+    - name: Test
+      run: dotnet test ToolRun/ToolRun.sln -c Release --no-build
+
+    # a runtime identifier turns on self-contained single-file, compression and the embedded runtime (see ToolRun.csproj)
+    - name: Publish toolrun (${{ matrix.rid }})
+      run: dotnet publish ToolRun/ToolRun/ToolRun.csproj -c Release -r ${{ matrix.rid }} -o publish
+
+    - name: Package
+      run: |
+        mkdir -p out
+        if [ "${{ matrix.rid }}" = "osx-arm64" ]; then
+          cp publish/toolrun out/toolrun-osx-arm64
+          chmod +x out/toolrun-osx-arm64
+          tar -C out -czf out/toolrun-osx-arm64.tar.gz toolrun-osx-arm64
+        elif [ "${{ matrix.rid }}" = "linux-x64" ]; then
+          cp publish/toolrun out/toolrun
+          chmod +x out/toolrun
+          tar -C out -czf out/toolrun-linux-x64.tar.gz toolrun
+        else
+          cp publish/toolrun.exe out/toolrun.exe
+        fi
+        ls -l out
+
+    - name: Smoke test the published executable
+      run: |
+        if [ "${{ matrix.rid }}" = "win-x64" ]; then out/toolrun.exe --version; \
+        elif [ "${{ matrix.rid }}" = "linux-x64" ]; then out/toolrun --version; \
+        else out/toolrun-osx-arm64 --version; fi
+
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: toolrun-${{ matrix.rid }}
+        path: out/*
+        if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download builds
+      uses: actions/download-artifact@v4
+      with:
+        path: dist
+        merge-multiple: true
+
+    - name: Set up versioning
+      run: |
+        echo "VersionSuffix=Dev-$(date +%Y%m%d).${{ github.run_number }}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        ls -l dist
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: toolrun-latest
+        tag_name: toolrun-latest
+        prerelease: true
+        body: |
+          toolrun release version suffix: ${{ env.VersionSuffix }}
+
+          Single-file, self-contained executables with the .NET runtime inside (no .NET needed):
+          toolrun.exe (win-x64), toolrun (linux-x64), toolrun-osx-arm64 (macOS arm64, ad-hoc signed).
+          The .tar.gz files keep the executable bit.
+        files: |
+          dist/toolrun.exe
+          dist/toolrun
+          dist/toolrun-osx-arm64
+          dist/toolrun-linux-x64.tar.gz
+          dist/toolrun-osx-arm64.tar.gz

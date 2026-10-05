@@ -18,7 +18,7 @@ public static class AppHosts
             enableMacOSCodeSign: rid.IsMac && OperatingSystem.IsMacOS());
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-        File.Move(tmp, exe, true);
+        SafeMove.File(tmp, exe);
         return exe;
     }
 
@@ -35,12 +35,12 @@ public static class AppHosts
             if (emb is not null)
             {
                 using (var f = File.Create(part)) emb.CopyTo(f);
-                File.Move(part, cached, true);
+                SafeMove.File(part, cached);
                 return cached;
             }
         }
         var sdk = FindInSdk(systemRoot, rid);
-        if (sdk is not null) { File.Copy(sdk, part, true); File.Move(part, cached, true); return cached; }
+        if (sdk is not null) { File.Copy(sdk, part, true); SafeMove.File(part, cached); return cached; }
 
         var packId = "Microsoft.NETCore.App.Host." + rid.PackRid;
         var store = packs();
@@ -57,7 +57,7 @@ public static class AppHosts
             pack.CopyTo(entry, part);
         }
         ToolRunHome.DeleteDownload(nupkg);
-        File.Move(part, cached, true);
+        SafeMove.File(part, cached);
         return cached;
     }
 

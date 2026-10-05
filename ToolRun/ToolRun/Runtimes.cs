@@ -210,6 +210,9 @@ public sealed class PrivateRuntime
 
     public List<RuntimeInstall> Installed() => SystemRuntimes.ScanShared(Dir);
 
+    /// <summary>A folder under the root (host/fxr/&lt;v&gt; or shared/&lt;fw&gt;/&lt;v&gt;, the version being its name) that has files in it: finished by whoever made it.</summary>
+    private static bool FolderComplete(string dir) => Directory.Exists(dir) && Directory.EnumerateFileSystemEntries(dir).Any();
+
     public static string FrameworkDir(string root, string framework, string version) => Path.Combine(root, "shared", framework, version);
 
     public bool Has(string framework, string version) =>
@@ -246,10 +249,10 @@ public sealed class PrivateRuntime
                     var dest = Path.Combine(Dir, sub);
                     if (Directory.Exists(dest)) continue;
                     Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                    try { Directory.Move(Path.Combine(tmp, sub), dest); } catch (IOException) when (Directory.Exists(dest)) { }
+                    SafeMove.Dir(Path.Combine(tmp, sub), dest, () => FolderComplete(dest));
                 }
             }
-            finally { try { ToolRunHome.DeleteDir(tmp); } catch (IOException) { } }
+            finally { SafeMove.DiscardQuietly(tmp); }
             _info($"unpacked {fw.Name} {version} from toolrun to {Dir}");
             return "unpacked";
         }
@@ -284,13 +287,13 @@ public sealed class PrivateRuntime
                 var dest = Path.Combine(Dir, sub);
                 if (Directory.Exists(dest)) continue;
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                try { Directory.Move(src, dest); } catch (IOException) when (Directory.Exists(dest)) { }
+                SafeMove.Dir(src, dest, () => FolderComplete(dest));
             }
             _info($"installed {fw.Name} {exact} ({ToolRunHome.FormatSize(ToolRunHome.SizeOf(FrameworkDir(Dir, fw.Name, exact)))}) in {Dir}");
         }
         finally
         {
-            try { if (Directory.Exists(tmp)) ToolRunHome.DeleteDir(tmp); } catch (IOException) { }
+            SafeMove.DiscardQuietly(tmp);
             ToolRunHome.DeleteDownload(nupkg);
         }
     }

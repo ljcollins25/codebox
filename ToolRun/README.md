@@ -25,6 +25,8 @@ reading, version selection and the apphost writer (`HostWriter`). The only chang
 | `ToolRun/ToolRun.Tests` | xunit tests (Windows and Linux) |
 | `ToolRun/ToolRun.TestChild` | a tiny real program the tests package as a tool |
 
+**Download:** <https://github.com/ljcollins25/codebox/releases/tag/toolrun-latest> — `toolrun.exe` (win-x64), `toolrun` (linux-x64), `toolrun-osx-arm64`; single files, no .NET needed.
+
 ## Usage
 
 Toolrun's own options are read **before the package and directly after it**. The tool's arguments start at the first token that is not a toolrun option, or after `--`
@@ -121,12 +123,12 @@ dotnet publish ToolRun/ToolRun -c Release -r linux-x64 -o out      # win-x64, os
 ```
 
 Giving a runtime identifier turns on `SelfContained`, `PublishSingleFile`, compression and the embedded runtime (see the csproj): one executable, 76.6 MB for linux-x64, that needs no .NET. Build with the
-.NET 10 SDK: `Microsoft.NET.HostModel` is taken from it, as in Tool2App. Cross-publishing works from Linux. The macOS binary is not signed or notarised.
+.NET 10 SDK: `Microsoft.NET.HostModel` is taken from it, as in Tool2App. Cross-publishing works from Linux, including the embedded runtime and apphost for the target RID (checked for win-x64 and osx-arm64), but a macOS arm64 executable must be ad-hoc signed to run, which the SDK does only on a Mac: the release workflow builds osx-arm64 on a macOS runner. The macOS binary is not notarised.
 toolrun can also be turned into a standalone app by **tool2app** (`tool2app toolrun --single-file`, once the package is on a feed), or installed as a dotnet tool (`dotnet pack ToolRun/ToolRun`; that needs .NET and embeds nothing).
 
 ## Tests
 
-`dotnet test ToolRun/ToolRun.Tests` (81 tests, about 10 s): argument splitting, version resolution (latest stable, prerelease, explicit, `--update`), cache layout and reuse with the network
+`dotnet test ToolRun/ToolRun.Tests` (92 tests, about 10 s): argument splitting, version resolution (latest stable, prerelease, explicit, `--update`), cache layout and reuse with the network
 proven unused, roll-forward tables, the private root (layout, reuse, ASP.NET Core added to the same root, `--runtime-version`, `--no-download-runtime`, an embedded runtime and apphost needing no network, which
 tools get `DOTNET_ROLL_FORWARD`), `--prefer-installed`, the `--which` dry run, nuget.config / config / env precedence, the v3 to v2 fallback, a multi-source feed — against a loopback NuGet v2/v3 server with fake runtime and host
 packs — and **real processes through the real host**: `toolrun.dll` installs the compiled TestChild program as a tool and runs it through an apphost on a private root made of this machine's runtime
@@ -140,6 +142,7 @@ net10 root, and SIGTERM/SIGINT forwarding (Unix only). Those run only where an S
 - The private runtime is toolrun's own version. A tool newer than it fails with a message; update toolrun, or use `--prefer-installed` with a newer .NET.
 - ASP.NET Core and WindowsDesktop need one download the first time (WindowsDesktop on Windows only). Per-tool startup settings are the host's, so everything in the tool's runtimeconfig applies.
 - A tool runs on a newer major than it was built for (net8 on net10) through roll-forward, as with any `DOTNET_ROLL_FORWARD=Major` run; a tool that breaks on a newer runtime needs `--prefer-installed` with its own .NET or `--runtime-version`.
+- Installs are extract-then-move: on Windows a virus scanner or indexer can briefly hold the freshly extracted files, so every move (tool folder, runtime folders, apphost) is retried 10 times over about 5 s on access/IO errors, a finished install that another process put there meanwhile is accepted, and as a last resort the folder is copied instead.
 - Tools shipping native executables beside the dll lose their execute bit on Linux/macOS (zip extraction); the entry apphost is fixed up.
-- The macOS arm64 binary is untested on a Mac.
+- The macOS arm64 binary is untested by me (built on a macOS runner by the workflow, not run there).
 - toolrun does not self-update, and `--update` never removes older cached versions (`--clean <id>` does).
