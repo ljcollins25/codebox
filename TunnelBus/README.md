@@ -77,6 +77,8 @@ Base domain `ref12.dev` (dedicated zone, empty before). Wildcard `AAAA *.ref12.d
 
 ## Dashboard
 
+_Deployed 2026-10-05 (router 0.4.0): `wrangler deploy --var BUS_SERVICE_NAMES:<client id>=tunnel-bus-hexad` (the client id is looked up with the API token at deploy time and not committed). Checked with the service token: `/_health`, `/app/manifest.webmanifest` (application/manifest+json), `/app/icons/*.png` (image/png), `/app/sw.js` (text/javascript) and `/app/` all 200; the same URLs without credentials get the 302 to the Access login. A redeploy drops registrations; `hexad-project` re-registered and was connected again within a minute. Whether a browser's credentialed manifest fetch passes Access on the live host was not testable without a login session; if install fails there, add an Access bypass policy for exactly `/app/manifest.webmanifest`, `/app/icons/*` and `/app/sw.js` on ctl.ref12.dev (nothing sensitive). Not done._
+
 `https://ctl.ref12.dev/` (and `/_ui` on any host, e.g. workers.dev) shows providers (connected or not, registered and last-seen times, public and `<prefix>--` addresses), bus health (uptime, router version, providers, connections, whether Access is required), who is signed in with a sign-out link, and lets you unregister (in-page confirmation) or register a name (the one-time bash and PowerShell command, copied on click, kept only in page memory).
 
 * **Served from the Worker**, as one self-contained page (`worker/ui/index.html`, compiled into `src/ui.ts` by `node scripts/build-ui.mjs`; no build step in deployment, no framework, no external requests, strict CSP). The Worker already verifies the Access JWT, so the page is refused without it before anything else runs, and it needs no container wake-up to load.
