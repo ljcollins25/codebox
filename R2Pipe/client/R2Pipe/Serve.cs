@@ -176,7 +176,7 @@ internal sealed class ServeHost(HttpPipeApi api, string name, string target, int
         while (!eof && fail == null)
         {
             n++;
-            int want = (int)PartPlan.SizeOf(n, 1 << 20, 16 << 20);
+            int want = (int)PartPlan.SizeOf(n, 1 << 20, 32 << 20);
             await gate.WaitAsync(rc).ConfigureAwait(false);
             var buf = new byte[want]; int len = await Sender.FillAsync(body, buf, want, rc).ConfigureAwait(false);
             if (len == 0) { gate.Release(); n--; break; }

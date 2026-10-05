@@ -57,6 +57,7 @@ interface Pending {
   responded: boolean;
   chain: Promise<void>;
   parts: Map<number, string>;
+  ahead: Map<number, Promise<R2ObjectBody | null>>;
   nextPart: number;
   expectParts: number | null;
   keys: string[];
@@ -91,7 +92,7 @@ export class Provider implements DurableObject {
     const rid = this.nextRid++;
     const ts = new TransformStream<Uint8Array, Uint8Array>();
     const result = new Promise<Response>((resolve) => {
-      const p: Pending = { rid, name: "", writable: ts.writable.getWriter(), resolve, responded: false, chain: Promise.resolve(), parts: new Map(), nextPart: 1, expectParts: null, keys: [], pump: null, waiter: null, closed: false, bytes: 0 };
+      const p: Pending = { rid, name: "", writable: ts.writable.getWriter(), resolve, responded: false, chain: Promise.resolve(), parts: new Map(), ahead: new Map(), nextPart: 1, expectParts: null, keys: [], pump: null, waiter: null, closed: false, bytes: 0 };
       p.pump = this.pumpParts(p);
       this.pending.set(rid, p);
       p.resolve = (r) => resolve(r);
@@ -153,7 +154,10 @@ export class Provider implements DurableObject {
           continue;
         }
         await p.chain; // the inline bytes come first
-        const o = await this.env.BUCKET.get(g);
+        const o = await (p.ahead.get(p.nextPart) ?? this.env.BUCKET.get(g));
+        p.ahead.delete(p.nextPart);
+        const nk = p.parts.get(p.nextPart + 1);
+        if (nk) p.ahead.set(p.nextPart + 1, this.env.BUCKET.get(nk)); // open the next part while this one streams
         if (!o) throw new Error("part " + p.nextPart + " is missing in R2");
         await o.body.pipeTo(new WritableStream({ write: (c) => p.writable.write(c) }));
         p.parts.delete(p.nextPart); p.nextPart++;
