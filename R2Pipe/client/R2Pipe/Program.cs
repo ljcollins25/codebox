@@ -103,7 +103,7 @@ send prints the transfer id on stdout and the receive command on stderr; '-' rea
         var api = Api(c);
         var o = new SendOptions
         {
-            Name = name, Size = size, Parallel = Parallel(a), Mode = a.Get("mode"), ResumeId = a.Get("resume"),
+            Name = name, Size = size, Parallel = Parallel(a), UrlBatch = a.GetInt("url-batch", 8), Mode = a.Get("mode"), ResumeId = a.Get("resume"),
             PartSize = a.Get("part-size") is { } ps ? Sizes.Parse(ps) : 32L << 20,
             Info = s => Console.Error.WriteLine(s),
         };

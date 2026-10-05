@@ -64,7 +64,7 @@ export class Transfer implements DurableObject {
       if (p === "/put-urls" && req.method === "POST") { // batch: URLs for parts from..from+count-1
         const b = (await req.json()) as { from: number; count: number };
         const m = await this.core.meta();
-        const count = Math.min(Math.max(1, b.count | 0), 32);
+        const count = Math.min(Math.max(1, b.count | 0), 128);
         const urls: Array<{ n: number; url: string }> = [];
         for (let i = 0; i < count; i++) urls.push({ n: b.from + i, url: await this.putUrl(m, b.from + i, base) });
         return json({ method: "PUT", urls });

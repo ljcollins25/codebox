@@ -6,7 +6,7 @@ MODE=$1; PAR=$2; IN=$3; PS=${4:-32M}
 R2PIPE=${R2PIPE_BIN:-r2pipe}
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 T0=$(date +%s%3N)
-$R2PIPE send "$IN" --mode "$MODE" --parallel "$PAR" --part-size "$PS" --quiet --stats "$W/send.json" >"$W/id" 2>"$W/send.err" &
+$R2PIPE send "$IN" --mode "$MODE" --parallel "$PAR" --part-size "$PS" ${EXTRA:-} --quiet --stats "$W/send.json" >"$W/id" 2>"$W/send.err" &
 SP=$!
 for i in $(seq 1 100); do [ -s "$W/id" ] && break; sleep 0.1; done
 ID=$(head -1 "$W/id")
