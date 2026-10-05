@@ -56,7 +56,7 @@ interface Pending {
   resolve: (r: Response) => void;
   responded: boolean;
   chain: Promise<void>;
-  parts: Map<number, Promise<R2ObjectBody | null>>;
+  parts: Map<number, string>;
   nextPart: number;
   expectParts: number | null;
   keys: string[];
@@ -152,7 +152,8 @@ export class Provider implements DurableObject {
           await new Promise<void>((r) => { p.waiter = r; });
           continue;
         }
-        const o = await g;
+        await p.chain; // the inline bytes come first
+        const o = await this.env.BUCKET.get(g);
         if (!o) throw new Error("part " + p.nextPart + " is missing in R2");
         await o.body.pipeTo(new WritableStream({ write: (c) => p.writable.write(c) }));
         p.parts.delete(p.nextPart); p.nextPart++;
@@ -220,7 +221,7 @@ export class Provider implements DurableObject {
     } else if (m.t === "part") {
       p.chain = p.chain.then(() => {
         const key = this.keyFor(p, m.n);
-        p.parts.set(m.n, this.env.BUCKET.get(key)); // starts reading now, so the next part is ready when we need it
+        p.parts.set(m.n, key); // read lazily, in order: only one R2 body is open at a time
         p.keys.push(key);
         this.wake(p);
       });

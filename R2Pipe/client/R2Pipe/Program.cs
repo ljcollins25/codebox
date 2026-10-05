@@ -10,6 +10,7 @@ internal static class Program
   r2pipe recv <id> [-o file|-] [--parallel 4]
   r2pipe ls
   r2pipe abort <id>
+  r2pipe serve <local port> --name <name>    answer HTTP requests for /p/<name>/ (or <name>--pipe.ref12.dev) from a local app
   r2pipe login [--url U] [--client-id ID --client-secret S | --token T]
 
 Environment: R2PIPE_URL (default https://pipe.ref12.dev), CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET, R2PIPE_TOKEN, R2PIPE_PARALLEL.
@@ -33,6 +34,15 @@ send prints the transfer id on stdout and the receive command on stderr; '-' rea
                 case "login": return Login(args, creds);
                 case "send": return await SendAsync(args, creds, cts.Token);
                 case "recv": return await RecvAsync(args, creds, cts.Token);
+                case "serve":
+                    {
+                        var port = args.Positional.FirstOrDefault() ?? throw new UserError("Usage: r2pipe serve <local port|url> --name <name>");
+                        var nm = args.Get("name") ?? throw new UserError("--name is required");
+                        var target = port.Contains("://") ? port : "http://127.0.0.1:" + port;
+                        var host = new ServeHost(Api(creds), nm, target, Parallel(args), s => Console.Error.WriteLine(s));
+                        try { await host.RunAsync(cts.Token); } catch (OperationCanceledException) { }
+                        return 0;
+                    }
                 case "ls": return await ListAsync(creds, cts.Token);
                 case "abort":
                     {
