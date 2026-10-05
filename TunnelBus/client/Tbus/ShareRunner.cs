@@ -9,7 +9,7 @@ namespace Tbus;
 /// connection because every registration has its own chisel user limited to its own port. The Access headers go straight onto the
 /// websocket handshake, so no secret leaves this process.
 /// </summary>
-internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds, Log log, BusClient bus)
+internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds, Log log, BusClient bus, ShareMeta? meta = null)
 {
     public static string StopMarker(Host host, string name) => Path.Combine(host.Home, "stop", name);
 
@@ -45,7 +45,7 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
             try
             {
                 log.Info($"{tag} registering");
-                var reg = await bus.RegisterAsync(s.Name, ct).ConfigureAwait(false);
+                var reg = await bus.RegisterAsync(s.Name, ct, meta).ConfigureAwait(false);
                 log.Info($"{tag} registered (bus port {reg.Port}); connecting");
                 await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds)), ct).ConfigureAwait(false); // the server reloads its authfile
                 var stopped = await RunConnection(s, reg, access, ct).ConfigureAwait(false);

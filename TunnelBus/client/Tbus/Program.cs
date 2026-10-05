@@ -19,13 +19,19 @@ internal static class App
         tbus - share a local (or remote) port on the tunnel bus
 
         usage:
-          tbus share <target>... [--name NAME]   share and stay in the foreground; Ctrl+C unregisters
+          tbus share <target>... [--name NAME] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
+                                                 share and stay in the foreground; Ctrl+C unregisters.
+                                                 The description (max 200 chars), label (60), kind (hexad, app, vscode, ...)
+                                                 and owner ("hexad project") are shown on the bus dashboard.
+              tbus share 3000 --label "My app" --description "Staging build" --kind app
               <target>: PORT | HOST:PORT | [IPV6]:PORT, optionally NAME=<target>
               tbus share 3000                    -> https://<machine>-3000.<domain>
               tbus share 3000 --name myapp       -> https://myapp.<domain>
               tbus share 192.168.1.20:8080 --name nas
               tbus share web=3000 api=3001       several shares in one process
           tbus list                              what the bus has registered
+          tbus update <name> [--description T] [--label T] [--kind K] [--owner W]
+                                                 change what the dashboard shows, without re-registering
           tbus stop <name>                       unregister (also ends a running 'tbus share' of that name)
           tbus open <name>                       open https://<name>.<domain> in the browser
           tbus config [--bus URL] [--domain D]   show or set the bus URL and base domain
@@ -49,6 +55,7 @@ internal static class App
                 "share" => await Share(rest, host, log, ct),
                 "list" => await List(host, log, ct),
                 "stop" => await Stop(rest, host, log, ct),
+                "update" => await Update(rest, host, log, ct),
                 "open" => Open(rest, host, log),
                 "config" => Config(rest, host, log),
                 "login" => await Login.RunAsync(rest, host, log, ct),
@@ -87,7 +94,9 @@ internal static class App
 
     private static async Task<int> Share(string[] args, Host host, Log log, CancellationToken ct)
     {
-        var (pos, opts) = ParseOptions(args, ["name"], []);
+        var (pos, opts) = ParseOptions(args, ["name", ..ShareMeta.ValueOptions], []);
+        var meta = ShareMeta.FromOptions(opts, host.GetEnv);
+        if (meta.Label != null && pos.Count > 1) throw new UserError("--label works with a single target; one label cannot title several shares.");
         if (pos.Count == 0) throw new UserError("Nothing to share. Example: tbus share 3000 --name myapp");
         opts.TryGetValue("name", out var name);
         if (name != null && pos.Count > 1) throw new UserError("--name works with a single target; use NAME=TARGET for several (tbus share web=3000 api=3001).");
@@ -99,7 +108,7 @@ internal static class App
         var creds = new Credentials(host);
         var admin = creds.RequireAdminToken();
         using var bus = new BusClient(config.Bus, admin, creds.AccessHeaders());
-        return await new ShareRunner(host, config, creds, log, bus).RunAsync(specs, ct);
+        return await new ShareRunner(host, config, creds, log, bus, meta).RunAsync(specs, ct);
     }
 
     private static BusClient Client(Host host, out AppConfig config)
@@ -119,6 +128,19 @@ internal static class App
         foreach (var r in rows.OrderBy(r => r.Name, StringComparer.Ordinal))
             log.Info($"{r.Name.PadRight(w)}  {r.Port,-5}  {(r.Up ? "yes" : "no"),-3}  {config.PublicUrl(r.Name)}");
         return 0;
+    }
+
+    private static async Task<int> Update(string[] args, Host host, Log log, CancellationToken ct)
+    {
+        var (pos, opts) = ParseOptions(args, ShareMeta.ValueOptions, []);
+        if (pos.Count != 1) throw new UserError("usage: tbus update <name> [--description T] [--label T] [--kind K] [--owner W]");
+        var name = pos[0].ToLowerInvariant(); ShareSpec.Validate(name);
+        var meta = ShareMeta.FromOptions(opts, _ => null); // TBUS_OWNER is for registering, not for updating
+        if (meta.IsEmpty) throw new UserError("Nothing to update: give --description, --label, --kind or --owner (an empty value clears the field).");
+        using var bus = Client(host, out _);
+        var found = await bus.UpdateAsync(name, meta, ct);
+        log.Info(found ? $"updated {name}" : $"{name} is not registered");
+        return found ? 0 : 1;
     }
 
     private static async Task<int> Stop(string[] args, Host host, Log log, CancellationToken ct)

@@ -114,6 +114,11 @@ internal sealed class FakeBus : IDisposable
                 _chisel?.WriteUsers(UsersLocked());
                 reply = new { name, created = true, port, user = "u-" + name, password = PasswordFor(name) };
             }
+            else if (req.HttpMethod == "PATCH" && path.StartsWith("/_api/register/"))
+            {
+                var name = path["/_api/register/".Length..];
+                if (_reg.ContainsKey(name)) reply = new { name }; else { status = 404; reply = new { error = "not registered" }; }
+            }
             else if (req.HttpMethod == "DELETE" && path.StartsWith("/_api/register/"))
             {
                 var name = path["/_api/register/".Length..];

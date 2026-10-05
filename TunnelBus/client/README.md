@@ -9,6 +9,7 @@ tbus share 3000 --name myapp          -> https://myapp.ref12.dev/
 tbus share 3000                       -> https://<machine>-3000.ref12.dev/
 tbus share 192.168.1.20:8080 --name nas   (a remote target: tbus dials that host from this machine)
 tbus share web=3000 api=3001          several shares in one process
+tbus share 3000 --label "My app" --description "Staging build" --kind app --owner "hexad project"
 tbus list | tbus stop <name> | tbus open <name>
 ```
 
@@ -32,6 +33,7 @@ Alternatively skip `login` and set `TUNNEL_BUS_ADMIN_TOKEN`, `CF_ACCESS_CLIENT_I
 |---|---|
 | `share <target>... [--name N]` | Foreground. Prints registering / connected / the public URL, reconnects with backoff (1 s doubling to 30 s), re-registers when the bus forgot the name (checked every 10 s) or the connection dropped. Ctrl+C unregisters (best effort). Target: `PORT`, `HOST:PORT`, `[IPV6]:PORT`, optionally `NAME=target`. Names: `[a-z0-9]+(-[a-z0-9]+)*`, max 40. |
 | `list` | The router's registry: name, server port, up, URL. |
+| `update <name> [--description T] [--label T] [--kind K] [--owner W]` | Changes what the dashboard shows without re-registering (`PATCH /_api/register/<name>`); an empty value clears a field. |
 | `stop <name>` | Unregisters; a `tbus share` of that name in another process notices (marker file) and ends instead of re-registering. |
 | `open <name>` | Opens `https://<name>.<domain>/`. |
 | `config [--bus URL] [--domain D]` | Show/set the bus URL (default `https://ctl.ref12.dev`) and base domain (default `ref12.dev`); also env `TUNNEL_BUS_URL`, `TUNNEL_BUS_DOMAIN`. |
@@ -72,3 +74,16 @@ Credentials never leave the process: there is no child process and no local rela
 ## Benchmark (Tbus.Bench)
 
 `TunnelBus/client/Tbus.Bench` compares the built-in client with the chisel 1.10.1 *client* executable (benchmark only, never shipped or used by tbus) against the same chisel server: `Tbus.Bench run --chisel <path> --scope local|bus [--mb N] [--sweep]`. Local (200 MB, loopback, 4 cores): chisel client 180-190 MB/s sending / 190-220 receiving at 70-150% CPU; tbus 140-160 MB/s sending / 350-500 MB/s receiving at 130-200% CPU; connection setup 42 ms (chisel) vs 270 ms (tbus, mostly .NET start-up and JIT); small requests about 1 ms for both. Window size, WebSocket and copy buffers and GC mode moved the numbers by less than the run-to-run noise (about 10%). Through the bus the container is the limit (lite: about 5 MB/s, basic: 17-25 MB/s, for both clients, with the client under 35% of a core).
+
+## Dashboard metadata
+
+`tbus share` accepts options that the bus dashboard (`https://ctl.<domain>/`) shows next to the link; all are optional, and a bus or client without them behaves as before:
+
+| Option | Meaning | Limit |
+|---|---|---|
+| `--label TITLE` | short title (single target only) | 60 characters |
+| `--description TEXT` | free text | 200 characters |
+| `--kind KIND` | `hexad`, `app`, `vscode`, ... (lowercase letters, digits, `.` `_` `-`) | 24 characters |
+| `--owner WHO` | who registered it, e.g. `hexad project` (env `TBUS_OWNER` is the default); the dashboard groups by it | 100 characters |
+
+The metadata is sent with every (re-)registration, so it comes back by itself after the bus restarts. Only the options you gave are sent: an old `tbus` re-registering never wipes what another client set. Text is shown escaped; never put secrets in it.

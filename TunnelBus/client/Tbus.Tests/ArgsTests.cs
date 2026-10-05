@@ -57,6 +57,41 @@ public class ArgsTests
     }
 
     [Fact]
+    public void Metadata_options_are_parsed_validated_and_optional()
+    {
+        var (_, o) = App.ParseOptions(["3000", "--description", "Staging build", "--label=My app", "--kind", "App", "--owner", "hexad project"], ["name", .. ShareMeta.ValueOptions], []);
+        var m = ShareMeta.FromOptions(o);
+        Assert.Equal(new ShareMeta("Staging build", "My app", "app", "hexad project"), m);
+        Assert.Equal(["description", "kind", "label", "owner"], m.ToFields().Keys.Order().ToArray());
+        Assert.True(ShareMeta.FromOptions(new Dictionary<string, string>()).IsEmpty); // old behaviour: nothing is sent
+        Assert.Empty(ShareMeta.FromOptions(new Dictionary<string, string>()).ToFields());
+        Assert.Equal("env owner", ShareMeta.FromOptions(new Dictionary<string, string>(), k => k == "TBUS_OWNER" ? "env owner" : null).Owner);
+        Assert.Equal("", ShareMeta.FromOptions(new Dictionary<string, string> { ["description"] = "" }).Description); // clears
+        Assert.Throws<UserError>(() => ShareMeta.FromOptions(new Dictionary<string, string> { ["description"] = new string('x', 201) }));
+        Assert.Throws<UserError>(() => ShareMeta.FromOptions(new Dictionary<string, string> { ["kind"] = "Not Valid!" }));
+        Assert.Throws<UserError>(() => ShareMeta.FromOptions(new Dictionary<string, string> { ["label"] = new string('x', 61) }));
+    }
+
+    [Fact]
+    public async Task Register_sends_only_the_metadata_that_was_given_and_update_patches()
+    {
+        using var t = new TestEnv();
+        var cts = new CancellationTokenSource();
+        var run = Task.Run(() => t.Run(cts.Token, "share", "3000", "--name", "web", "--description", "Staging <b>build</b>", "--kind", "app"));
+        await TestEnv.WaitFor(() => t.Bus.Calls.Any(c => c.Method == "POST"), "register call");
+        cts.Cancel(); await run.WaitAsync(TimeSpan.FromSeconds(15));
+        var body = System.Text.Json.JsonDocument.Parse(t.Bus.Calls.First(c => c.Method == "POST").Body).RootElement;
+        Assert.Equal("Staging <b>build</b>", body.GetProperty("description").GetString()); // sent verbatim; the dashboard escapes
+        Assert.Equal("app", body.GetProperty("kind").GetString());
+        Assert.False(body.TryGetProperty("label", out _));
+        Assert.False(body.TryGetProperty("owner", out _));
+
+        Assert.Equal(2, await t.Run(default, "update", "web"));                         // nothing to change
+        Assert.Equal(2, await t.Run(default, "share", "3000", "--description", new string('x', 201)));
+        Assert.Equal(2, await t.Run(default, "share", "3000", "3001", "--label", "x"));
+    }
+
+    [Fact]
     public async Task Share_usage_errors_exit_2()
     {
         using var t = new TestEnv();
