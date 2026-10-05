@@ -1,0 +1,71 @@
+name: Build and Release Tool2App
+run-name: Tool2App R#${{ github.run_number }} (${{ github.event.repository.updated_at }}) [${{ github.event.head_commit.message }}]
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Tool2App/**'
+      
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Set up versioning
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $timestamp = Get-Date -Format "yyyyMMdd.${{ github.run_number }}"
+        $versionSuffix = "Dev-${timestamp}-$(git rev-parse --short HEAD)"
+
+        echo "VersionSuffix=$versionSuffix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Restore dependencies
+      run: dotnet restore Tool2App/Tool2App.sln
+
+    - name: Build
+      run: dotnet build Tool2App/Tool2App.sln -c Release --no-restore
+
+    - name: Test
+      run: dotnet test Tool2App/Tool2App.sln -c Release --no-build
+
+    - name: Publish Tool2App (Windows)
+      run: |
+        dotnet publish Tool2App/Tool2App.Cli/Tool2App.Cli.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+
+    - name: Publish Tool2App (Linux)
+      run: |
+        dotnet publish Tool2App/Tool2App.Cli/Tool2App.Cli.csproj -c Release -r linux-x64 -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: tool2app-latest
+        tag_name: tool2app-latest
+        prerelease: true
+        body: |
+          Tool2App release version suffix: ${{ env.VersionSuffix }}
+        files: |
+          publish/tool2app
+          publish/tool2app.exe

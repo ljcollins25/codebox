@@ -1,5 +1,7 @@
 # tbus - tunnel bus client
 
+**Download:** the latest tbus build for Windows (`tbus.exe`) and Linux (`tbus`) is the [`tbus-latest` release](https://github.com/ljcollins25/codebox/releases/tag/tbus-latest) (single-file, no .NET install needed).
+
 `tbus` links a local port (or a remote host:port reachable from this machine) to the tunnel bus, so you can test the bus and its dashboard with any dev server:
 
 ```

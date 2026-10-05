@@ -1,5 +1,7 @@
 # tool2app
 
+**Download:** the latest tool2app build for Windows (`tool2app.exe`) and Linux (`tool2app`) is the [`tool2app-latest` release](https://github.com/ljcollins25/codebox/releases/tag/tool2app-latest) (single-file, no .NET install needed).
+
 Turn a .NET tool package into a standalone app: an executable that runs the tool without `dotnet tool install`, and
 (by default) without .NET installed on the machine.
 

@@ -1,0 +1,71 @@
+name: Build and Release Tbus
+run-name: Tbus R#${{ github.run_number }} (${{ github.event.repository.updated_at }}) [${{ github.event.head_commit.message }}]
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'TunnelBus/client/**'
+      
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Set up versioning
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $timestamp = Get-Date -Format "yyyyMMdd.${{ github.run_number }}"
+        $versionSuffix = "Dev-${timestamp}-$(git rev-parse --short HEAD)"
+
+        echo "VersionSuffix=$versionSuffix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Restore dependencies
+      run: dotnet restore TunnelBus/client/Tbus.Tests/Tbus.Tests.csproj
+
+    - name: Build
+      run: dotnet build TunnelBus/client/Tbus.Tests/Tbus.Tests.csproj -c Release --no-restore
+
+    - name: Test
+      run: dotnet test TunnelBus/client/Tbus.Tests/Tbus.Tests.csproj -c Release --no-build
+
+    - name: Publish Tbus (Windows)
+      run: |
+        dotnet publish TunnelBus/client/Tbus/Tbus.csproj -c Release -r win-x64 -o publish
+
+    - name: Publish Tbus (Linux)
+      run: |
+        dotnet publish TunnelBus/client/Tbus/Tbus.csproj -c Release -r linux-x64 -o publish
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: tbus-latest
+        tag_name: tbus-latest
+        prerelease: true
+        body: |
+          Tbus release version suffix: ${{ env.VersionSuffix }}
+        files: |
+          publish/tbus
+          publish/tbus.exe

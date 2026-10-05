@@ -88,10 +88,15 @@ internal static class FakeChisel
         {
             var f = Path.Combine(dir, "chisel.cmd");
             File.WriteAllText(f, string.Join("\r\n", [
+                // Two chisel clients start at the same moment; cmd's `>>` fails with a sharing violation when another process has the
+                // log open. So write the whole record in one redirected block and retry until the append succeeds.
                 "@echo off",
-                $"echo ARGS: %*>> \"{log}\"",
-                $"echo AUTH=%AUTH%>> \"{log}\"",
-                $"if defined TUNNEL_BUS_ADMIN_TOKEN (echo ADMIN=leaked>> \"{log}\") else (echo ADMIN=unset>> \"{log}\")",
+                ":retry",
+                "(",
+                "echo ARGS: %*",
+                "echo AUTH=%AUTH%",
+                "if defined TUNNEL_BUS_ADMIN_TOKEN (echo ADMIN=leaked) else (echo ADMIN=unset)",
+                $") >> \"{log}\" 2>nul || (ping -n 1 127.0.0.1 >nul & goto retry)",
                 "echo client: Connected (Latency 1ms) 1>&2",
                 exitImmediately ? "exit /b 1" : "ping -n 600 127.0.0.1 >nul", ""]));
             return f;
