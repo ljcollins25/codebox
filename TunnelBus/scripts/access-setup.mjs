@@ -3,7 +3,7 @@
 // self-hosted application covering every bus hostname. Do NOT run before the Zero Trust organization and a
 // login method exist (README "Cloudflare Access").
 //
-//   node access-setup.mjs --zone example.com --email you@example.com --out /safe/place/hexad-token.json
+//   node access-setup.mjs --zone example.com --allow-email you@example.com --out /safe/place/hexad-token.json
 //   [--suffix -bus] [--email other@x] [--github-org my-org] [--team-domain myteam.cloudflareaccess.com]
 //   [--token-name tunnel-bus-hexad] [--dry-run] [--write-config]
 //
@@ -18,12 +18,13 @@ import { parseArgs, makeClient, accountId, writeVars } from "./cf.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const a = parseArgs(process.argv.slice(2), {
-  zone: {}, suffix: { default: "" }, email: { multi: true }, "github-org": {}, out: {}, "team-domain": {},
+  zone: {}, suffix: { default: "" }, email: { multi: true }, "allow-email": { multi: true }, "github-org": {}, out: {}, "team-domain": {},
   "token-name": { default: "tunnel-bus-hexad" }, "app-name": { default: "tunnel-bus" },
   "dry-run": { flag: true }, "write-config": { flag: true },
 });
-if (!a.zone || !a.out || (!a.email?.length && !a["github-org"])) {
-  console.error("usage: access-setup.mjs --zone example.com --email you@example.com [--github-org ORG] --out token.json [--suffix -bus]");
+a.email = [...(a.email ?? []), ...(a["allow-email"] ?? [])];
+if (!a.zone || !a.out || (!a.email.length && !a["github-org"])) {
+  console.error("usage: access-setup.mjs --zone example.com --allow-email you@example.com [--github-org ORG] --out token.json [--suffix -bus]");
   process.exit(2);
 }
 const cf = makeClient({ token: process.env.CLOUDFLARE_API_TOKEN, dryRun: a["dry-run"] });
@@ -37,11 +38,10 @@ if (!team) {
   team = org.result.auth_domain;
 }
 
-// The GitHub-organization rule needs the id of a configured GitHub login method.
-let githubIdp;
+// The GitHub login method: used as the application's login method, and by the optional org rule.
+const idps = (await cf.get(`${A}/identity_providers`)).result ?? [];
+const githubIdp = idps.find((i) => i.type === "github")?.id;
 if (a["github-org"]) {
-  const idps = (await cf.get(`${A}/identity_providers`)).result ?? [];
-  githubIdp = idps.find((i) => i.type === "github")?.id;
   if (!githubIdp && !a["dry-run"]) throw new Error("no GitHub login method configured: Zero Trust > Settings > Authentication > Login methods > Add > GitHub");
 }
 // 1. Service token (one per consumer; the secret is only returned at creation).
@@ -82,6 +82,7 @@ else {
     name: a["app-name"], type: "self_hosted", domain: host,
     destinations: [{ type: "public", uri: `${host}/*` }],
     session_duration: "24h",
+    ...(githubIdp ? { allowed_idps: [githubIdp], auto_redirect_to_identity: true } : {}),
     service_auth_401_redirect: true, // programs get 401, not a login redirect
     policies: [{ id: humans, precedence: 1 }, { id: machines, precedence: 2 }],
   })).result;

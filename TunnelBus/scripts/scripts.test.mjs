@@ -100,3 +100,20 @@ test("access-setup --github-org uses the GitHub login method id, and fails clear
   assert.match(r.stderr, /GitHub login method/);
   assert.equal(f.calls.filter((c) => c.method === "POST").length, 0);
 });
+
+test("access-setup --allow-email with a GitHub IdP restricts the app to that login method", async () => {
+  const f = await fakeApi((m, u) => {
+    if (m === "GET" && u.endsWith("/identity_providers")) return [{ id: "IDP1", type: "github" }];
+    if (m === "POST" && u.endsWith("/service_tokens")) return { id: "T1", client_id: "c", client_secret: "s" };
+    if (m === "POST" && u.endsWith("/policies")) return { id: "P" + Math.random().toString(36).slice(2, 6) };
+    if (m === "POST" && u.endsWith("/apps")) return { id: "A1", aud: "AUD" };
+    return [];
+  });
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tb-")), "t.json");
+  const r = await run("access-setup.mjs", ["--zone", "z.dev", "--allow-email", "a@b.c", "--team-domain", "t.cloudflareaccess.com", "--out", out], { CF_API_BASE: f.base, CLOUDFLARE_ACCOUNT_ID: "ACC" });
+  f.srv.close();
+  assert.equal(r.code, 0, r.stderr);
+  const posts = f.calls.filter((c) => c.method === "POST");
+  assert.deepEqual(posts.find((c) => c.url.endsWith("/policies")).body.include, [{ email: { email: "a@b.c" } }]);
+  assert.deepEqual(posts.find((c) => c.url.endsWith("/apps")).body.allowed_idps, ["IDP1"]);
+});
