@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// version is the router version shown on the dashboard.
+var version = "0.3.0"
+
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
@@ -32,6 +35,19 @@ func main() {
 	}
 	rt := &Router{Reg: reg, AdminToken: token, started: time.Now(),
 		BaseDomain: strings.ToLower(strings.Trim(os.Getenv("BUS_BASE_DOMAIN"), ". ")), ControlHost: strings.ToLower(os.Getenv("BUS_CONTROL_HOST")), LabelSuffix: strings.ToLower(os.Getenv("BUS_LABEL_SUFFIX"))}
+	rt.Version = version
+	rt.AccessRequired = os.Getenv("ACCESS_REQUIRED") == "true"
+	rt.AdminEmails = map[string]bool{}
+	for _, e := range strings.Split(os.Getenv("BUS_ADMIN_EMAILS"), ",") {
+		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
+			rt.AdminEmails[e] = true
+		}
+	}
+	go func() { // keep last-seen times fresh even when nobody has the dashboard open
+		for range time.Tick(15 * time.Second) {
+			rt.probe()
+		}
+	}()
 	if bin := env("CHISEL_BIN", "chisel"); bin != "none" {
 		cp := env("CHISEL_PORT", "8081")
 		rt.ChiselAddr = "127.0.0.1:" + cp

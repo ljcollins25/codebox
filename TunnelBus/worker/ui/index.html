@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Tunnel bus</title>
+<style>
+:root{--bg:#0e1116;--card:#161b22;--line:#262d36;--fg:#e6edf3;--dim:#8b949e;--ok:#3fb950;--bad:#f85149;--acc:#58a6ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:space-between;padding:.8rem 1rem;border-bottom:1px solid var(--line)}
+h1{font-size:1.1rem;margin:0}
+main{max-width:980px;margin:0 auto;padding:1rem}
+a{color:var(--acc);text-decoration:none;word-break:break-all}a:hover{text-decoration:underline}
+.dim{color:var(--dim)}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.85rem}
+.who{display:flex;gap:.75rem;align-items:center;font-size:.85rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.6rem;margin-bottom:1rem}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.6rem .8rem}
+.stat b{display:block;font-size:1.15rem}.stat span{color:var(--dim);font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}
+.bar{display:flex;gap:.5rem;align-items:center;margin:1rem 0 .6rem;flex-wrap:wrap}.bar h2{font-size:1rem;margin:0;flex:1}
+button,input{font:inherit;color:var(--fg);background:#21262d;border:1px solid var(--line);border-radius:6px;padding:.4rem .7rem}
+button{cursor:pointer}button:hover{border-color:var(--dim)}button.danger{border-color:#6e2a2a;color:#ffa198}button.primary{background:#1f6feb;border-color:#1f6feb}
+input{background:var(--bg);min-width:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.75rem .9rem;margin-bottom:.6rem}
+.row{display:flex;flex-wrap:wrap;gap:.4rem .9rem;align-items:center}.row .name{font-weight:600;font-size:1.02rem}
+.dot{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;background:var(--bad);margin-right:.35rem}.dot.up{background:var(--ok)}
+.grow{flex:1}.meta{display:grid;grid-template-columns:auto 1fr;gap:.15rem .8rem;margin-top:.45rem;font-size:.85rem}.meta dt{color:var(--dim)}.meta dd{margin:0}
+.confirm{margin-top:.5rem;padding:.5rem;border:1px solid #6e2a2a;border-radius:6px;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.6rem;white-space:pre-wrap;word-break:break-all;margin:.3rem 0;font-size:.8rem}
+.err{color:var(--bad)}.hidden{display:none}
+</style></head>
+<body>
+<header><h1>Tunnel bus <span class="dim mono" id="host"></span></h1>
+<div class="who"><span id="who" class="dim"></span><a href="/cdn-cgi/access/logout">Sign out</a></div></header>
+<main>
+<section class="stats" id="stats"></section>
+<div class="bar"><h2>Providers</h2><button id="refresh">Refresh</button><button id="regbtn" class="primary">Register name</button></div>
+<div id="regform" class="card hidden">
+ <div class="row"><input id="rname" placeholder="name (a-z, 0-9, -)" autocapitalize="off" autocomplete="off" spellcheck="false">
+ <input id="rport" placeholder="app port" inputmode="numeric" size="8" value="3000"><button id="rgo" class="primary">Register</button><button id="rcancel">Cancel</button></div>
+ <div id="rerr" class="err"></div>
+ <div id="rout" class="hidden">
+  <p class="dim">One-time command. It is kept only in this page's memory, never stored, and disappears when you close or hide it. It needs <span class="mono">chisel</span> on PATH and your Access service token in <span class="mono">CF_ACCESS_CLIENT_ID</span> / <span class="mono">CF_ACCESS_CLIENT_SECRET</span>.</p>
+  <div class="row"><b>bash</b><button data-copy="rbash">Copy</button></div><pre id="rbash"></pre>
+  <div class="row"><b>PowerShell</b><button data-copy="rps">Copy</button></div><pre id="rps"></pre>
+  <button id="rhide">Done, hide it</button>
+ </div>
+</div>
+<div id="err" class="err"></div>
+<div id="list"></div>
+<p class="dim" id="foot"></p>
+</main>
+<script>
+(function(){
+"use strict";
+var $=function(id){return document.getElementById(id)};
+var state={status:null,providers:[]};
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+function api(method,path,body){
+ var o={method:method,headers:{"X-Bus-CSRF":"1"},credentials:"same-origin"};
+ if(body){o.headers["Content-Type"]="application/json";o.body=JSON.stringify(body)}
+ return fetch(path,o).then(function(r){return r.json().catch(function(){return {}}).then(function(j){if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j})});
+}
+function ago(iso){if(!iso)return "never";var s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);
+ if(s<5)return "just now";if(s<60)return Math.floor(s)+"s ago";if(s<3600)return Math.floor(s/60)+" min ago";if(s<86400)return Math.floor(s/3600)+" h ago";return Math.floor(s/86400)+" d ago"}
+function dur(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+"d "+h+"h":h?h+"h "+m+"m":m?m+"m "+(s%60)+"s":s+"s"}
+function when(iso){return iso?new Date(iso).toLocaleString():"never"}
+function stat(label,val){var d=el("div","stat");d.appendChild(el("b",null,String(val)));d.appendChild(el("span",null,label));return d}
+function renderStatus(){var s=state.status;if(!s)return;
+ $("who").textContent=s.you&&s.you!=="admin-token"?s.you:"";
+ $("host").textContent=s.controlHost||location.host;
+ var box=$("stats");box.textContent="";
+ box.appendChild(stat("Uptime",dur(s.uptimeSeconds)));
+ box.appendChild(stat("Router",s.version||"?"));
+ box.appendChild(stat("Providers",s.providers));
+ box.appendChild(stat("Connected",s.connections));
+ box.appendChild(stat("Access",s.accessRequired?"required":"off"));
+}
+function link(href,text){var a=el("a",null,text||href);a.href=href;a.target="_blank";a.rel="noopener";return a}
+function renderList(){var box=$("list");box.textContent="";
+ if(!state.providers.length){box.appendChild(el("div","card dim","No providers registered. Use \u201CRegister name\u201D, or run the provider script."));return}
+ state.providers.forEach(function(p){
+  var c=el("div","card"),row=el("div","row");
+  var dot=el("span","dot"+(p.up?" up":""));row.appendChild(dot);
+  row.appendChild(el("span","name",p.name));
+  row.appendChild(el("span",p.up?"":"dim",p.up?"connected":"not connected"));
+  row.appendChild(el("span","grow"));
+  var del=el("button","danger","Unregister");row.appendChild(del);c.appendChild(row);
+  var dl=el("dl","meta");
+  function add(k,node){dl.appendChild(el("dt",null,k));var dd=el("dd");dd.appendChild(node);dl.appendChild(dd)}
+  if(p.host){add("Address",link("https://"+p.host));add("With prefix",el("span","mono","https://<prefix>--"+p.host))}
+  else add("Address",link(location.origin+p.path));
+  add("Registered",el("span",null,when(p.registeredAt)));
+  add("Last seen",el("span",null,p.up?"now":ago(p.lastSeen)+(p.lastSeen?" ("+when(p.lastSeen)+")":"")));
+  c.appendChild(dl);
+  del.onclick=function(){
+   if(c.querySelector(".confirm"))return;
+   var q=el("div","confirm");q.appendChild(el("span",null,"Unregister \u201C"+p.name+"\u201D? Its chisel credentials stop working."));
+   var yes=el("button","danger","Yes, unregister"),no=el("button",null,"Cancel");q.appendChild(yes);q.appendChild(no);c.appendChild(q);
+   no.onclick=function(){q.remove()};
+   yes.onclick=function(){yes.disabled=true;api("DELETE","/_api/register/"+encodeURIComponent(p.name)).then(refresh,function(e){$("err").textContent=e.message;q.remove()})};
+  };
+  box.appendChild(c);
+ });
+}
+function refresh(){
+ $("err").textContent="";
+ return Promise.all([api("GET","/_api/status"),api("GET","/_api/providers")]).then(function(r){
+  state.status=r[0];state.providers=r[1];renderStatus();renderList();$("foot").textContent="Updated "+new Date().toLocaleTimeString();
+ },function(e){$("err").textContent="Could not load: "+e.message});
+}
+function hideOut(){$("rout").classList.add("hidden");$("rbash").textContent="";$("rps").textContent=""}
+$("refresh").onclick=refresh;
+$("regbtn").onclick=function(){$("regform").classList.toggle("hidden");$("rname").focus()};
+$("rcancel").onclick=function(){$("regform").classList.add("hidden");hideOut();$("rerr").textContent=""};
+$("rhide").onclick=hideOut;
+$("rgo").onclick=function(){
+ var name=$("rname").value.trim().toLowerCase(),port=parseInt($("rport").value,10)||3000;$("rerr").textContent="";
+ api("POST","/_api/register",{name:name}).then(function(r){
+  var bus=location.origin,remote="R:"+r.port+":localhost:"+port;
+  $("rbash").textContent="chisel client --keepalive 25s --auth '"+r.user+":"+r.password+"' --header \"CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID\" --header \"CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET\" "+bus+r.chiselPath+" "+remote;
+  $("rps").textContent="chisel client --keepalive 25s --auth '"+r.user+":"+r.password+"' --header \"CF-Access-Client-Id: $env:CF_ACCESS_CLIENT_ID\" --header \"CF-Access-Client-Secret: $env:CF_ACCESS_CLIENT_SECRET\" "+bus+r.chiselPath+" "+remote;
+  $("rout").classList.remove("hidden");refresh();
+ },function(e){$("rerr").textContent=e.message});
+};
+document.addEventListener("click",function(ev){var id=ev.target&&ev.target.getAttribute&&ev.target.getAttribute("data-copy");
+ if(id){var t=$(id).textContent;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){ev.target.textContent="Copied"},function(){var r=document.createRange();r.selectNodeContents($(id));var s=getSelection();s.removeAllRanges();s.addRange(r);ev.target.textContent="Selected, press copy"});
+ setTimeout(function(){ev.target.textContent="Copy"},2000)}});
+window.addEventListener("pagehide",hideOut);
+refresh();setInterval(function(){if(!document.hidden)refresh()},10000);
+})();
+</script></body></html>

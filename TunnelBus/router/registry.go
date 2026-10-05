@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"time"
 )
 
 // NameRe is the set of valid provider names. Leading "_" is reserved for the
@@ -27,8 +28,10 @@ type Entry struct {
 	User     string `json:"user"`     // chisel user allowed to open only the reverse remote on Port
 	Password string `json:"password"` // derived from the admin token, so it survives router restarts
 	// Consumer credentials: may only forward to 127.0.0.1:Port (TCP access).
-	ConsumerUser     string `json:"consumerUser"`
-	ConsumerPassword string `json:"consumerPassword"`
+	RegisteredAt     time.Time `json:"registeredAt"`
+	LastSeen         time.Time `json:"lastSeen"` // last time the provider's reverse port was seen open (zero = never)
+	ConsumerUser     string    `json:"consumerUser"`
+	ConsumerPassword string    `json:"consumerPassword"`
 }
 
 // Registry holds live registrations in memory and mirrors them to chisel's
@@ -90,6 +93,7 @@ func (r *Registry) Register(name string) (Entry, bool, error) {
 	}
 	e := &Entry{Name: name, Port: port, User: "p-" + name, Password: r.derive("provider:" + name),
 		ConsumerUser: "c-" + name, ConsumerPassword: r.derive("consumer:" + name)}
+	e.RegisteredAt = time.Now().UTC()
 	r.byName[name] = e
 	if err := r.writeAuthfile(); err != nil {
 		delete(r.byName, name)
@@ -151,4 +155,13 @@ func (r *Registry) writeAuthfile() error {
 		return nil
 	}
 	return os.WriteFile(r.authfile, r.AuthfileJSON(), 0o600)
+}
+
+// Touch records that a provider's reverse port was seen open.
+func (r *Registry) Touch(name string, t time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.byName[name]; ok {
+		e.LastSeen = t.UTC()
+	}
 }

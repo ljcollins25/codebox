@@ -1,5 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
-import { verifyAccessJwt } from "./access.ts";
+import { handle } from "./gate.ts";
 
 interface Env {
   BUS: DurableObjectNamespace<TunnelBusContainer>;
@@ -13,6 +13,8 @@ interface Env {
   BUS_BASE_DOMAIN?: string;
   BUS_CONTROL_HOST?: string;
   BUS_LABEL_SUFFIX?: string;
+  /** Comma-separated Access identities (emails) allowed to use the admin API from the dashboard. */
+  BUS_ADMIN_EMAILS?: string;
 }
 
 /**
@@ -34,6 +36,8 @@ export class TunnelBusContainer extends Container<Env> {
       BUS_BASE_DOMAIN: env.BUS_BASE_DOMAIN ?? "",
       BUS_CONTROL_HOST: env.BUS_CONTROL_HOST ?? "",
       BUS_LABEL_SUFFIX: env.BUS_LABEL_SUFFIX ?? "",
+      BUS_ADMIN_EMAILS: env.BUS_ADMIN_EMAILS ?? "",
+      ACCESS_REQUIRED: env.ACCESS_REQUIRED ?? "false",
     };
   }
 
@@ -50,23 +54,7 @@ export class TunnelBusContainer extends Container<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Cloudflare Access: with Access in front of the zone, Access has already authenticated the
-    // caller (browser login or service token) and attached the JWT. We verify it again here so a
-    // route that bypasses Access, or workers.dev, cannot reach the bus. Nothing is exempt, not
-    // even /_health: monitors need a service token like everything else.
-    if (env.ACCESS_REQUIRED === "true") {
-      if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {
-        return new Response("tunnel bus: ACCESS_REQUIRED is set but ACCESS_TEAM_DOMAIN/ACCESS_AUD are not", { status: 500 });
-      }
-      const v = await verifyAccessJwt(request.headers.get("Cf-Access-Jwt-Assertion"), {
-        teamDomain: env.ACCESS_TEAM_DOMAIN,
-        aud: env.ACCESS_AUD,
-      });
-      if (!v.ok) return new Response(`tunnel bus: access denied (${v.reason})`, { status: 403 });
-    }
-    // The router needs the public host. Overwrite whatever the client sent.
-    const fwd = new Request(request);
-    fwd.headers.set("X-Bus-Host", new URL(request.url).host);
-    return getContainer(env.BUS, "bus").fetch(fwd);
+    // Access verification, identity headers and the dashboard page live in gate.ts (unit-tested).
+    return handle(request, env, { forward: (r) => getContainer(env.BUS, "bus").fetch(r) });
   },
 } satisfies ExportedHandler<Env>;

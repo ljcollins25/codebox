@@ -474,3 +474,134 @@ func TestLabelSuffix(t *testing.T) {
 		t.Errorf("host without the suffix routed")
 	}
 }
+
+// ---- dashboard API ----
+
+func asUser(rt http.Handler, method, path, email, csrf, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if email != "" {
+		req.Header.Set("X-Bus-User", email)
+	}
+	if csrf != "" {
+		req.Header.Set("X-Bus-CSRF", csrf)
+	}
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+	return w
+}
+
+func dashRouter(t *testing.T) *Router {
+	rt, _ := newRouter(t)
+	rt.AdminEmails = map[string]bool{"me@example.com": true}
+	rt.BaseDomain = "ref12.dev"
+	rt.Version = "9.9.9"
+	rt.AccessRequired = true
+	return rt
+}
+
+func TestProvidersListHasStatusAndNoSecrets(t *testing.T) {
+	rt := dashRouter(t)
+	startBackend(t, rt, "up", http.NotFoundHandler())
+	rt.Reg.Register("down")
+	w := call(rt, "GET", "/_api/providers", tok, "")
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var rows []struct {
+		Name         string
+		Up           bool
+		RegisteredAt time.Time
+		LastSeen     *time.Time
+		Host         string
+		PrefixedHost string
+		Path         string
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Name != "down" || rows[0].Up || rows[0].LastSeen != nil || rows[1].Name != "up" || !rows[1].Up || rows[1].LastSeen == nil {
+		t.Fatalf("%s", w.Body)
+	}
+	if rows[1].Host != "up.ref12.dev" || rows[1].PrefixedHost != "<prefix>--up.ref12.dev" || rows[1].Path != "/up/" || rows[1].RegisteredAt.IsZero() {
+		t.Fatalf("%+v", rows[1])
+	}
+	e, _ := rt.Reg.Get("up")
+	for _, secret := range []string{e.Password, e.ConsumerPassword, tok} {
+		if strings.Contains(w.Body.String(), secret) {
+			t.Fatalf("response leaks a secret: %s", w.Body)
+		}
+	}
+	// last-seen survives the provider going away
+	rt.Reg.Touch("down", time.Now())
+	w = call(rt, "GET", "/_api/providers", tok, "")
+	json.Unmarshal(w.Body.Bytes(), &rows)
+	if rows[0].LastSeen == nil || rows[0].Up {
+		t.Fatalf("last seen not kept: %s", w.Body)
+	}
+}
+
+func TestStatusEndpoint(t *testing.T) {
+	rt := dashRouter(t)
+	startBackend(t, rt, "a", http.NotFoundHandler())
+	rt.Reg.Register("b")
+	w := asUser(rt, "GET", "/_api/status", "Me@Example.com", "", "")
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var s map[string]any
+	json.Unmarshal(w.Body.Bytes(), &s)
+	if s["version"] != "9.9.9" || s["providers"].(float64) != 2 || s["connections"].(float64) != 1 || s["accessRequired"] != true || s["you"] != "me@example.com" {
+		t.Fatalf("%v", s)
+	}
+	if _, ok := s["adminToken"]; ok || strings.Contains(w.Body.String(), tok) {
+		t.Fatal("status leaks the token")
+	}
+}
+
+func TestAccessIdentityVersusAdminToken(t *testing.T) {
+	rt := dashRouter(t)
+	rt.Reg.Register("x")
+	// allow-listed identity: reads, and mutates only with the CSRF header
+	if w := asUser(rt, "GET", "/_api/providers", "me@example.com", "", ""); w.Code != 200 {
+		t.Errorf("identity read: %d", w.Code)
+	}
+	if w := asUser(rt, "DELETE", "/_api/register/x", "me@example.com", "", ""); w.Code != 403 {
+		t.Errorf("identity mutation without csrf: %d", w.Code)
+	}
+	if _, ok := rt.Reg.Get("x"); !ok {
+		t.Error("removed despite 403")
+	}
+	if w := asUser(rt, "DELETE", "/_api/register/x", "me@example.com", "1", ""); w.Code != 200 {
+		t.Errorf("identity unregister: %d %s", w.Code, w.Body)
+	}
+	if _, ok := rt.Reg.Get("x"); ok {
+		t.Error("not removed")
+	}
+	if w := asUser(rt, "POST", "/_api/register", "me@example.com", "1", `{"name":"y"}`); w.Code != 200 {
+		t.Errorf("identity register: %d", w.Code)
+	}
+	// an identity not on the list, or no identity, is refused
+	for _, who := range []string{"other@example.com", ""} {
+		if w := asUser(rt, "GET", "/_api/providers", who, "1", ""); w.Code != 401 {
+			t.Errorf("%q: %d", who, w.Code)
+		}
+	}
+	// the admin token needs no CSRF header and no identity
+	if w := call(rt, "DELETE", "/_api/register/y", tok, ""); w.Code != 200 {
+		t.Errorf("admin token: %d", w.Code)
+	}
+	// a wrong token plus an allowed identity header is still judged by the identity rule only
+	if w := call(rt, "GET", "/_api/providers", "wrong", ""); w.Code != 401 {
+		t.Errorf("wrong token: %d", w.Code)
+	}
+}
+
+func TestIdentityHeadersNeverReachProviders(t *testing.T) {
+	rt := dashRouter(t)
+	startBackend(t, rt, "app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "["+r.Header.Get("X-Bus-User")+"]["+r.Header.Get("X-Bus-CSRF")+"]")
+	}))
+	if w := asUser(rt, "GET", "/app/", "me@example.com", "1", ""); w.Body.String() != "[][]" {
+		t.Fatalf("%q", w.Body)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,7 +28,12 @@ type Router struct {
 	// stripped: "3000--hexad-bus.example.com" -> prefix "3000", name "hexad". It lets a shared zone
 	// use the Worker route "*-bus.example.com/*" (a wildcard may only lead a route host).
 	LabelSuffix string
-	started     time.Time
+	// AdminEmails are Access identities (verified by the Worker, passed in X-Bus-User) allowed to use
+	// the admin API without the admin token. Mutations from an identity also need X-Bus-CSRF: 1.
+	AdminEmails    map[string]bool
+	AccessRequired bool // reported on the dashboard; enforced by the Worker
+	Version        string
+	started        time.Time
 }
 
 const (
@@ -134,6 +140,80 @@ func (rt *Router) authorized(req *http.Request) bool {
 		subtle.ConstantTimeCompare([]byte(tok), []byte(rt.AdminToken)) == 1
 }
 
+// principal says who is calling the admin API: the admin token (programs), or an Access identity on the
+// allow-list (browsers; the Worker verified the JWT and set X-Bus-User, and strips any client-sent value).
+// status: 0 = ok, 401 = nobody, 403 = identity without the CSRF header on a mutation.
+func (rt *Router) principal(req *http.Request) (who string, status int) {
+	if rt.authorized(req) {
+		return "admin-token", 0
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Header.Get("X-Bus-User")))
+	if email == "" || !rt.AdminEmails[email] {
+		return "", 401
+	}
+	if req.Method != http.MethodGet && req.Method != http.MethodHead && req.Header.Get("X-Bus-CSRF") != "1" {
+		return "", 403
+	}
+	return email, 0
+}
+
+// providerView is the dashboard's view of a registration. It never carries credentials.
+type providerView struct {
+	Name         string     `json:"name"`
+	Port         int        `json:"port"`
+	Up           bool       `json:"up"`
+	RegisteredAt time.Time  `json:"registeredAt"`
+	LastSeen     *time.Time `json:"lastSeen"`
+	Host         string     `json:"host,omitempty"`         // <name>[suffix].<base>
+	PrefixedHost string     `json:"prefixedHost,omitempty"` // <prefix>--<name>[suffix].<base> (literal "<prefix>")
+	Path         string     `json:"path"`                   // path form, for workers.dev
+}
+
+// probe checks every registered provider's reverse port concurrently and records last-seen times.
+func (rt *Router) probe() []providerView {
+	entries := rt.Reg.List()
+	views := make([]providerView, len(entries))
+	var wg sync.WaitGroup
+	for i, e := range entries {
+		wg.Add(1)
+		go func(i int, e Entry) {
+			defer wg.Done()
+			v := providerView{Name: e.Name, Port: e.Port, RegisteredAt: e.RegisteredAt, Path: "/" + e.Name + "/"}
+			if rt.BaseDomain != "" {
+				v.Host = e.Name + rt.LabelSuffix + "." + rt.BaseDomain
+				v.PrefixedHost = "<prefix>--" + v.Host
+			}
+			v.Up = portOpen(e.Port)
+			if v.Up {
+				now := time.Now().UTC()
+				rt.Reg.Touch(e.Name, now)
+				v.LastSeen = &now
+			} else if !e.LastSeen.IsZero() {
+				t := e.LastSeen
+				v.LastSeen = &t
+			}
+			views[i] = v
+		}(i, e)
+	}
+	wg.Wait()
+	return views
+}
+
+func (rt *Router) status() map[string]any {
+	views := rt.probe()
+	conns := 0
+	for _, v := range views {
+		if v.Up {
+			conns++
+		}
+	}
+	return map[string]any{
+		"version": rt.Version, "uptimeSeconds": int(time.Since(rt.started).Seconds()),
+		"providers": len(views), "connections": conns, "accessRequired": rt.AccessRequired,
+		"baseDomain": rt.BaseDomain, "controlHost": rt.ControlHost, "labelSuffix": rt.LabelSuffix,
+	}
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -141,8 +221,13 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
-	if !rt.authorized(req) {
-		writeJSON(w, 401, map[string]string{"error": "admin token required"})
+	who, st := rt.principal(req)
+	switch st {
+	case 401:
+		writeJSON(w, 401, map[string]string{"error": "admin token or allowed Access identity required"})
+		return
+	case 403:
+		writeJSON(w, 403, map[string]string{"error": "missing X-Bus-CSRF header"})
 		return
 	}
 	sub := strings.TrimPrefix(req.URL.Path, apiPrefix)
@@ -177,6 +262,12 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"removed": name})
+	case sub == "providers" && req.Method == http.MethodGet:
+		writeJSON(w, 200, rt.probe())
+	case sub == "status" && req.Method == http.MethodGet:
+		out := rt.status()
+		out["you"] = who
+		writeJSON(w, 200, out)
 	case sub == "registry" && req.Method == http.MethodGet:
 		type row struct {
 			Name string `json:"name"`
@@ -220,6 +311,8 @@ func newProxy(hostport, path, prefix, publicHost, hostPrefix string) *httputil.R
 			pr.SetXForwarded()
 			pr.Out.Header.Set("X-Forwarded-Host", publicHost)
 			pr.Out.Header.Del("X-Bus-Host")
+			pr.Out.Header.Del("X-Bus-User") // never reaches providers
+			pr.Out.Header.Del("X-Bus-CSRF")
 			pr.Out.Header.Del("X-Bus-Host-Prefix")
 			if hostPrefix != "" {
 				pr.Out.Header.Set("X-Bus-Host-Prefix", hostPrefix)

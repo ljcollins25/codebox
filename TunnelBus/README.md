@@ -73,6 +73,14 @@ The zone is **empty and dedicated** (Free plan, active, no DNS records; the toke
 
 Base domain `ref12.dev` (dedicated zone, empty before). Wildcard `AAAA *.ref12.dev -> 100::` (proxied), route `*.ref12.dev/*` -> `tunnel-bus`, control host `ctl.ref12.dev`. Access: team `laxid.cloudflareaccess.com`, application `tunnel-bus` for `*.ref12.dev` with GitHub as the only login method, an allow policy for one email and a service-token policy (token `tunnel-bus-hexad`); `ACCESS_REQUIRED=true`. workers.dev is closed (403) because it carries no Access JWT.
 
+## Dashboard
+
+`https://ctl.ref12.dev/` (and `/_ui` on any host, e.g. workers.dev) shows providers (connected or not, registered and last-seen times, public and `<prefix>--` addresses), bus health (uptime, router version, providers, connections, whether Access is required), who is signed in with a sign-out link, and lets you unregister (in-page confirmation) or register a name (the one-time bash and PowerShell command, copied on click, kept only in page memory).
+
+* **Served from the Worker**, as one self-contained page (`worker/ui/index.html`, compiled into `src/ui.ts` by `node scripts/build-ui.mjs`; no build step in deployment, no framework, no external requests, strict CSP). The Worker already verifies the Access JWT, so the page is refused without it before anything else runs, and it needs no container wake-up to load.
+* **API:** `GET /_api/providers` (name, port, up, registeredAt, lastSeen, host, prefixedHost, path), `GET /_api/status`, plus the existing register/unregister. No credentials in any listing. Callers are either the admin token (programs) or an Access identity listed in `BUS_ADMIN_EMAILS`: the Worker puts the verified email in `X-Bus-User` (and strips any client value); mutations from an identity also need `X-Bus-CSRF: 1`, so a cross-site form post cannot unregister anything. Service tokens carry no email, so they use the admin token.
+* Screenshots with two fake providers: `.hexad/screens/dashboard-desktop.png`, `dashboard-phone.png`.
+
 ### Setup
 
 ```
