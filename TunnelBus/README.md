@@ -69,6 +69,10 @@ The zone is **empty and dedicated** (Free plan, active, no DNS records; the toke
 `hexad.ref12.dev`, `3000--hexad.ref12.dev`, control host `ctl.ref12.dev`; one proxied wildcard record `*`, one route `*.ref12.dev/*`, one Access application `*.ref12.dev`, free Universal SSL.
 `BUS_BASE_DOMAIN=ref12.dev` and `BUS_CONTROL_HOST=ctl.ref12.dev` go in `wrangler.jsonc` (`domain-setup --write-config` sets them). Nothing has been created in the zone yet. If the zone later hosts other sites, switch to the `-bus` suffix scheme described above (the previously checked ref12.dev zone was shared, with tunnels and Email Routing records, which is why the suffix was proposed there).
 
+### Live configuration (2026-10-05)
+
+Base domain `ref12.dev` (dedicated zone, empty before). Wildcard `AAAA *.ref12.dev -> 100::` (proxied), route `*.ref12.dev/*` -> `tunnel-bus`, control host `ctl.ref12.dev`. Access: team `laxid.cloudflareaccess.com`, application `tunnel-bus` for `*.ref12.dev` with GitHub as the only login method, an allow policy for one email and a service-token policy (token `tunnel-bus-hexad`); `ACCESS_REQUIRED=true`. workers.dev is closed (403) because it carries no Access JWT.
+
 ### Setup
 
 ```

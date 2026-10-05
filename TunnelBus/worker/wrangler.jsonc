@@ -6,9 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   // Host routing + Access: see ../README.md. Empty = path routing only / Access off.
   "vars": {
-    "ACCESS_REQUIRED": "false",
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
+    "ACCESS_REQUIRED": "true",
+    "ACCESS_TEAM_DOMAIN": "laxid.cloudflareaccess.com",
+    "ACCESS_AUD": "430edc5c0631389af5d4b8af4f32c92386e189afdfd60d1247813a92bf0be553",
     "BUS_BASE_DOMAIN": "ref12.dev",
     "BUS_CONTROL_HOST": "ctl.ref12.dev",
     "BUS_LABEL_SUFFIX": ""

@@ -80,7 +80,7 @@ if (app) console.error(`application "${a["app-name"]}" exists; not modified`);
 else {
   app = (await cf.post(`${A}/apps`, {
     name: a["app-name"], type: "self_hosted", domain: host,
-    destinations: [{ type: "public", uri: `${host}/*` }],
+    destinations: [{ type: "public", uri: host }], // no path = every path; must include `domain`
     session_duration: "24h",
     ...(githubIdp ? { allowed_idps: [githubIdp], auto_redirect_to_identity: true } : {}),
     service_auth_401_redirect: true, // programs get 401, not a login redirect
