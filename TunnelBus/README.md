@@ -39,6 +39,8 @@ The script downloads chisel 1.10.1 into a cache folder if it is not on PATH, reg
 `chisel client --keepalive 25s --auth user:pass <bus>/_chisel R:<port>:localhost:<app port>`; if chisel exits it registers again and reconnects.
 Names: `[a-z0-9][a-z0-9-]*`, up to 41 characters.
 
+**Client app:** `TunnelBus/client` is `tbus`, a .NET command-line client (`tbus share 3000 --name myapp`, `list`, `stop`, `open`), the easy way to link a local port; see its README.
+
 ## Consume
 
 * **Browser / HTTP / SSE / WebSocket:** `https://<bus>/<name>/...`. Apps see paths without the prefix; absolute links (`/assets/x.js`) in the app's HTML will not carry the prefix — use relative links or honour `X-Forwarded-Prefix` until subdomain routing exists.
