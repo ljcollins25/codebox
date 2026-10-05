@@ -4,6 +4,8 @@ Register a name on the tunnel bus and keep a stock chisel client connected (Wind
 .EXAMPLE
 ./tunnel-bus-provider.ps1 -Bus https://tunnel-bus.X.workers.dev -Name myapp -Port 3000
 The admin token comes from -Token or $env:TUNNEL_BUS_ADMIN_TOKEN.
+Behind Cloudflare Access set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET (a service token); they are sent
+on the registration call and to chisel (--header). -DryRun prints the headers and chisel arguments (for tests).
 #>
 param(
   [string]$Bus = $env:TUNNEL_BUS_URL,
@@ -11,11 +13,26 @@ param(
   [Parameter(Mandatory)][int]$Port,
   [string]$Token = $env:TUNNEL_BUS_ADMIN_TOKEN,
   [string]$TargetHost = 'localhost',
-  [string]$ChiselVersion = '1.10.1'
+  [string]$ChiselVersion = '1.10.1',
+  [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
 if (-not $Bus -or -not $Token) { throw 'need -Bus and a token (-Token or TUNNEL_BUS_ADMIN_TOKEN)' }
 $Bus = $Bus.TrimEnd('/')
+$id = $env:CF_ACCESS_CLIENT_ID; $secret = $env:CF_ACCESS_CLIENT_SECRET
+if ([bool]$id -ne [bool]$secret) { throw 'set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET' }
+$access = [ordered]@{}
+$chiselHeaderArgs = @()
+if ($id) {
+  $access['CF-Access-Client-Id'] = $id; $access['CF-Access-Client-Secret'] = $secret
+  foreach ($k in $access.Keys) { $chiselHeaderArgs += @('--header', "$($k): $($access[$k])") }
+}
+if ($DryRun) {
+  foreach ($k in $access.Keys) { Write-Output "REGISTER-HEADER: $($k): $($access[$k])" }
+  Write-Output "REGISTER-URL: $Bus/_api/register"
+  Write-Output ("CHISEL-ARGS: client --keepalive 25s --auth USER:PASS " + (($chiselHeaderArgs -join ' ') + " $Bus/_chisel R:PORT:${TargetHost}:$Port").TrimStart())
+  return
+}
 
 function Get-Chisel {
   $c = Get-Command chisel -ErrorAction SilentlyContinue
@@ -52,10 +69,10 @@ $chisel = Get-Chisel
 while ($true) {
   try {
     $r = Invoke-RestMethod -Method Post -Uri "$Bus/_api/register" -ContentType 'application/json' `
-      -Headers @{ Authorization = "Bearer $Token" } -Body (@{ name = $Name } | ConvertTo-Json)
+      -Headers (@{ Authorization = "Bearer $Token" } + $access) -Body (@{ name = $Name } | ConvertTo-Json)
     Write-Host "registered: $Bus/$Name/  (server port $($r.port))"
     Start-Sleep -Seconds 1 # let chisel reload its authfile
-    & $chisel client --keepalive 25s --auth "$($r.user):$($r.password)" "$Bus/_chisel" "R:$($r.port):${TargetHost}:$Port"
+    & $chisel client --keepalive 25s --auth "$($r.user):$($r.password)" @chiselHeaderArgs "$Bus/_chisel" "R:$($r.port):${TargetHost}:$Port"
     Write-Host 'chisel exited; re-registering in 3s'
   } catch { Write-Host "error: $($_.Exception.Message); retrying in 5s"; Start-Sleep -Seconds 2 }
   Start-Sleep -Seconds 3

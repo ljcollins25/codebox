@@ -2,13 +2,17 @@
 # Register a name on the tunnel bus and keep a stock chisel client connected.
 # Usage: tunnel-bus-provider.sh --bus https://tunnel-bus.X.workers.dev --name myapp --port 3000 [--token T]
 # The admin token comes from --token or $TUNNEL_BUS_ADMIN_TOKEN.
+# Behind Cloudflare Access, set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET (a service token); they are
+# sent on the registration call and to chisel (--header). --dry-run prints the request headers and chisel
+# arguments (secrets included, for tests) instead of connecting.
 set -u
 BUS=${TUNNEL_BUS_URL:-}; NAME=; PORT=; TOKEN=${TUNNEL_BUS_ADMIN_TOKEN:-}; HOST=localhost
 CHISEL_VERSION=${CHISEL_VERSION:-1.10.1}
+DRY=0
 while [ $# -gt 0 ]; do
   case $1 in
     --bus) BUS=$2; shift 2;; --name) NAME=$2; shift 2;; --port) PORT=$2; shift 2;;
-    --token) TOKEN=$2; shift 2;; --host) HOST=$2; shift 2;;
+    --token) TOKEN=$2; shift 2;; --host) HOST=$2; shift 2;; --dry-run) DRY=1; shift;;
     *) echo "unknown argument $1" >&2; exit 2;;
   esac
 done
@@ -29,6 +33,22 @@ find_chisel() {
   fi
   echo "$bin"
 }
+ACCESS_HDRS=()
+if [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && [ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]; then
+  ACCESS_HDRS=("CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+elif [ -n "${CF_ACCESS_CLIENT_ID:-}${CF_ACCESS_CLIENT_SECRET:-}" ]; then
+  echo "set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET" >&2; exit 2
+fi
+CURL_H=(); CHISEL_H=()
+for h in "${ACCESS_HDRS[@]+"${ACCESS_HDRS[@]}"}"; do CURL_H+=(-H "$h"); CHISEL_H+=(--header "$h"); done
+
+if [ "$DRY" = 1 ]; then
+  for h in "${ACCESS_HDRS[@]+"${ACCESS_HDRS[@]}"}"; do echo "REGISTER-HEADER: $h"; done
+  echo "REGISTER-URL: $BUS/_api/register"
+  echo "CHISEL-ARGS: client --keepalive 25s --auth USER:PASS ${CHISEL_H[*]+"${CHISEL_H[*]}"} $BUS/_chisel R:PORT:$HOST:$PORT"
+  exit 0
+fi
+
 CHISEL=$(find_chisel) || { echo "could not get chisel" >&2; exit 1; }
 
 json_field() { # json_field <field>  (reads stdin)
@@ -38,14 +58,14 @@ json_field() { # json_field <field>  (reads stdin)
 trap 'exit 0' INT TERM
 while true; do
   RESP=$(curl -fsS -X POST "$BUS/_api/register" -H "Authorization: Bearer $TOKEN" \
-        -H 'Content-Type: application/json' -d "{\"name\":\"$NAME\"}")
+        -H 'Content-Type: application/json' "${CURL_H[@]+"${CURL_H[@]}"}" -d "{\"name\":\"$NAME\"}")
   if [ -z "$RESP" ]; then echo "register failed, retrying in 5s" >&2; sleep 5; continue; fi
   USER=$(printf %s "$RESP" | json_field user | head -1)
   PASS=$(printf %s "$RESP" | json_field password | head -1)
   RPORT=$(printf %s "$RESP" | json_field port | head -1)
   echo "registered: $BUS/$NAME/  (server port $RPORT)" >&2
   sleep 1 # let chisel reload its authfile
-  "$CHISEL" client --keepalive 25s --auth "$USER:$PASS" "$BUS/_chisel" "R:$RPORT:$HOST:$PORT"
+  "$CHISEL" client --keepalive 25s --auth "$USER:$PASS" "${CHISEL_H[@]+"${CHISEL_H[@]}"}" "$BUS/_chisel" "R:$RPORT:$HOST:$PORT"
   echo "chisel exited; re-registering in 3s" >&2
   sleep 3
 done

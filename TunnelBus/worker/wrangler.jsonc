@@ -4,6 +4,15 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Host routing + Access: see ../README.md. Empty = path routing only / Access off.
+  "vars": {
+    "ACCESS_REQUIRED": "false",
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": "",
+    "BUS_BASE_DOMAIN": "",
+    "BUS_CONTROL_HOST": "",
+    "BUS_LABEL_SUFFIX": ""
+  },
   "observability": { "enabled": true },
   "containers": [
     {

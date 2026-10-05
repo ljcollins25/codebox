@@ -360,3 +360,117 @@ func TestRegistryListReportsUp(t *testing.T) {
 		t.Fatalf("%s", w.Body)
 	}
 }
+
+// ---- host routing ----
+
+func hostReq(rt *Router, host, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("GET", path, nil)
+	req.Host = host
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+	return w
+}
+
+func TestHostRouting(t *testing.T) {
+	rt, _ := newRouter(t)
+	rt.BaseDomain = "example.com"
+	rt.ControlHost = "ctl.example.com"
+	startBackend(t, rt, "hexad", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, strings.Join([]string{r.URL.RequestURI(), r.Host, r.Header.Get("X-Forwarded-Host"), r.Header.Get("X-Bus-Host-Prefix"), r.Header.Get("X-Forwarded-Prefix")}, "|"))
+	}))
+	cases := []struct{ host, path, want string }{
+		{"hexad.example.com", "/a/b?x=1", "/a/b?x=1|hexad.example.com|hexad.example.com||"},
+		{"HEXAD.example.com:443", "/", "/|hexad.example.com|hexad.example.com||"},
+		{"3000--hexad.example.com", "/p", "/p|3000--hexad.example.com|3000--hexad.example.com|3000|"},
+		{"a--b--hexad.example.com", "/", "/|a--b--hexad.example.com|a--b--hexad.example.com|a--b|"},
+	}
+	for _, c := range cases {
+		if w := hostReq(rt, c.host, c.path); w.Code != 200 || w.Body.String() != c.want {
+			t.Errorf("%s%s: %d %q, want %q", c.host, c.path, w.Code, w.Body, c.want)
+		}
+	}
+	for _, h := range []string{"nobody.example.com", "x.hexad.example.com", "--hexad.example.com", "example.com"} {
+		if w := hostReq(rt, h, "/"); w.Code == 200 {
+			t.Errorf("%s: should not route, got 200 %q", h, w.Body)
+		}
+	}
+	// a different domain falls back to path routing
+	if w := hostReq(rt, "other.test", "/hexad/z"); w.Code != 200 || !strings.HasPrefix(w.Body.String(), "/z|") {
+		t.Errorf("path routing on foreign host: %d %q", w.Code, w.Body)
+	}
+	// the control host serves the API, never a provider
+	if w := hostReq(rt, "ctl.example.com", "/_health"); w.Code != 200 {
+		t.Errorf("control host health: %d", w.Code)
+	}
+	if w := call(rt, "POST", "/_api/register", tok, `{"name":"ctl"}`); w.Code != 400 {
+		t.Errorf("control label registrable: %d", w.Code)
+	}
+}
+
+func TestBusHostHeaderOverridesHost(t *testing.T) {
+	rt, _ := newRouter(t)
+	rt.BaseDomain = "example.com"
+	startBackend(t, rt, "app", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, r.Host+"|"+r.Header.Get("X-Bus-Host")) }))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "tunnel-bus.workers.dev"
+	req.Header.Set("X-Bus-Host", "5000--app.example.com")
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+	if w.Body.String() != "5000--app.example.com|" {
+		t.Fatalf("%q", w.Body)
+	}
+}
+
+func TestNamesRejectDoubleDash(t *testing.T) {
+	rt, _ := newRouter(t)
+	for _, n := range []string{"a--b", "-a", "a-", strings.Repeat("a", 41)} {
+		if _, _, err := rt.Reg.Register(n); err == nil {
+			t.Errorf("%q accepted", n)
+		}
+	}
+	if _, _, err := rt.Reg.Register("a-b"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestHostWebSocketPassThrough(t *testing.T) {
+	rt, _ := newRouter(t)
+	rt.BaseDomain = "example.com"
+	startBackend(t, rt, "ws", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, rw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		rw.Flush()
+		io.Copy(c, rw)
+	}))
+	front := httptest.NewServer(rt)
+	defer front.Close()
+	c, _ := net.Dial("tcp", strings.TrimPrefix(front.URL, "http://"))
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	io.WriteString(c, "GET /sock HTTP/1.1\r\nHost: 3000--ws.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+	if s, _ := bufio.NewReader(c).ReadString('\n'); !strings.Contains(s, "101") {
+		t.Fatalf("no 101: %q", s)
+	}
+}
+
+func TestLabelSuffix(t *testing.T) {
+	rt, _ := newRouter(t)
+	rt.BaseDomain = "example.com"
+	rt.LabelSuffix = "-bus"
+	startBackend(t, rt, "hexad", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Header.Get("X-Bus-Host-Prefix")+"|"+r.Header.Get("X-Forwarded-Host"))
+	}))
+	if w := hostReq(rt, "hexad-bus.example.com", "/"); w.Code != 200 || w.Body.String() != "|hexad-bus.example.com" {
+		t.Errorf("%d %q", w.Code, w.Body)
+	}
+	if w := hostReq(rt, "3000--hexad-bus.example.com", "/"); w.Code != 200 || w.Body.String() != "3000|3000--hexad-bus.example.com" {
+		t.Errorf("%d %q", w.Code, w.Body)
+	}
+	if w := hostReq(rt, "hexad.example.com", "/"); w.Code == 200 {
+		t.Errorf("host without the suffix routed")
+	}
+}
