@@ -3,6 +3,7 @@
 import { verifyAccessJwt, type AccessConfig } from "./access.ts";
 import { UI_HTML } from "./ui.ts";
 import { displayName } from "./identity.ts";
+import { PWA_BASE, PWA_HEAD, pwaAsset } from "./pwa.ts";
 
 export interface GateEnv {
   ACCESS_REQUIRED?: string;
@@ -23,7 +24,7 @@ const UI_HEADERS = {
   "Content-Type": "text/html; charset=utf-8",
   "Cache-Control": "no-store",
   // The page is self-contained: no external scripts, styles, frames or requests.
-  "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
 };
@@ -53,6 +54,17 @@ export async function handle(request: Request, env: GateEnv, deps: GateDeps): Pr
     }
   }
   const url = new URL(request.url);
+  const onControlHost = !!env.BUS_CONTROL_HOST && url.hostname.toLowerCase() === env.BUS_CONTROL_HOST.toLowerCase();
+  if (onControlHost && (url.pathname === "/app" || url.pathname.startsWith(PWA_BASE))) {
+    // The installable launcher (scope /app/) and its manifest, service worker and icons. Only the control host:
+    // on provider hosts and workers.dev a provider may be called "app".
+    if (request.method !== "GET" && request.method !== "HEAD") return new Response("method not allowed", { status: 405 });
+    if (url.pathname === "/app") return Response.redirect(url.origin + PWA_BASE, 308);
+    if (url.pathname === PWA_BASE) {
+      return new Response(request.method === "HEAD" ? null : UI_HTML.replace("<!--PWA-->", PWA_HEAD), { headers: UI_HEADERS });
+    }
+    return pwaAsset(url.pathname, request.method)!;
+  }
   if (isUiRequest(url, env)) {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("method not allowed", { status: 405 });
     return new Response(request.method === "HEAD" ? null : UI_HTML, { headers: UI_HEADERS });

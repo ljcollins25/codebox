@@ -3,6 +3,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>Tunnel bus</title>
+<!--PWA-->
 <style>
 :root{--bg:#0e1116;--card:#161b22;--line:#262d36;--fg:#e6edf3;--dim:#8b949e;--ok:#3fb950;--bad:#f85149;--acc:#58a6ff}
 *{box-sizing:border-box}
@@ -94,7 +95,13 @@ function renderStatus(){var s=state.status;if(!s)return;
  box.appendChild(stat("Connected",s.connections));
  box.appendChild(stat("Access",s.accessRequired?"required":"off"));
 }
-function link(href,text){var a=el("a",null,text||href);a.href=href;a.target="_blank";a.rel="noopener";return a}
+// Links to apps always leave the dashboard for the real browser. The https URL stays in href (long-press, copy).
+// Installed on Android (standalone), an out-of-scope link would open in a Custom Tab inside the app, so go through an
+// intent that targets Chrome itself; everywhere else target=_blank opens a normal tab or window.
+var standalone=window.matchMedia&&(matchMedia("(display-mode: standalone)").matches||navigator.standalone===true),android=/Android/i.test(navigator.userAgent);
+function chromeIntent(href){var u=new URL(href);return "intent://"+u.host+u.pathname+u.search+"#Intent;scheme="+u.protocol.replace(":","")+";package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(href)+";end"}
+function link(href,text){var a=el("a",null,text||href);a.href=href;a.target="_blank";a.rel="noopener";
+ if(standalone&&android)a.addEventListener("click",function(ev){ev.preventDefault();location.href=chromeIntent(href)});return a}
 function tm(iso){var s=el("span","t");if(!iso){s.textContent="never";s.className="";return s}
  var rel=ago(iso),ex=when(iso),on=false;s.textContent=rel;s.title=ex;s.tabIndex=0;
  function flip(){on=!on;s.textContent=on?ex:ago(iso)}s.onclick=flip;s.onkeydown=function(e){if(e.key==="Enter")flip()};return s}
@@ -158,7 +165,9 @@ function refresh(){
  $("err").textContent="";
  return Promise.all([api("GET","/_api/status"),api("GET","/_api/providers")]).then(function(r){
   state.status=r[0];state.providers=r[1];renderStatus();renderList();$("foot").textContent="Updated "+new Date().toLocaleTimeString();
- },function(e){$("err").textContent="Could not load: "+e.message});
+ },function(e){var box=$("err");box.textContent="Could not load: "+e.message+" ";
+  // an expired Access session answers the API with a cross-origin redirect; reloading the page runs the sign-in
+  var b=el("button",null,"Sign in again / retry");b.onclick=function(){location.reload()};box.appendChild(b)});
 }
 function hideOut(){$("rout").classList.add("hidden");$("rbash").textContent="";$("rps").textContent=""}
 $("refresh").onclick=refresh;

@@ -1,7 +1,7 @@
 // Serves the dashboard page with made-up data, for screenshots and local UI work:
 //   node scripts/mock-dashboard.mjs [port]      then open http://localhost:<port>/
 import http from "node:http";
-import { UI_HTML } from "../src/ui.ts";
+import { handle } from "../src/gate.ts";
 const port = Number(process.argv[2] ?? 8799);
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
 const base = (o) => ({ port: 20000, up: false, lastSeen: null, connectedSince: null, reconnects: 0, description: "", label: "", owner: "", kind: "", metaUpdatedAt: null, path: "/" + o.name + "/", host: o.name + ".example.test", ...o });
@@ -13,11 +13,16 @@ const providers = [
   base({ name: "legacy-api", registeredAt: ago(9000), lastSeen: ago(7000) }),
 ];
 const status = { version: "0.4.0", uptimeSeconds: 4 * 3600 + 120, providers: providers.length, connections: providers.filter((p) => p.up).length, accessRequired: true, controlHost: "ctl.example.test", you: "ljcollins25" };
-http.createServer((req, res) => {
-  const p = new URL(req.url, "http://x").pathname;
-  const json = (v) => (res.setHeader("content-type", "application/json"), res.end(JSON.stringify(v)));
-  if (p === "/_api/status") return json(status);
-  if (p === "/_api/providers") return json(providers);
-  res.setHeader("content-type", "text/html; charset=utf-8");
-  res.end(UI_HTML);
-}).listen(port, () => console.log("mock dashboard on http://localhost:" + port + "/"));
+// The real gate serves the page, /app/ manifest, service worker and icons; only the router is faked.
+const env = { BUS_CONTROL_HOST: "localhost" };
+const forward = async (req) => {
+  const p = new URL(req.url).pathname;
+  if (p === "/_api/status") return Response.json(status);
+  if (p === "/_api/providers") return Response.json(providers);
+  return new Response("not found", { status: 404 });
+};
+http.createServer(async (req, res) => {
+  const r = await handle(new Request("http://" + req.headers.host + req.url, { method: req.method, headers: { host: req.headers.host } }), env, { forward });
+  res.writeHead(r.status, Object.fromEntries(r.headers));
+  res.end(Buffer.from(await r.arrayBuffer()));
+}).listen(port, () => console.log("mock dashboard on http://localhost:" + port + "/  (installable launcher: /app/)"));
