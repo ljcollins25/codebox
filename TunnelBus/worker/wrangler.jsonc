@@ -9,7 +9,7 @@
     "ACCESS_REQUIRED": "false",
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
-    "BUS_BASE_DOMAIN": "ref12labs.com",
+    "BUS_BASE_DOMAIN": "ref12.dev",
     "BUS_CONTROL_HOST": "",
     "BUS_LABEL_SUFFIX": ""
   },
