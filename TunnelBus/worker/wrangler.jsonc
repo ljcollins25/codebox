@@ -10,7 +10,7 @@
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
     "BUS_BASE_DOMAIN": "ref12.dev",
-    "BUS_CONTROL_HOST": "",
+    "BUS_CONTROL_HOST": "ctl.ref12.dev",
     "BUS_LABEL_SUFFIX": ""
   },
   "observability": { "enabled": true },
