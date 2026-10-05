@@ -8,7 +8,7 @@ internal static class Program
     {
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => cts.Cancel();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { cts.Cancel(); } catch (ObjectDisposedException) { } };
         return await App.RunAsync(args, new Host(), cts.Token).ConfigureAwait(false);
     }
 }
