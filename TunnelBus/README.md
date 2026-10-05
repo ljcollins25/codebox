@@ -67,3 +67,13 @@ Workers Paid ≈ $5/month, plus container time while awake (`lite` is billed per
 * Cloudflare Access in front of the custom domain; or validate `Cf-Access-Jwt-Assertion` in `worker/src/index.ts` (marked there) before forwarding. Provider chisel clients would use an Access service token header.
 * Per-provider API tokens instead of one admin token.
 * hexad integration (replace its dev tunnel with a bus provider).
+
+
+## Measured pass-through results (2026-10-05, from a GitHub Actions runner)
+
+Deployed at `https://tunnel-bus.ref12cf.workers.dev`, test app behind a stock chisel 1.10.1 client.
+* Page: 200 through the bus. WebSocket: 50/50 echo round trips (median 138 ms, max 153 ms), and a message after 60 s idle on the same socket worked.
+* SSE: 138 s stream, 45 events at 3 s intervals, no stall (max gap 3008 ms); the stream stayed open the whole time.
+* Idle: chisel client left idle (keepalive 25 s) for 10 min; afterwards `/demo/ping` still returned 200 and the bus uptime showed no restart.
+* Kill chisel client, restart via the provider script (re-register + reconnect): routing back (200) about 1–2 s after the new client connected (first request 502 while down).
+* Latency of a small request (40 requests, new TLS connection each, curl): direct 0.3 ms; via the bus median 212 ms, p90 262 ms (the Worker's own `/_health` is 133 ms median, so ~80 ms is Worker→DO→container→chisel→client).
