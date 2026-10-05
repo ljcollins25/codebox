@@ -6,8 +6,8 @@ internal static class Program
 {
     private const string Usage = @"r2pipe - bulk data pipe through Cloudflare R2
 
-  r2pipe send <file|-> [--name N] [--parallel 4] [--part-size 32M] [--mode presigned|binding] [--resume ID]
-  r2pipe recv <id> [-o file|-] [--parallel 4]
+  r2pipe send <file|-> [--name N] [--parallel 16] [--part-size 16M] [--mode presigned|binding] [--resume ID]
+  r2pipe recv <id> [-o file|-] [--parallel 16]
   r2pipe ls
   r2pipe abort <id>
   r2pipe serve <local port> --name <name>    answer HTTP requests for /p/<name>/ (or <name>--pipe.ref12.dev) from a local app
@@ -62,7 +62,7 @@ send prints the transfer id on stdout and the receive command on stderr; '-' rea
 
     private static HttpPipeApi Api(Credentials c) => new(c.Url, c.Headers());
 
-    private static int Parallel(Args a) => a.GetInt("parallel", int.TryParse(Environment.GetEnvironmentVariable("R2PIPE_PARALLEL"), out var p) && p > 0 ? p : 4);
+    private static int Parallel(Args a) => a.GetInt("parallel", int.TryParse(Environment.GetEnvironmentVariable("R2PIPE_PARALLEL"), out var p) && p > 0 ? p : 16);
 
     private static int Login(Args a, Credentials c)
     {
@@ -103,8 +103,8 @@ send prints the transfer id on stdout and the receive command on stderr; '-' rea
         var api = Api(c);
         var o = new SendOptions
         {
-            Name = name, Size = size, Parallel = Parallel(a), UrlBatch = a.GetInt("url-batch", 8), Mode = a.Get("mode"), ResumeId = a.Get("resume"),
-            PartSize = a.Get("part-size") is { } ps ? Sizes.Parse(ps) : 32L << 20,
+            Name = name, Size = size, Parallel = Parallel(a), UrlBatch = a.GetInt("url-batch", 16), Mode = a.Get("mode"), ResumeId = a.Get("resume"),
+            PartSize = a.Get("part-size") is { } ps ? Sizes.Parse(ps) : 16L << 20,
             Info = s => Console.Error.WriteLine(s),
         };
         var meter = new Meter();

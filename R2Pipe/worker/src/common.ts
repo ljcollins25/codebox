@@ -16,6 +16,9 @@ export interface Env {
   TRANSFER_TTL_SECONDS?: string;
   /** e.g. "pipe.ref12.dev": hosts "<name>--pipe.ref12.dev" reach provider <name>. */
   HTTP_HOST_SUFFIX?: string;
+  /** HTTP front: parts read from R2 ahead of the one being streamed (count and bytes). */
+  HTTP_PREFETCH?: string;
+  HTTP_PREFETCH_BYTES?: string;
 }
 
 export const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });

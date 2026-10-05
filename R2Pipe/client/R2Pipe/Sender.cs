@@ -8,7 +8,7 @@ internal sealed class SendOptions
     public string? Name { get; init; }
     public long? Size { get; init; }
     /// <summary>The largest part. Parts start small and double (slow start) up to this size.</summary>
-    public long PartSize { get; init; } = 32L << 20;
+    public long PartSize { get; init; } = 16L << 20;
     public long FirstPartSize { get; init; } = 1L << 20;
     public int Parallel { get; init; } = 4;
     public string? Mode { get; init; }
@@ -18,7 +18,7 @@ internal sealed class SendOptions
     public long InlineMax { get; init; } = 1L << 20;
     public int InlineChunk { get; init; } = 256 * 1024;
     /// <summary>PUT URLs are fetched this many parts at a time.</summary>
-    public int UrlBatch { get; init; } = 8;
+    public int UrlBatch { get; init; } = 16;
     /// <summary>Continue an earlier transfer: parts the server already has with the same checksum are not uploaded again.</summary>
     public string? ResumeId { get; init; }
     public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
