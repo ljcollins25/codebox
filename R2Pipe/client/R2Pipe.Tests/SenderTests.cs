@@ -6,7 +6,7 @@ namespace R2Pipe.Tests;
 public class SenderTests
 {
     private static SendOptions Opts(int parallel = 3, long partSize = 1024, string? resume = null) =>
-        new() { Parallel = parallel, PartSize = partSize, Delay = Util.NoDelay, ResumeId = resume, Attempts = 4 };
+        new() { Parallel = parallel, PartSize = partSize, FirstPartSize = partSize, Inline = false, Delay = Util.NoDelay, ResumeId = resume, Attempts = 4 };
 
     [Fact]
     public async Task Splits_the_input_into_parts_with_checksums_and_completes()

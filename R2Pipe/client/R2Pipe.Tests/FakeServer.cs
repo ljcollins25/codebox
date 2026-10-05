@@ -24,21 +24,32 @@ internal sealed class FakeServer : IPipeApi, IBlobs
 
     public FakeServer(long partSize = 1024)
     {
-        _meta = new MetaInfo("fake", "f.bin", null, partSize, "presigned", "open", null, null, null, 0, 0, 0);
+        _meta = new MetaInfo("fake", "f.bin", null, partSize, "presigned", "open", null, null, 0, null, 0, 0, 0);
     }
     public MetaInfo Meta { get { lock (_l) return _meta; } }
     public int ObjectCount { get { lock (_l) return _objects.Count; } }
     public void Seed(int n, byte[] data, string state = "ready")
     {
-        lock (_l) { _objects[n] = data; _parts[n] = new PartInfo(n, data.Length, Hex(data), "etag", state); Bump(); }
+        lock (_l) { _objects[n] = data; _parts[n] = new PartInfo(n, (n - 1) * 1024L, data.Length, Hex(data), "etag", state); Bump(); }
     }
     public static string Hex(byte[] d) => Convert.ToHexString(SHA256.HashData(d)).ToLowerInvariant();
-    private void Bump() { _meta = _meta with { Version = _meta.Version + 1 }; var o = _changed; _changed = new(TaskCreationOptions.RunContinuationsAsynchronously); o.TrySetResult(); }
+    private void Bump() { _meta = _meta with { Version = _meta.Version + 1 }; PushState(); var o = _changed; _changed = new(TaskCreationOptions.RunContinuationsAsynchronously); o.TrySetResult(); }
 
     public Task<CreateResult> CreateAsync(string? name, long? size, long partSize, string? mode, CancellationToken ct)
     {
         lock (_l) { _meta = _meta with { PartSize = partSize, Name = name ?? "f.bin", Size = size }; }
         return Task.FromResult(new CreateResult("fake", "presigned", partSize, name, size));
+    }
+    public readonly List<FeedItem> FeedLog = new();
+    public bool InlineAvailable = true;
+    public int PutUrlBatches;
+    public long InlineStored;
+    public readonly List<(long off, int len)> InlineSends = new();
+    private void PushState() { FeedLog.Add(new StateItem(new StateResult(_meta, _parts.Values.OrderBy(p => p.N).ToList()))); }
+    public Task<List<PutUrl>> PutUrlsAsync(string id, int from, int count, CancellationToken ct)
+    {
+        lock (_l) PutUrlBatches++;
+        return Task.FromResult(Enumerable.Range(from, count).Select(k => new PutUrl(k, "mem://put/" + k)).ToList());
     }
     public Task<UrlResult> PutUrlAsync(string id, int n, CancellationToken ct) => Task.FromResult(new UrlResult("mem://put/" + n, "PUT"));
     public Task<UrlResult> GetUrlAsync(string id, int n, CancellationToken ct)
@@ -81,14 +92,14 @@ internal sealed class FakeServer : IPipeApi, IBlobs
         finally { lock (_l) { _getsInFlight--; Log.Add("get-end " + n); } }
     }
 
-    public Task DoneAsync(string id, int n, long size, string sha256, CancellationToken ct)
+    public Task DoneAsync(string id, int n, long offset, long size, string sha256, CancellationToken ct)
     {
         if (FailDone?.Invoke(n) is { } ex) throw ex;
         lock (_l)
         {
             if (!_objects.TryGetValue(n, out var o)) throw new ApiException(HttpStatusCode.Conflict, "409 part object not found in R2");
             if (o.Length != size) throw new ApiException(HttpStatusCode.Conflict, "409 size mismatch");
-            _parts[n] = new PartInfo(n, size, sha256, "etag", "ready"); Bump(); Log.Add("done " + n);
+            _parts[n] = new PartInfo(n, offset, size, sha256, "etag", "ready"); Bump(); Log.Add("done " + n);
         }
         return Task.CompletedTask;
     }
@@ -106,11 +117,12 @@ internal sealed class FakeServer : IPipeApi, IBlobs
         return Task.CompletedTask;
     }
 
-    public Task CompleteAsync(string id, int parts, long size, string sha256, CancellationToken ct)
+    public Task CompleteAsync(string id, int parts, long size, long inline, string sha256, CancellationToken ct)
     {
         lock (_l)
         {
-            _meta = _meta with { Status = parts == 0 ? "done" : "complete", TotalParts = parts, TotalSize = size, Sha256 = sha256 };
+            if (inline != InlineStored) throw new ApiException(HttpStatusCode.Conflict, "409 inline mismatch");
+            _meta = _meta with { Status = parts == 0 ? "done" : "complete", TotalParts = parts, TotalSize = size, InlineSize = inline, Sha256 = sha256 };
             Log.Add("complete"); Bump();
         }
         return Task.CompletedTask;
@@ -128,6 +140,65 @@ internal sealed class FakeServer : IPipeApi, IBlobs
     }
 
     public Task<List<ListEntry>> ListAsync(CancellationToken ct) => Task.FromResult(new List<ListEntry>());
+
+    public Task<IReceiveFeed> OpenFeedAsync(string id, int pollSeconds, CancellationToken ct)
+    {
+        lock (_l)
+        {
+            // like the Durable Object: the state first, then the inline bytes stored so far, then live updates
+            int start = FeedLog.Count;
+            var first = new StateItem(new StateResult(_meta, _parts.Values.OrderBy(p => p.N).ToList()));
+            return Task.FromResult<IReceiveFeed>(new FakeFeed(this, first, InlineLog.ToList(), start));
+        }
+    }
+    public readonly List<InlineItem> InlineLog = new();
+
+    public Task<IInlineSender?> OpenInlineSenderAsync(string id, CancellationToken ct) =>
+        Task.FromResult<IInlineSender?>(InlineAvailable ? new FakeInline(this) : null);
+
+    internal sealed class FakeInline(FakeServer s) : IInlineSender
+    {
+        public Task SendAsync(long offset, byte[] data, int length, CancellationToken ct)
+        {
+            lock (s._l)
+            {
+                if (offset != s.InlineStored) throw new ApiException(HttpStatusCode.Conflict, "409 inline offset");
+                var item = new InlineItem(offset, data.AsSpan(0, length).ToArray());
+                s.InlineLog.Add(item); s.FeedLog.Add(item); s.InlineSends.Add((offset, length)); s.InlineStored += length; s._meta = s._meta with { InlineSize = s.InlineStored };
+                var o = s._changed; s._changed = new(TaskCreationOptions.RunContinuationsAsynchronously); o.TrySetResult();
+            }
+            return Task.CompletedTask;
+        }
+        public Task FlushAsync(long total, CancellationToken ct) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    internal sealed class FakeFeed(FakeServer s, StateItem first, List<InlineItem> replay, int index) : IReceiveFeed
+    {
+        private int _stage; private int _r;
+        public async Task<FeedItem?> NextAsync(CancellationToken ct)
+        {
+            if (_stage == 0) { _stage = 1; return first; }
+            if (_stage == 1 && _r < replay.Count) return replay[_r++];
+            _stage = 2;
+            while (true)
+            {
+                Task t;
+                lock (s._l)
+                {
+                    while (index < s.FeedLog.Count)
+                    {
+                        var it = s.FeedLog[index++];
+                        if (it is InlineItem ii && replay.Any(x => x.Offset == ii.Offset)) continue;
+                        return it;
+                    }
+                    t = s._changed.Task;
+                }
+                await t.WaitAsync(ct).ConfigureAwait(false);
+            }
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }
 
 /// <summary>A stream that hands out data in small chunks, like a pipe.</summary>

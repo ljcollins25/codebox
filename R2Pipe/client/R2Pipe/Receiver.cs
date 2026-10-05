@@ -99,13 +99,19 @@ internal sealed class Tracker
     {
         lock (_l)
         {
-            Meta = s.Meta;
-            foreach (var p in s.Parts) _parts[p.N] = p;
+            if (Meta == null || s.Meta.Version >= Meta.Version) Meta = s.Meta;
+            foreach (var p in s.Parts)
+            {
+                // keep a URL we already know when a later push (an ack) has none
+                if (_parts.TryGetValue(p.N, out var old) && p.Url == null && old.Url != null) _parts[p.N] = p with { Url = old.Url };
+                else _parts[p.N] = p;
+            }
             if (s.Meta.Status is "aborted" or "expired") Failure = $"transfer {s.Meta.Status}";
-            var old = _changed; _changed = NewTcs(); old.TrySetResult();
+            Bump();
         }
     }
-    public void Fail(string why) { lock (_l) { Failure ??= why; var o = _changed; _changed = NewTcs(); o.TrySetResult(); } }
+    private void Bump() { var old = _changed; _changed = NewTcs(); old.TrySetResult(); }
+    public void Fail(string why) { lock (_l) { Failure ??= why; Bump(); } }
 
     /// <summary>The part info once part <paramref name="n"/> exists; null when the transfer is complete and has fewer parts.</summary>
     public async Task<PartInfo?> WaitForPartAsync(int n, CancellationToken ct)
@@ -125,35 +131,37 @@ internal sealed class Tracker
     }
 }
 
-internal sealed class OrderGate(int first)
+/// <summary>Writes happen in stream order: a writer waits until the output has reached its offset.</summary>
+internal sealed class PosGate
 {
     private readonly object _l = new();
-    private int _cur = first;
-    private readonly Dictionary<int, TaskCompletionSource> _w = new();
-    public Task WaitTurn(int n)
+    private long _pos;
+    private readonly List<(long off, TaskCompletionSource tcs)> _w = new();
+    public long Pos { get { lock (_l) return _pos; } }
+    public Task WaitFor(long offset)
     {
         lock (_l)
         {
-            if (n <= _cur) return Task.CompletedTask;
+            if (_pos >= offset) return Task.CompletedTask;
             var t = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            _w[n] = t; return t.Task;
+            _w.Add((offset, t)); return t.Task;
         }
     }
-    public void Done(int n)
+    public void Advance(long newPos)
     {
         lock (_l)
         {
-            _cur = n + 1;
-            if (_w.Remove(_cur, out var t)) t.TrySetResult();
+            _pos = Math.Max(_pos, newPos);
+            foreach (var w in _w.Where(w => w.off <= _pos).ToList()) { w.tcs.TrySetResult(); _w.Remove(w); }
         }
     }
-    public void Abort() { lock (_l) foreach (var t in _w.Values) t.TrySetCanceled(); }
+    public void Abort() { lock (_l) foreach (var w in _w) w.tcs.TrySetCanceled(); }
 }
 
 /// <summary>
-/// Downloads parts as they become ready, up to <c>Parallel</c> at a time, in order of part number (so memory is bounded by
-/// parallel × part size). Each part is checked against its SHA-256, written in order, then acked (the server deletes it).
-/// At the end the total size and the overall SHA-256 are checked.
+/// Reads inline bytes and state pushes from the feed, downloads parts as they become ready (up to <c>Parallel</c> at a time),
+/// verifies each against its SHA-256, writes everything in stream order (inline first, then the parts at their offsets), acks
+/// each part (the server deletes it) and at the end checks the total size and the overall SHA-256.
 /// </summary>
 internal static class Receiver
 {
@@ -161,37 +169,52 @@ internal static class Receiver
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var tracker = new Tracker();
-        var first = await api.StateAsync(id, -1, 0, linked.Token).ConfigureAwait(false);
-        if (first.Meta.Status is "aborted" or "expired") throw new PipeException($"transfer is {first.Meta.Status}");
-        tracker.Update(first);
-        long partSize = first.Meta.PartSize;
+        var pos = new PosGate();
+        using var overall = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var wlock = new object();
+        long total = 0, inlineGot = 0; int resumed = 0, count = 0;
+        bool hashValid = true;
+        Exception? failure = null;
 
-        var poll = Task.Run(async () =>
+        await using var feed = await api.OpenFeedAsync(id, o.PollSeconds, linked.Token).ConfigureAwait(false);
+        var gotState = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var pump = Task.Run(async () =>
         {
-            long since = first.Meta.Version;
             try
             {
                 while (!linked.IsCancellationRequested)
                 {
-                    StateResult st;
-                    try { st = await Retry.RunAsync(o.Attempts, _ => api.StateAsync(id, since, o.PollSeconds, linked.Token), o.Delay, linked.Token).ConfigureAwait(false); }
-                    catch (OperationCanceledException) { return; }
-                    since = st.Meta.Version;
-                    tracker.Update(st);
-                    if (st.Meta.Status is "aborted" or "expired" or "done") return;
+                    var item = await feed.NextAsync(linked.Token).ConfigureAwait(false);
+                    if (item == null) { if (tracker.Meta?.Status is not ("done" or "complete")) tracker.Fail("the connection to the transfer was closed"); return; }
+                    if (item is StateItem si)
+                    {
+                        tracker.Update(si.State); gotState.TrySetResult();
+                        if (si.State.Meta.Status is "aborted" or "expired" or "done") return;
+                    }
+                    else if (item is InlineItem ii)
+                    {
+                        long next = pos.Pos;
+                        long end = ii.Offset + ii.Data.Length;
+                        if (end <= next) continue;                         // already have it (replay overlapping a live push)
+                        if (ii.Offset > next) throw new PipeException($"inline data has a gap: got offset {ii.Offset}, expected {next}");
+                        int skip = (int)(next - ii.Offset);
+                        var data = skip == 0 ? ii.Data : ii.Data[skip..];
+                        await sink.WriteAsync(next, data, data.Length, linked.Token).ConfigureAwait(false);
+                        lock (wlock) { overall.AppendData(data); total += data.Length; inlineGot += data.Length; }
+                        meter.AddBytes(data.Length);
+                        pos.Advance(next + data.Length);
+                    }
                 }
             }
-            catch (Exception e) { tracker.Fail("lost the transfer state: " + e.Message); }
+            catch (OperationCanceledException) { }
+            catch (Exception e) { tracker.Fail("lost the transfer: " + e.Message); gotState.TrySetResult(); }
         }, CancellationToken.None);
 
-        int next = 0; // parts are claimed in order: 1, 2, 3, ...
-        var gate = new OrderGate(1);
-        using var overall = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        long total = 0; int resumed = 0, count = 0;
-        bool hashValid = true;
-        Exception? failure = null;
-        var wlock = new object();
+        await gotState.Task.WaitAsync(linked.Token).ConfigureAwait(false);
+        if (tracker.Failure != null) throw new PipeException(tracker.Failure);
 
+        int next = 0; // parts are claimed in order: 1, 2, 3, ...
         async Task Worker()
         {
             try
@@ -204,28 +227,28 @@ internal static class Receiver
                     if (info.State == "acked")
                     {
                         if (!resume.Done.Contains(n)) throw new PipeException($"part {n} was already received and deleted, and is not in the resume file");
-                        await gate.WaitTurn(n).WaitAsync(linked.Token).ConfigureAwait(false);
+                        await pos.WaitFor(info.Offset).WaitAsync(linked.Token).ConfigureAwait(false);
                         lock (wlock) { total += info.Size; count++; resumed++; hashValid = false; }
                         meter.AddBytes(info.Size); meter.PartDone(); meter.PartResumed();
-                        gate.Done(n);
+                        pos.Advance(info.Offset + info.Size);
                         continue;
                     }
                     var buf = ArrayPool<byte>.Shared.Rent((int)info.Size);
                     try
                     {
-                        await Retry.RunAsync(o.Attempts, async _ =>
+                        await Retry.RunAsync(o.Attempts, async attempt =>
                         {
-                            var url = await api.GetUrlAsync(id, n, linked.Token).ConfigureAwait(false);
+                            var url = attempt == 1 && info.Url != null ? new UrlResult(info.Url, "GET") : await api.GetUrlAsync(id, n, linked.Token).ConfigureAwait(false);
                             await blobs.GetAsync(url, buf, (int)info.Size, linked.Token).ConfigureAwait(false);
                             var sha = Convert.ToHexString(SHA256.HashData(buf.AsSpan(0, (int)info.Size))).ToLowerInvariant();
                             if (sha != info.Sha256) throw new IOException($"part {n}: checksum mismatch (got {sha[..12]}…, expected {info.Sha256[..12]}…)");
                             return 0;
                         }, o.Delay, linked.Token, (a, e) => { meter.Retried(); o.Info?.Invoke($"part {n}: attempt {a} failed ({e.Message}), retrying"); }).ConfigureAwait(false);
-                        await gate.WaitTurn(n).WaitAsync(linked.Token).ConfigureAwait(false);
-                        await sink.WriteAsync((n - 1) * partSize, buf, (int)info.Size, linked.Token).ConfigureAwait(false);
+                        await pos.WaitFor(info.Offset).WaitAsync(linked.Token).ConfigureAwait(false);
+                        await sink.WriteAsync(info.Offset, buf, (int)info.Size, linked.Token).ConfigureAwait(false);
                         lock (wlock) { overall.AppendData(buf, 0, (int)info.Size); total += info.Size; count++; }
                         meter.AddBytes(info.Size);
-                        gate.Done(n);
+                        pos.Advance(info.Offset + info.Size);
                         await Retry.RunAsync(o.Attempts, async _ => { await api.AckAsync(id, n, linked.Token).ConfigureAwait(false); return 0; }, o.Delay, linked.Token).ConfigureAwait(false);
                         resume.Add(n);
                         meter.PartDone();
@@ -233,19 +256,25 @@ internal static class Receiver
                     finally { ArrayPool<byte>.Shared.Return(buf); }
                 }
             }
-            catch (Exception e) { failure ??= e; linked.Cancel(); gate.Abort(); }
+            catch (Exception e) { failure ??= e; linked.Cancel(); pos.Abort(); }
         }
 
         var workers = Enumerable.Range(0, Math.Max(1, o.Parallel)).Select(_ => Task.Run(Worker, CancellationToken.None)).ToArray();
         await Task.WhenAll(workers).ConfigureAwait(false);
+        // all parts are in; the state says complete, but inline bytes may still be on their way (they come first, so they are done already)
+        var meta = tracker.Meta!;
+        if (failure == null && meta.TotalParts is not null && inlineGot < meta.InlineSize)
+        {
+            try { await pos.WaitFor(meta.InlineSize).WaitAsync(TimeSpan.FromSeconds(30), linked.Token).ConfigureAwait(false); } catch (Exception e) { failure ??= new PipeException("inline data incomplete: " + e.Message); }
+        }
         linked.Cancel();
-        await poll.ConfigureAwait(false);
+        try { await pump.ConfigureAwait(false); } catch { }
         ct.ThrowIfCancellationRequested();
         if (failure != null && failure is not OperationCanceledException) throw failure is ApiException or PipeException ? failure : new PipeException(failure.Message);
         if (failure != null) throw new PipeException(tracker.Failure ?? "cancelled");
 
-        var meta = tracker.Meta!;
-        if (meta.TotalParts is null) throw new PipeException("transfer did not complete");
+        meta = tracker.Meta!;
+        if (meta.TotalParts is null) throw new PipeException(tracker.Failure ?? "transfer did not complete");
         if (count != meta.TotalParts) throw new PipeException($"received {count} parts, expected {meta.TotalParts}");
         if (total != meta.TotalSize) throw new PipeException($"size mismatch: received {total}, expected {meta.TotalSize}");
         string sha256 = hashValid ? Convert.ToHexString(overall.GetHashAndReset()).ToLowerInvariant() : (await sink.HashAllAsync(ct).ConfigureAwait(false) ?? "");

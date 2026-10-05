@@ -5,7 +5,7 @@ namespace R2Pipe.Tests;
 public class ReceiverTests
 {
     private static ReceiveOptions Opts(int parallel = 3) => new() { Parallel = parallel, Delay = Util.NoDelay, Attempts = 3, PollSeconds = 1 };
-    private static SendOptions SOpts(int parallel = 3) => new() { Parallel = parallel, PartSize = 1024, Delay = Util.NoDelay };
+    private static SendOptions SOpts(int parallel = 3) => new() { Parallel = parallel, PartSize = 1024, FirstPartSize = 1024, Inline = false, Delay = Util.NoDelay };
 
     private static async Task<(ReceiveResult, MemSink)> Roundtrip(FakeServer s, byte[] data, int sp = 3, int rp = 3, MemSink? sink = null, ResumeFile? resume = null)
     {
@@ -84,7 +84,7 @@ public class ReceiverTests
     {
         var s = new FakeServer(); var data = Util.Random(2048);
         await Sender.RunAsync(s, s, new MemoryStream(data), SOpts(), new Meter(), null, default);
-        await s.CompleteAsync("fake", 2, 2048, new string('0', 64), default);   // the sender lied about the total
+        await s.CompleteAsync("fake", 2, 2048, 0, new string('0', 64), default);   // the sender lied about the total
         var ex = await Assert.ThrowsAsync<PipeException>(() => Receiver.RunAsync(s, s, "fake", new MemSink(), new ResumeFile(null, "fake"), Opts(), new Meter(), default).WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Contains("overall SHA-256", ex.Message);
     }

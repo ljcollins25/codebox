@@ -24,9 +24,12 @@ const H = "a".repeat(64);
 const MB = 1024 * 1024;
 const code = async (p: Promise<unknown>) => { try { await p; return 0; } catch (e) { return (e as HttpError).status ?? -1; } };
 
-async function upload(f: ReturnType<typeof fakes>, id: string, n: number, size: number, sha = H) {
+const offs = new Map<string, number>();
+async function upload(f: ReturnType<typeof fakes>, id: string, n: number, size: number, sha = H, offset?: number) {
   f.objs.set(partKey(id, n), size);
-  return f.core.partReady(n, { size, sha256: sha });
+  const o = offset ?? (n === 1 ? 0 : (offs.get(id + (n - 1)) ?? 0));
+  offs.set(id + n, o + size);
+  return f.core.partReady(n, { offset: o, size, sha256: sha });
 }
 
 describe("transfer state machine", () => {
@@ -44,13 +47,13 @@ describe("transfer state machine", () => {
   it("part ready checks R2, is idempotent, and rejects size mismatch", async () => {
     const f = fakes();
     await f.core.create({ id: "t1", mode: "presigned", partSize: MB });
-    expect(await code(f.core.partReady(1, { size: 5, sha256: H }))).toBe(409); // not in R2
+    expect(await code(f.core.partReady(1, { offset: 0, size: 5, sha256: H }))).toBe(409); // not in R2
     f.objs.set(partKey("t1", 1), 5);
-    expect(await code(f.core.partReady(1, { size: 6, sha256: H }))).toBe(409);
-    const r = await f.core.partReady(1, { size: 5, sha256: H });
-    expect(r.events).toEqual([{ type: "part", n: 1, size: 5, sha256: H, etag: "etag-" + partKey("t1", 1) }]);
-    expect((await f.core.partReady(1, { size: 5, sha256: H })).events).toEqual([]);
-    expect(await code(f.core.partReady(2, { size: 5, sha256: "zz" }))).toBe(400);
+    expect(await code(f.core.partReady(1, { offset: 0, size: 6, sha256: H }))).toBe(409);
+    const r = await f.core.partReady(1, { offset: 0, size: 5, sha256: H });
+    expect(r.events).toEqual([{ type: "part", n: 1, offset: 0, size: 5, sha256: H, etag: "etag-" + partKey("t1", 1) }]);
+    expect((await f.core.partReady(1, { offset: 0, size: 5, sha256: H })).events).toEqual([]);
+    expect(await code(f.core.partReady(2, { offset: 5, size: 5, sha256: "zz" }))).toBe(400);
   });
 
   it("ack deletes the object and refuses further downloads", async () => {
