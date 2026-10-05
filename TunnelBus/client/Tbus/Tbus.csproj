@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>tbus</AssemblyName>
+    <RootNamespace>Tbus</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <DebugType>embedded</DebugType>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Tbus.Tests" />
+  </ItemGroup>
+
+  <!-- same switch the Hermes CLI uses: dotnet pack -p:_IsPacking=true gives a framework-dependent dotnet tool -->
+  <PropertyGroup Condition="'$(_IsPacking)' == 'true'">
+    <PackAsTool>true</PackAsTool>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <PackageId>tbus</PackageId>
+    <Description>Tunnel bus client: share a local or remote port on the tunnel bus</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <ToolCommandName>tbus</ToolCommandName>
+    <Authors>ljcollins25</Authors>
+    <VersionPrefix>1.0.0</VersionPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>
