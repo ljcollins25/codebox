@@ -4,11 +4,11 @@ import http from "node:http";
 import { handle } from "../src/gate.ts";
 const port = Number(process.argv[2] ?? 8799);
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
-const base = (o) => ({ port: 20000, up: false, lastSeen: null, connectedSince: null, reconnects: 0, description: "", label: "", owner: "", kind: "", metaUpdatedAt: null, path: "/" + o.name + "/", host: o.name + ".example.test", ...o });
+const base = (o) => ({ port: 20000, up: false, lastSeen: null, connectedSince: null, reconnects: 0, description: "", label: "", owner: "", kind: "", session: {}, sessionUrl: "", metaUpdatedAt: null, path: "/" + o.name + "/", host: o.name + ".example.test", ...o });
 const providers = [
-  base({ name: "hexad-project", label: "hexad", description: "The hexad control plane for this project: sessions, browser and API.", owner: "hexad project", kind: "hexad", up: true, connectedSince: ago(190), registeredAt: ago(2900), lastSeen: ago(0), reconnects: 2 }),
-  base({ name: "csharp-wasm-2", label: "C# WASM demo", description: "Blazor WebAssembly sample served from the session sandbox, port 5000.", owner: "session csharp-wasm-2 (hexad project)", kind: "app", up: true, connectedSince: ago(14), registeredAt: ago(15), lastSeen: ago(0) }),
-  base({ name: "bus-dashboard", label: "Bus dashboard (dev server)", description: "Local dev server of the tunnel bus dashboard.", owner: "session bus-dashboard (hexad project)", kind: "app", up: true, connectedSince: ago(3), registeredAt: ago(60), lastSeen: ago(0), reconnects: 1 }),
+  base({ name: "hexad-project", label: "hexad", description: "The hexad control plane for this project: sessions, browser and API.", owner: "hexad project", kind: "hexad", session: { name: "<b>main</b>", hexad: "hexad project" }, up: true, connectedSince: ago(190), registeredAt: ago(2900), lastSeen: ago(0), reconnects: 2 }),
+  base({ name: "csharp-wasm-2", label: "C# WASM demo", description: "Blazor WebAssembly sample served from the session sandbox, port 5000.", owner: "session csharp-wasm-2 (hexad project)", kind: "app", session: { name: "csharp-wasm-2", id: "s-20261005-083139-c037", hexad: "hexad project" }, sessionUrl: "https://hexad.example.test/s/s-20261005-083139-c037", up: true, connectedSince: ago(14), registeredAt: ago(15), lastSeen: ago(0) }),
+  base({ name: "bus-dashboard", label: "Bus dashboard (dev server)", description: "Local dev server of the tunnel bus dashboard.", owner: "session bus-dashboard (hexad project)", kind: "app", session: { name: "bus-dashboard", id: "s-20261005-150053-55de", hexad: "hexad project" }, up: true, connectedSince: ago(3), registeredAt: ago(60), lastSeen: ago(0), reconnects: 1 }),
   base({ name: "code-laptop", label: "VS Code on the laptop", description: "code serve-web on the Windows laptop. <img src=x onerror=alert(1)> stays text.", owner: "laptop", kind: "vscode", up: false, registeredAt: ago(4000), lastSeen: ago(95) }),
   base({ name: "legacy-api", registeredAt: ago(9000), lastSeen: ago(7000) }),
 ];

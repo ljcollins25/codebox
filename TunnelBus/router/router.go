@@ -172,6 +172,8 @@ type providerView struct {
 	Label          string     `json:"label"`
 	Owner          string     `json:"owner"`
 	Kind           string     `json:"kind"`
+	Session        Session    `json:"session"`
+	SessionURL     string     `json:"sessionUrl"`
 	MetaUpdatedAt  *time.Time `json:"metaUpdatedAt"`
 	ConnectedSince *time.Time `json:"connectedSince"` // current connection start; null when not connected
 	Reconnects     int        `json:"reconnects"`
@@ -202,6 +204,7 @@ func (rt *Router) probe() []providerView {
 				v.LastSeen = &t
 			}
 			v.Description, v.Label, v.Owner, v.Kind, v.Reconnects = cur.Description, cur.Label, cur.Owner, cur.Kind, cur.Reconnects
+			v.Session, v.SessionURL = cur.Session, cur.SessionURL
 			if !cur.UpdatedAt.IsZero() {
 				u := cur.UpdatedAt
 				v.MetaUpdatedAt = &u
@@ -273,8 +276,8 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 			"user": e.User, "password": e.Password,
 			"chiselPath": chiselPrefix, "path": "/" + e.Name + "/",
 			"description": e.Description, "label": e.Label, "owner": e.Owner, "kind": e.Kind,
-			"registeredAt": e.RegisteredAt,
-			"consumer":     map[string]any{"user": e.ConsumerUser, "password": e.ConsumerPassword, "remoteHost": "127.0.0.1", "remotePort": e.Port},
+			"session": e.Session, "sessionUrl": e.SessionURL, "registeredAt": e.RegisteredAt,
+			"consumer": map[string]any{"user": e.ConsumerUser, "password": e.ConsumerPassword, "remoteHost": "127.0.0.1", "remotePort": e.Port},
 		})
 	case strings.HasPrefix(sub, "register/") && req.Method == http.MethodPatch:
 		name := strings.TrimPrefix(sub, "register/")
@@ -290,7 +293,7 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 		case err != nil:
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 		default:
-			writeJSON(w, 200, map[string]any{"name": e.Name, "description": e.Description, "label": e.Label, "owner": e.Owner, "kind": e.Kind, "updatedAt": e.UpdatedAt})
+			writeJSON(w, 200, map[string]any{"name": e.Name, "description": e.Description, "label": e.Label, "owner": e.Owner, "kind": e.Kind, "session": e.Session, "sessionUrl": e.SessionURL, "updatedAt": e.UpdatedAt})
 		}
 	case strings.HasPrefix(sub, "register/") && req.Method == http.MethodDelete:
 		name := strings.TrimPrefix(sub, "register/")

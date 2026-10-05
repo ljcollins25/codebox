@@ -87,3 +87,5 @@ Credentials never leave the process: there is no child process and no local rela
 | `--owner WHO` | who registered it, e.g. `hexad project` (env `TBUS_OWNER` is the default); the dashboard groups by it | 100 characters |
 
 The metadata is sent with every (re-)registration, so it comes back by itself after the bus restarts. Only the options you gave are sent: an old `tbus` re-registering never wipes what another client set. Text is shown escaped; never put secrets in it.
+
+**Hexad session:** `--session-name` (the agent's name, 60 characters; shown right under the title), `--session-id`, `--hexad` (which hexad, e.g. `hexad project`) and `--session-url` (an http(s) link back to the session) fill the `session` object the bus stores; the dashboard groups and filters by hexad and by session. Defaults come from the environment: `TBUS_SESSION_NAME`, `TBUS_SESSION_ID`, `TBUS_HEXAD`, `TBUS_SESSION_URL`. A session sent on its own replaces the stored one as a whole (`tbus update` takes the same options).

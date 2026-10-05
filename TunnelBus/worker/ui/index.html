@@ -33,6 +33,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:
 .app{display:block;border-left:3px solid var(--line)}.app.up{border-left-color:var(--ok)}
 .title{display:block;font-size:1.2rem;font-weight:650;padding:.15rem 0;line-height:1.3;word-break:break-word}
 .title small{font-weight:400;color:var(--dim);font-size:.8rem;margin-left:.4rem}
+.sess{margin:.05rem 0 .2rem;font-size:.95rem;color:var(--fg)}.sess .dim{font-size:.8rem}.sess a{word-break:normal}
 .desc{margin:.2rem 0 .35rem;color:var(--fg);opacity:.9;word-break:break-word}
 .tags{display:flex;flex-wrap:wrap;gap:.35rem .5rem;align-items:center;font-size:.82rem;color:var(--dim)}
 .pill{border:1px solid var(--line);border-radius:999px;padding:.05rem .55rem;color:var(--dim);font-size:.75rem}
@@ -49,7 +50,7 @@ details.admin{margin-top:1.6rem;border-top:1px solid var(--line);padding-top:.6r
 <main>
 <div class="bar"><h2>Available on the bus</h2><button id="refresh">Refresh</button></div>
 <div class="tools"><input id="q" type="search" placeholder="Search name, description, source" autocomplete="off" spellcheck="false" aria-label="Search">
- <select id="grp" aria-label="Group"><option value="owner">Group by source</option><option value="none">No grouping</option></select></div>
+ <select id="grp" aria-label="Group"><option value="owner">Group by source</option><option value="hexad">Group by hexad</option><option value="session">Group by session</option><option value="none">No grouping</option></select></div>
 <div id="err" class="err"></div>
 <div id="list"></div>
 <p class="dim" id="foot"></p>
@@ -110,20 +111,27 @@ function sortKey(p){return p.up?(new Date(p.connectedSince||p.registeredAt).getT
 function order(a,b){if(a.up!==b.up)return a.up?-1:1;
  if(a.up)return sortKey(b)-sortKey(a);
  return new Date(b.lastSeen||b.registeredAt).getTime()-new Date(a.lastSeen||a.registeredAt).getTime()}
-function matches(p,q){if(!q)return true;var t=[p.name,p.label,p.description,p.owner,p.kind].join(" ").toLowerCase();return q.toLowerCase().split(/\s+/).every(function(w){return t.indexOf(w)>=0})}
+function matches(p,q){if(!q)return true;var s=p.session||{},t=[p.name,p.label,p.description,p.owner,p.kind,s.name,s.id,s.hexad].join(" ").toLowerCase();return q.toLowerCase().split(/\s+/).every(function(w){return t.indexOf(w)>=0})}
 function openUrl(p){return p.host?"https://"+p.host+"/":location.origin+p.path}
 function card(p){
  var c=el("div","card app"+(p.up?" up":""));
  var t=link(openUrl(p),null);t.className="title";t.textContent=p.label||p.name;
  if(p.label&&p.label!==p.name)t.appendChild(el("small",null,p.name));
  c.appendChild(t);
+ var ss=p.session||{};
+ if(ss.name){var sl=el("div","sess"),sn=ss.name;
+  sl.appendChild(el("span","dim","session "));
+  if(/^https?:\/\//i.test(p.sessionUrl||"")){var sa=link(p.sessionUrl,sn);sl.appendChild(sa)}else sl.appendChild(el("b",null,sn));
+  if(ss.hexad&&state.group!=="hexad")sl.appendChild(el("span","dim"," \u00B7 "+ss.hexad));
+  if(ss.id){var si=el("span","dim mono"," "+ss.id);sl.appendChild(si)}
+  c.appendChild(sl)}
  if(p.description)c.appendChild(el("div","desc",p.description));
  var tags=el("div","tags");
  var st=el("span","st "+(p.up?"up":"down"));st.appendChild(el("span","dot"+(p.up?" up":"")));st.appendChild(document.createTextNode(p.up?"connected since ":"not connected"));
  if(p.up)st.appendChild(tm(since(p)));
  tags.appendChild(st);
  if(p.kind)tags.appendChild(el("span","pill",p.kind));
- if(p.owner&&state.group!=="owner")tags.appendChild(el("span",null,"from "+p.owner));
+ if(p.owner&&state.group!=="owner"&&!ss.name)tags.appendChild(el("span",null,"from "+p.owner));
  if(p.reconnects)tags.appendChild(el("span",null,p.reconnects+(p.reconnects===1?" reconnect":" reconnects")));
  c.appendChild(tags);
  var times=el("div","times"),r=el("span",null,"registered ");r.appendChild(tm(p.registeredAt));times.appendChild(r);
@@ -146,18 +154,22 @@ function card(p){
  };
  c.appendChild(det);
  return c}
+function gkey(p){var s=p.session||{};
+ if(state.group==="hexad")return s.hexad||p.owner||"";
+ if(state.group==="session")return s.name||"";
+ return p.owner||s.hexad||""}
 function renderList(){var box=$("list");box.textContent="";
  var all=state.providers.slice().sort(order),q=$("q").value.trim(),shown=all.filter(function(p){return matches(p,q)});
  if(!all.length){box.appendChild(el("div","card dim","Nothing registered yet. Use the admin section below, or run tbus share."));return}
  if(!shown.length){box.appendChild(el("div","card dim","No match for \u201C"+q+"\u201D."));return}
- if(state.group!=="owner"){shown.forEach(function(p){box.appendChild(card(p))});return}
+ if(state.group==="none"){shown.forEach(function(p){box.appendChild(card(p))});return}
  var groups={},names=[];
- shown.forEach(function(p){var k=p.owner||"";if(!groups[k]){groups[k]=[];names.push(k)}groups[k].push(p)});
+ shown.forEach(function(p){var k=gkey(p);if(!groups[k]){groups[k]=[];names.push(k)}groups[k].push(p)});
  // groups with a live provider first, then by their newest connection; the ungrouped ones last
  function rank(k){var up=groups[k].filter(function(p){return p.up});return [up.length?0:1,k?0:1,-Math.max.apply(null,[0].concat(up.map(sortKey)))]}
  names.sort(function(x,y){var a=rank(x),b=rank(y);return a[0]-b[0]||a[1]-b[1]||a[2]-b[2]||(x<y?-1:1)});
  names.forEach(function(k){
-  var g=el("div","grp");g.appendChild(el("b",null,k||"No source given"));
+  var g=el("div","grp");g.appendChild(el("b",null,k||(state.group==="session"?"No session":state.group==="hexad"?"No hexad":"No source given")));
   var up=groups[k].filter(function(p){return p.up}).length;g.appendChild(el("span",null,up+" of "+groups[k].length+" connected"));box.appendChild(g);
   groups[k].forEach(function(p){box.appendChild(card(p))});
  })}
@@ -173,7 +185,7 @@ function hideOut(){$("rout").classList.add("hidden");$("rbash").textContent="";$
 $("refresh").onclick=refresh;
 $("q").oninput=renderList;
 $("grp").onchange=function(){state.group=$("grp").value;try{localStorage.setItem("bus-group",state.group)}catch(e){}renderList()};
-try{var sg=localStorage.getItem("bus-group");if(sg==="none"||sg==="owner"){state.group=sg;$("grp").value=sg}}catch(e){}
+try{var sg=localStorage.getItem("bus-group");if(sg==="none"||sg==="owner"||sg==="hexad"||sg==="session"){state.group=sg;$("grp").value=sg}}catch(e){}
 $("regbtn").onclick=function(){$("regform").classList.toggle("hidden");$("rname").focus()};
 $("rcancel").onclick=function(){$("regform").classList.add("hidden");hideOut();$("rerr").textContent=""};
 $("rhide").onclick=hideOut;

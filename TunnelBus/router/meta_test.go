@@ -222,3 +222,72 @@ func TestStatusShowsDisplayNameFromWorker(t *testing.T) {
 		t.Fatalf("no display name: email is the last fallback, got %q", got)
 	}
 }
+
+func TestSessionObjectAndURL(t *testing.T) {
+	rt, _ := newRouter(t)
+	w := call(rt, "POST", "/_api/register", tok, `{"name":"s1","session":{"name":"csharp-wasm-2","id":"s-20261005-083139-c037","hexad":"hexad project"},"sessionUrl":"https://hexad.example.test/s/s-1"}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"name":"csharp-wasm-2"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	p := providers(t, rt)[0]
+	s := p["session"].(map[string]any)
+	if s["name"] != "csharp-wasm-2" || s["id"] != "s-20261005-083139-c037" || s["hexad"] != "hexad project" || p["sessionUrl"] != "https://hexad.example.test/s/s-1" {
+		t.Fatalf("session missing: %v", p)
+	}
+	// an old client re-registering keeps the session; an explicit {} clears it
+	call(rt, "POST", "/_api/register", tok, `{"name":"s1"}`)
+	if providers(t, rt)[0]["session"].(map[string]any)["name"] != "csharp-wasm-2" {
+		t.Fatal("old client wiped the session")
+	}
+	if w := call(rt, "PATCH", "/_api/register/s1", tok, `{"session":{"name":"renamed"}}`); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	s = providers(t, rt)[0]["session"].(map[string]any)
+	if s["name"] != "renamed" || s["id"] != nil {
+		t.Fatalf("session is replaced as a whole: %v", s)
+	}
+	call(rt, "PATCH", "/_api/register/s1", tok, `{"session":{},"sessionUrl":""}`)
+	if providers(t, rt)[0]["session"].(map[string]any)["name"] != nil {
+		t.Fatal("{} should clear")
+	}
+}
+
+func TestSessionValidation(t *testing.T) {
+	rt, _ := newRouter(t)
+	for _, body := range []string{
+		`{"name":"s2","sessionUrl":"javascript:alert(1)"}`,
+		`{"name":"s2","sessionUrl":"//evil.test/x"}`,
+		`{"name":"s2","session":{"name":"` + strings.Repeat("x", MaxSessionName+1) + `"}}`,
+		`{"name":"s2","session":{"hexad":"` + strings.Repeat("x", MaxHexad+1) + `"}}`,
+	} {
+		if w := call(rt, "POST", "/_api/register", tok, body); w.Code != 400 {
+			t.Fatalf("%s: got %d", body, w.Code)
+		}
+	}
+	if _, ok := rt.Reg.Get("s2"); ok {
+		t.Fatal("rejected registration was created")
+	}
+	call(rt, "POST", "/_api/register", tok, `{"name":"s2","session":{"name":"<script>x</script>\u0007"}}`)
+	e, _ := rt.Reg.Get("s2")
+	if strings.ContainsRune(e.Session.Name, 7) {
+		t.Fatal("control characters kept")
+	}
+}
+
+func TestSessionSurvivesRestart(t *testing.T) {
+	af := filepath.Join(t.TempDir(), "users.json")
+	sf := filepath.Join(t.TempDir(), "state.json")
+	p := freePort(t)
+	r1, _ := NewRegistry(tok, p, p+3, af)
+	_ = r1.LoadState(sf)
+	_, _, err := r1.RegisterWith("k", MetaPatch{Session: &Session{Name: "n", ID: "i", Hexad: "h"}, SessionURL: ptr("https://x.test/s")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, _ := NewRegistry(tok, p, p+3, af)
+	_ = r2.LoadState(sf)
+	e, _ := r2.Get("k")
+	if e.Session != (Session{"n", "i", "h"}) || e.SessionURL != "https://x.test/s" {
+		t.Fatalf("%+v", e)
+	}
+}

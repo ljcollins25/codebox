@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,7 +42,9 @@ type Entry struct {
 	Label       string    `json:"label,omitempty"`
 	Owner       string    `json:"owner,omitempty"` // who registered it, e.g. "hexad project"
 	Kind        string    `json:"kind,omitempty"`  // hexad, app, vscode, ...
-	UpdatedAt   time.Time `json:"updatedAt"`       // last metadata change (zero = never set)
+	Session     Session   `json:"session"`         // the hexad session that registered it, if any
+	SessionURL  string    `json:"sessionUrl,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"` // last metadata change (zero = never set)
 
 	// Connection state, observed by the router's probe of the reverse port.
 	Connected      bool      `json:"connected"`
@@ -59,6 +62,20 @@ const (
 
 var kindRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
+// Session identifies the hexad session (the agent) behind a registration.
+type Session struct {
+	Name  string `json:"name,omitempty"`  // the agent's name, e.g. csharp-wasm-2
+	ID    string `json:"id,omitempty"`    // e.g. s-20261005-083139-c037
+	Hexad string `json:"hexad,omitempty"` // which hexad, e.g. "hexad project"
+}
+
+const (
+	MaxSessionName = 60
+	MaxSessionID   = 80
+	MaxHexad       = 100
+	MaxURL         = 300
+)
+
 // MetaPatch carries optional metadata. A nil field means "not given" (unchanged);
 // an empty string clears the field.
 type MetaPatch struct {
@@ -67,6 +84,9 @@ type MetaPatch struct {
 	Owner       *string `json:"owner"`
 	Source      *string `json:"source"` // alias of owner
 	Kind        *string `json:"kind"`
+	// Session, when present, replaces the whole session ({} clears it); absent or null leaves it unchanged.
+	Session    *Session `json:"session"`
+	SessionURL *string  `json:"sessionUrl"`
 }
 
 func cleanText(s string) string {
@@ -109,6 +129,28 @@ func (m MetaPatch) normalize() (MetaPatch, error) {
 	if err := chk(&m.Owner, "owner", MaxOwner); err != nil {
 		return m, err
 	}
+	if m.Session != nil {
+		ss := Session{Name: cleanText(m.Session.Name), ID: cleanText(m.Session.ID), Hexad: cleanText(m.Session.Hexad)}
+		for _, c := range []struct {
+			v, f string
+			max  int
+		}{{ss.Name, "session.name", MaxSessionName}, {ss.ID, "session.id", MaxSessionID}, {ss.Hexad, "session.hexad", MaxHexad}} {
+			if len([]rune(c.v)) > c.max {
+				return m, fmt.Errorf("%s is too long (max %d characters)", c.f, c.max)
+			}
+		}
+		m.Session = &ss
+	}
+	if m.SessionURL != nil {
+		u := cleanText(*m.SessionURL)
+		if u != "" {
+			pu, err := url.Parse(u)
+			if err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" || len(u) > MaxURL {
+				return m, fmt.Errorf("sessionUrl must be an http(s) URL of at most %d characters", MaxURL)
+			}
+		}
+		m.SessionURL = &u
+	}
 	if m.Kind != nil {
 		k := strings.ToLower(cleanText(*m.Kind))
 		if k != "" && (len(k) > MaxKind || !kindRe.MatchString(k)) {
@@ -131,6 +173,11 @@ func (e *Entry) apply(m MetaPatch) bool {
 	set(&e.Label, m.Label)
 	set(&e.Owner, m.Owner)
 	set(&e.Kind, m.Kind)
+	set(&e.SessionURL, m.SessionURL)
+	if m.Session != nil && e.Session != *m.Session {
+		e.Session = *m.Session
+		changed = true
+	}
 	if changed {
 		e.UpdatedAt = time.Now().UTC()
 	}
@@ -253,6 +300,8 @@ type persisted struct {
 	Kind         string    `json:"kind,omitempty"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 	Reconnects   int       `json:"reconnects"`
+	Session      Session   `json:"session"`
+	SessionURL   string    `json:"sessionUrl,omitempty"`
 }
 
 // LoadState enables persistence to path and restores entries from it (a missing file is fine).
@@ -281,7 +330,7 @@ func (r *Registry) LoadState(path string) error {
 		r.byName[p.Name] = &Entry{Name: p.Name, Port: p.Port, User: "p-" + p.Name, Password: r.derive("provider:" + p.Name),
 			ConsumerUser: "c-" + p.Name, ConsumerPassword: r.derive("consumer:" + p.Name),
 			RegisteredAt: p.RegisteredAt, LastSeen: p.LastSeen, Description: p.Description, Label: p.Label,
-			Owner: p.Owner, Kind: p.Kind, UpdatedAt: p.UpdatedAt, Reconnects: p.Reconnects, everConnected: p.Reconnects > 0}
+			Owner: p.Owner, Kind: p.Kind, UpdatedAt: p.UpdatedAt, Reconnects: p.Reconnects, everConnected: p.Reconnects > 0, Session: p.Session, SessionURL: p.SessionURL}
 	}
 	return r.writeAuthfile()
 }
@@ -293,7 +342,7 @@ func (r *Registry) saveState() {
 	}
 	list := make([]persisted, 0, len(r.byName))
 	for _, e := range r.byName {
-		list = append(list, persisted{e.Name, e.Port, e.RegisteredAt, e.LastSeen, e.Description, e.Label, e.Owner, e.Kind, e.UpdatedAt, e.Reconnects})
+		list = append(list, persisted{e.Name, e.Port, e.RegisteredAt, e.LastSeen, e.Description, e.Label, e.Owner, e.Kind, e.UpdatedAt, e.Reconnects, e.Session, e.SessionURL})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	b, _ := json.MarshalIndent(list, "", "  ")

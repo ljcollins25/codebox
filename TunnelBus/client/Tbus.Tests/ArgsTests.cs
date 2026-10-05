@@ -73,6 +73,21 @@ public class ArgsTests
     }
 
     [Fact]
+    public void Session_options_build_a_session_object_and_validate_the_url()
+    {
+        var o = new Dictionary<string, string?> { ["session-name"] = "csharp-wasm-2", ["session-id"] = "s-1", ["hexad"] = "hexad project", ["session-url"] = "https://h.test/s/1" };
+        var f = ShareMeta.FromOptions(o).ToFields();
+        var s = Assert.IsType<Dictionary<string, string>>(f["session"]);
+        Assert.Equal(["hexad", "id", "name"], s.Keys.Order().ToArray());
+        Assert.Equal("https://h.test/s/1", f["sessionUrl"]);
+        var env = ShareMeta.FromOptions(new Dictionary<string, string?>(), k => k == "TBUS_SESSION_NAME" ? "from-env" : null);
+        Assert.Equal("from-env", env.SessionName);
+        Assert.False(ShareMeta.FromOptions(new Dictionary<string, string?>()).ToFields().ContainsKey("session"));
+        Assert.Throws<UserError>(() => ShareMeta.FromOptions(new Dictionary<string, string?> { ["session-url"] = "javascript:alert(1)" }));
+        Assert.Throws<UserError>(() => ShareMeta.FromOptions(new Dictionary<string, string?> { ["session-name"] = new string('x', 61) }));
+    }
+
+    [Fact]
     public async Task Register_sends_only_the_metadata_that_was_given_and_update_patches()
     {
         using var t = new TestEnv();

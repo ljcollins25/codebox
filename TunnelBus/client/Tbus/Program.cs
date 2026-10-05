@@ -20,6 +20,7 @@ internal static class App
 
         usage:
           tbus share <target>... [--name NAME] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
+                       [--session-name N] [--session-id ID] [--hexad H] [--session-url URL]
                                                  share and stay in the foreground; Ctrl+C unregisters.
                                                  The description (max 200 chars), label (60), kind (hexad, app, vscode, ...)
                                                  and owner ("hexad project") are shown on the bus dashboard.
