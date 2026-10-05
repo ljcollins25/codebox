@@ -51,27 +51,40 @@ Provider hosts are single labels directly under the base domain:
 
 | Host | Goes to | Provider sees |
 |---|---|---|
-| `hexad.example.com` | provider `hexad`, path unchanged | `Host` and `X-Forwarded-Host` = the public host |
-| `3000--hexad.example.com` | provider `hexad` | same, plus `X-Bus-Host-Prefix: 3000` |
-| `anything--hexad.example.com` | provider `hexad` | prefix = `anything` |
+| `hexad.ref12labs.com` | provider `hexad`, path unchanged | `Host` and `X-Forwarded-Host` = the public host |
+| `3000--hexad.ref12labs.com` | provider `hexad` | same, plus `X-Bus-Host-Prefix: 3000` |
+| `anything--hexad.ref12labs.com` | provider `hexad` | prefix = `anything` |
 
-The provider name is whatever follows the **last** `--`; everything left of it passes through (read it from `X-Forwarded-Host` or `X-Bus-Host-Prefix`), so hexad can send `3000--hexad.<base>` to its own sandbox port 3000. Names therefore may not contain `--` (`[a-z0-9]+(-[a-z0-9]+)*`, max 40). Deeper hosts (`a.hexad.example.com`) are not routed. `workers.dev` keeps path routing (`/<name>/`): the router uses host routing only when `BUS_BASE_DOMAIN` is set and the request's host is under it.
+The provider name is whatever follows the **last** `--`; everything left of it passes through (read it from `X-Forwarded-Host` or `X-Bus-Host-Prefix`), so hexad can send `3000--hexad.<base>` to its own sandbox port 3000. Names therefore may not contain `--` (`[a-z0-9]+(-[a-z0-9]+)*`, max 40). Deeper hosts (`a.hexad.ref12labs.com`) are not routed. `workers.dev` keeps path routing (`/<name>/`): the router uses host routing only when `BUS_BASE_DOMAIN` is set and the request's host is under it.
 The control host (`BUS_CONTROL_HOST`, `ctl.<base>` by default) serves `/_api`, `/_chisel`, `/_health`; use it as the provider's `--bus` URL. The Worker sends the public host to the router in `X-Bus-Host` (overwriting any client value). Config: `BUS_BASE_DOMAIN`, `BUS_CONTROL_HOST`, `BUS_LABEL_SUFFIX` in `worker/wrangler.jsonc` `vars`.
 
-**Recommended: a dedicated zone, names directly under it** (`hexad.example.com`, `3000--hexad.example.com`, `ctl.example.com`).
-Why (Cloudflare docs): Universal SSL covers the apex and first-level subdomains (`*.example.com`) only; `*.bus.example.com` needs Advanced Certificate Manager (extra monthly cost). Single-label hosts under the zone need only a proxied wildcard DNS record, one Worker route `*.example.com/*` and the free Universal certificate. A wildcard DNS record would also match deeper names, but the certificate would not cover them, which is why the scheme uses `--` and not dots. Any plan can create and proxy wildcard DNS records.
+**Recommended: a dedicated zone, names directly under it** (`hexad.ref12labs.com`, `3000--hexad.ref12labs.com`, `ctl.ref12labs.com`).
+Why (Cloudflare docs): Universal SSL covers the apex and first-level subdomains (`*.ref12labs.com`) only; `*.bus.ref12labs.com` needs Advanced Certificate Manager (extra monthly cost). Single-label hosts under the zone need only a proxied wildcard DNS record, one Worker route `*.ref12labs.com/*` and the free Universal certificate. A wildcard DNS record would also match deeper names, but the certificate would not cover them, which is why the scheme uses `--` and not dots. Any plan can create and proxy wildcard DNS records.
 
-**Shared zone** (other sites live there): Worker route hostnames may begin with `*` or `*.` but cannot have a wildcard in the middle (`example.com/*.jpg` and infix wildcards are invalid), and a wildcard may be followed by text (`*-bus.example.com/*` is a valid pattern). So set `BUS_LABEL_SUFFIX=-bus`: hosts are `hexad-bus.example.com`, `3000--hexad-bus.example.com`, `ctl-bus.example.com`, covered by the route `*-bus.example.com/*` and still by Universal SSL. Exact DNS records and more specific routes win over the wildcard record and route (the most specific pattern wins), so existing sites keep working. The alternative is ACM with `*.bus.example.com`.
+**Shared zone** (other sites live there): Worker route hostnames may begin with `*` or `*.` but cannot have a wildcard in the middle (`ref12labs.com/*.jpg` and infix wildcards are invalid), and a wildcard may be followed by text (`*-bus.ref12labs.com/*` is a valid pattern). So set `BUS_LABEL_SUFFIX=-bus`: hosts are `hexad-bus.ref12labs.com`, `3000--hexad-bus.ref12labs.com`, `ctl-bus.ref12labs.com`, covered by the route `*-bus.ref12labs.com/*` and still by Universal SSL. Exact DNS records and more specific routes win over the wildcard record and route (the most specific pattern wins), so existing sites keep working. The alternative is ACM with `*.bus.ref12labs.com`.
+
+### ref12labs.com (checked read-only with the API token, 2026-10-05)
+
+The zone is **shared** (Free plan). Existing DNS records: proxied CNAME `ref12labs.com` → a cfargotunnel.com tunnel, proxied CNAME `deepseek-harness.ref12labs.com` → another tunnel, Email Routing (3 MX, SPF, DKIM TXT on the apex) and a Google site-verification TXT. No wildcard record, no Worker routes visible (the token cannot list routes yet: it lacks Zone → Workers Routes), no custom hostnames.
+
+Consequences:
+* A wildcard record `*` does not affect the apex, MX/TXT, or `deepseek-harness`: exact records win.
+* A plain route `*.ref12labs.com/*` **would** catch `deepseek-harness.ref12labs.com` (routes run before the origin) and every future site, unless each gets an exempting route. Fragile.
+* **Recommended: `BUS_LABEL_SUFFIX=-bus`** → `hexad-bus.ref12labs.com`, `3000--hexad-bus.ref12labs.com`, control host `ctl-bus.ref12labs.com`, route `*-bus.ref12labs.com/*`, Access application `*-bus.ref12labs.com`. Free Universal SSL covers them (first level), nothing existing matches the pattern.
+* Alternatives: (a) names directly under the zone (`hexad.ref12labs.com`) plus a route-less exemption for each existing site; (b) Advanced Certificate Manager (paid add-on) for `*.bus.ref12labs.com`.
+* Side effect of the required wildcard `*` record (proxied): undefined hostnames in the zone now resolve to Cloudflare instead of NXDOMAIN; without a matching route they return a Cloudflare error.
+
+`BUS_BASE_DOMAIN` is set to `ref12labs.com` in `wrangler.jsonc`; the suffix and control host stay empty until the scheme is confirmed. Nothing has been created in the zone.
 
 ### Setup
 
 ```
 export CLOUDFLARE_API_TOKEN=...   # Zone:Read, DNS:Edit, Workers Routes:Edit (on the zone)
-node scripts/domain-setup.mjs --zone example.com [--suffix -bus] --dry-run
-node scripts/domain-setup.mjs --zone example.com [--suffix -bus] --write-config   # sets BUS_* in worker/wrangler.jsonc
+node scripts/domain-setup.mjs --zone ref12labs.com [--suffix -bus] --dry-run
+node scripts/domain-setup.mjs --zone ref12labs.com [--suffix -bus] --write-config   # sets BUS_* in worker/wrangler.jsonc
 cd worker && npx wrangler deploy
 ```
-The script adds a proxied wildcard `AAAA * -> 100::` (placeholder origin; the Worker answers every request) and the route, and refuses to touch a route owned by another Worker. Manual equivalent: DNS → add a proxied `*` record; Workers → tunnel-bus → Settings → Domains & Routes → Add route `*.example.com/*`.
+The script adds a proxied wildcard `AAAA * -> 100::` (placeholder origin; the Worker answers every request) and the route, and refuses to touch a route owned by another Worker. Manual equivalent: DNS → add a proxied `*` record; Workers → tunnel-bus → Settings → Domains & Routes → Add route `*.ref12labs.com/*`.
 
 ## Cloudflare Access
 
@@ -83,9 +96,9 @@ Access sits in front of the zone pattern; the Worker verifies the `Cf-Access-Jwt
 3. Give the API token these permissions (on top of Workers and Containers edit it has): **Account → Access: Apps and Policies → Edit**, **Account → Access: Service Tokens → Edit**, **Account → Access: Organizations, Identity Providers, and Groups → Read**, **Zone → Zone → Read**, **Zone → DNS → Edit**, **Zone → Workers Routes → Edit**.
 4. Then:
    ```
-   node scripts/access-setup.mjs --zone example.com --email you@example.com --out hexad-token.json [--suffix -bus] --write-config
+   node scripts/access-setup.mjs --zone ref12labs.com --email you@ref12labs.com --out hexad-token.json [--suffix -bus] --write-config
    ```
-   It creates the service token (id/secret only to the file, mode 0600), an "allow me" policy, a service-token (`non_identity`) policy, and one self-hosted application for `*.example.com` (or `*-bus.example.com`) that returns 401 to programs instead of a login redirect. Load `hexad-token.json` into hexad secret variables, delete the file, then set `ACCESS_REQUIRED` to `"true"` and `wrangler deploy`.
+   It creates the service token (id/secret only to the file, mode 0600), an "allow me" policy, a service-token (`non_identity`) policy, and one self-hosted application for `*.ref12labs.com` (or `*-bus.ref12labs.com`) that returns 401 to programs instead of a login redirect. Load `hexad-token.json` into hexad secret variables, delete the file, then set `ACCESS_REQUIRED` to `"true"` and `wrangler deploy`.
 
 **Providers and programs** send the service token: set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`; the provider scripts add the headers to the registration call and pass `--header` to chisel. Browsers log in through Access.
 
