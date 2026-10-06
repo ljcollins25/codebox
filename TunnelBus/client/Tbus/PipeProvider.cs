@@ -108,7 +108,7 @@ internal sealed class PipeProvider
                     break;
                 }
             case "abort": lock (_reqs) if (_reqs.Remove(id, out var s)) { s.Cancel.Cancel(); s.Body.Fail(new IOException("aborted")); } break;
-            case "ws-open": _ = Task.Run(() => OpenWs(id, m.GetProperty("path").GetString()!, m.GetProperty("headers"), m.TryGetProperty("protocols", out var pr) ? pr : default, ct), CancellationToken.None); break;
+            case "ws-open": { var hs = m.GetProperty("headers").Clone(); var pr = m.TryGetProperty("protocols", out var p0) ? p0.Clone() : default; var wp = m.GetProperty("path").GetString()!; _ = Task.Run(() => OpenWs(id, wp, hs, pr, ct), CancellationToken.None); break; }
             case "ws-close": { LocalWs? w; lock (_ws) _ws.Remove(id, out w); w?.Dispose(); break; }
         }
     }
