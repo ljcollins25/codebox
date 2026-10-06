@@ -37,7 +37,17 @@ export class Transfer implements DurableObject {
     return m.mode === "presigned" && cfg ? presign(cfg, "PUT", key, 3600) : `${base}/t/${m.id}/parts/${n}/data`;
   }
 
-  async fetch(req: Request): Promise<Response> {
+  private tail: Promise<unknown> = Promise.resolve();
+  /** The state machine reads, awaits (R2) and writes the meta: run requests one at a time so parallel acks cannot overwrite each other. */
+  fetch(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    if (url.pathname === "/ws" || url.pathname === "/state" || url.pathname.endsWith("/data")) return this.fetchInner(req);
+    const run = this.tail.then(() => this.fetchInner(req), () => this.fetchInner(req));
+    this.tail = run.catch(() => {});
+    return run;
+  }
+
+  private async fetchInner(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const base = req.headers.get("x-r2pipe-base") ?? "";
     try {
