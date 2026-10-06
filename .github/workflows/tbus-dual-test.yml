@@ -1,0 +1,20 @@
+name: Tbus dual-bus tests
+on:
+  push:
+    branches: [pipe-bus]
+    paths: ['TunnelBus/client/**', '.github/workflows/tbus-dual-test.yml']
+  workflow_dispatch:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+      - run: dotnet test TunnelBus/client/Tbus.Tests/Tbus.Tests.csproj --logger "console;verbosity=normal"
