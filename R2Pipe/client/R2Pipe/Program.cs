@@ -78,7 +78,8 @@ send prints the transfer id on stdout and the receive command on stderr; '-' rea
 
     private static async Task<int> ListAsync(Credentials c, CancellationToken ct)
     {
-        var list = await Api(c).ListAsync(ct);
+        var api = Api(c);
+        var list = await Retry.RunAsync(4, _ => api.ListAsync(ct), null, ct);
         if (list.Count == 0) { Console.Error.WriteLine("no open transfers"); return 0; }
         foreach (var t in list)
         {

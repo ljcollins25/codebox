@@ -111,11 +111,19 @@ internal sealed class HttpPipeApi : IPipeApi, IBlobs
 
     private async Task<T> Send<T>(HttpMethod m, string path, object? body, CancellationToken ct)
     {
-        using var req = Req(m, _base + path);
-        if (body != null) req.Content = JsonContent.Create(body, options: Json);
-        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
-        await Check(res).ConfigureAwait(false);
-        return (await res.Content.ReadFromJsonAsync<T>(Json, ct).ConfigureAwait(false))!;
+        // no request may hang for ever: a long poll (?wait=S) gets S + 20 s, everything else 30 s; a timeout is retried by the callers
+        int wait = path.Contains("wait=") && int.TryParse(path[(path.IndexOf("wait=") + 5)..].Split('&')[0], out var w) ? w : 0;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(30 + wait));
+        try
+        {
+            using var req = Req(m, _base + path);
+            if (body != null) req.Content = JsonContent.Create(body, options: Json);
+            using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token).ConfigureAwait(false);
+            await Check(res).ConfigureAwait(false);
+            return (await res.Content.ReadFromJsonAsync<T>(Json, cts.Token).ConfigureAwait(false))!;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new IOException($"request to {path.Split('?')[0]} timed out"); }
     }
 
     internal static async Task Check(HttpResponseMessage res)
