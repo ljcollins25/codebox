@@ -2,6 +2,7 @@
 import { authenticate } from "../auth";
 import { Env, json, err } from "../common";
 import { handleHttpFront, providerNameFromHost } from "../provider";
+import { offlineResponse, type OfflineInfo } from "./offline";
 import { parseViewerHost, validName, timingEqual } from "./common";
 
 const reg = (env: Env) => env.BUSREG!.get(env.BUSREG!.idFromName("registry"));
@@ -55,6 +56,13 @@ export async function viewer(req: Request, env: Env, url: URL): Promise<Response
   const v = viewerOf(url, env);
   const pathName = v ? null : url.pathname.match(/^\/p\/([a-z0-9-]{1,40})(\/|$)/)?.[1] ?? null;
   const name = v?.name ?? pathName;
-  if (!name || !(await exists(env, name))) return null;
-  return handleHttpFront(req, env, url, async () => env.BUSPROV!, v ?? undefined);
+  if (!name) return null;
+  const r = await call(env, "/info", "POST", { name });
+  if (!r.ok) return null; // unknown (or expired): not ours, the caller answers 404
+  const res = await handleHttpFront(req, env, url, async () => env.BUSPROV!, v ?? undefined);
+  if (res && res.headers.get("x-bus-offline")) {
+    const info = (await r.json()) as OfflineInfo;
+    return offlineResponse(req, info, env.BUS_BASE_DOMAIN ? "https://ctl." + env.BUS_BASE_DOMAIN + "/" : "/");
+  }
+  return res;
 }

@@ -56,6 +56,7 @@ export class BusProvider extends Provider {
   }
 
   protected async request(req: Request): Promise<Response> {
+    if (!this.socket()) return new Response(null, { status: 503, headers: { "x-bus-offline": "1" } }); // the route turns this into the offline answer
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return super.request(req);
     const ws = this.socket();
     if (!ws) return json({ error: "no provider is connected for this name" }, 502);

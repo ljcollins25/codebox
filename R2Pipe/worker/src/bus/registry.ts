@@ -49,8 +49,21 @@ export function cleanMeta(m: Record<string, unknown>): Meta {
   return out;
 }
 
+export const DEFAULT_GRACE_MS = 24 * 3600 * 1000;
+
 export class RegistryCore {
-  constructor(private kv: Kv, private now: () => number = () => Date.now()) {}
+  /** graceMs: a name whose provider has been away longer than this is removed (lazily, on lookup and listing). 0 = never. */
+  constructor(private kv: Kv, private now: () => number = () => Date.now(), private graceMs: number = DEFAULT_GRACE_MS) {}
+
+  /** When the name last had a provider: the last connect or disconnect, else the registration itself. */
+  static lastActive(r: Record_): number { return Math.max(r.lastSeen || 0, r.registeredAt || 0); }
+  private stale(r: Record_): boolean { return this.graceMs > 0 && !r.connected && this.now() - RegistryCore.lastActive(r) > this.graceMs; }
+  /** Removes every stale name; returns their names. */
+  async sweep(): Promise<string[]> {
+    const gone: string[] = [];
+    for (const r of (await this.kv.list<Record_>("n:")).values()) if (this.stale(r)) { await this.kv.delete("n:" + r.name); gone.push(r.name); }
+    return gone;
+  }
 
   /** Registers (or re-registers) a name: a NEW token every time, so the previous holder is cut off. The clear token is returned once. */
   async register(name: string, meta: Record<string, unknown>): Promise<{ token: string; record: Record_ }> {
@@ -87,7 +100,19 @@ export class RegistryCore {
     return true;
   }
 
-  async get(name: string): Promise<Record_ | null> { return (await this.kv.get<Record_>("n:" + name)) ?? null; }
+  /** Lookup; a stale name is removed here and reads as unknown. */
+  async get(name: string): Promise<Record_ | null> {
+    const r = (await this.kv.get<Record_>("n:" + name)) ?? null;
+    if (r && this.stale(r)) { await this.kv.delete("n:" + name); return null; }
+    return r;
+  }
+
+  /** What the offline page and JSON say about a registered name (null: unknown or expired). */
+  async info(name: string): Promise<{ name: string; connected: boolean; lastSeen: string | null; registeredAt: string } | null> {
+    const r = await this.get(name);
+    if (!r) return null;
+    return { name: r.name, connected: r.connected, lastSeen: r.lastSeen ? new Date(r.lastSeen).toISOString() : null, registeredAt: new Date(r.registeredAt).toISOString() };
+  }
 
   async verify(name: string, token: string): Promise<boolean> {
     const rec = await this.kv.get<Record_>("n:" + name);
@@ -111,12 +136,17 @@ export class RegistryCore {
 
   /** The dashboard rows: the same fields the old router lists (without credentials, port is 0), never the token hash. */
   async list(hostFor: (name: string) => { host: string; prefixedHost: string; path: string }): Promise<any[]> {
+    await this.sweep();
     const all = [...(await this.kv.list<Record_>("n:")).values()];
+    const t = this.now();
     return all.sort((a, b) => (a.name < b.name ? -1 : 1)).map((r) => ({
       name: r.name, port: 0, up: r.connected, connected: r.connected, connectedSince: r.connected ? new Date(r.connectedSince).toISOString() : null,
       registeredAt: new Date(r.registeredAt).toISOString(), lastSeen: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
       updatedAt: new Date(r.updatedAt).toISOString(), reconnects: r.reconnects,
       description: r.description, label: r.label, owner: r.owner, kind: r.kind, session: r.session ?? {}, sessionUrl: r.sessionUrl,
+      // offline: how long, and when the name is dropped if no provider comes back
+      offlineSeconds: r.connected ? 0 : Math.max(0, Math.round((t - RegistryCore.lastActive(r)) / 1000)),
+      expiresAt: r.connected || this.graceMs <= 0 ? null : new Date(RegistryCore.lastActive(r) + this.graceMs).toISOString(),
       bus: "pipe", ...hostFor(r.name),
     }));
   }

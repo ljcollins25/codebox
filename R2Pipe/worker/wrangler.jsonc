@@ -14,6 +14,7 @@
     "HTTP_HOST_SUFFIX": "pipe.ref12.dev",
     "BUS_BASE_DOMAIN": "ref12.dev",
     "BUS_RESERVED": "ctl,pipe",
+    "BUS_STALE_HOURS": "24",
     "HTTP_PREFETCH": "6",
     "HTTP_PREFETCH_BYTES": "67108864"
     // R2_ACCOUNT_ID is a var too, set in wrangler.local.jsonc-free way: see README (--var R2_ACCOUNT_ID:...).
