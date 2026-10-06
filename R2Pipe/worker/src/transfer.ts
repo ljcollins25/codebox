@@ -24,7 +24,7 @@ export class Transfer implements DurableObject {
     for (const ws of this.ctx.getWebSockets()) { try { ws.send(msg); } catch { /* closed */ } }
     const w = this.waiters; this.waiters = []; for (const f of w) f();
     const done = meta.status === "aborted" || meta.status === "done";
-    await this.env.REGISTRY.get(this.env.REGISTRY.idFromName("registry")).fetch("https://do/upsert", { method: "POST", body: JSON.stringify({ id: meta.id, name: meta.name, size: meta.size, totalSize: meta.totalSize, status: meta.status, createdAt: meta.createdAt, expiresAt: meta.expiresAt, mode: meta.mode, remove: done }) }).catch(() => {});
+    await this.env.REGISTRY.get(this.env.REGISTRY.idFromName("registry")).fetch("https://do/upsert", { method: "POST", body: JSON.stringify({ id: meta.id, name: meta.name, size: meta.size, totalSize: meta.totalSize, status: meta.status, createdAt: meta.createdAt, expiresAt: meta.expiresAt, mode: meta.mode, version: meta.version, remove: done }) }).catch(() => {});
   }
 
   private async getUrl(m: Meta, key: string, n: number, base: string): Promise<string> {
@@ -37,7 +37,17 @@ export class Transfer implements DurableObject {
     return m.mode === "presigned" && cfg ? presign(cfg, "PUT", key, 3600) : `${base}/t/${m.id}/parts/${n}/data`;
   }
 
-  async fetch(req: Request): Promise<Response> {
+  private tail: Promise<unknown> = Promise.resolve();
+  /** The state machine reads, awaits (R2) and writes the meta: run requests one at a time so parallel acks cannot overwrite each other. */
+  fetch(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    if (url.pathname === "/ws" || url.pathname === "/state" || url.pathname.endsWith("/data")) return this.fetchInner(req);
+    const run = this.tail.then(() => this.fetchInner(req), () => this.fetchInner(req));
+    this.tail = run.catch(() => {});
+    return run;
+  }
+
+  private async fetchInner(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const base = req.headers.get("x-r2pipe-base") ?? "";
     try {
@@ -64,7 +74,7 @@ export class Transfer implements DurableObject {
       if (p === "/put-urls" && req.method === "POST") { // batch: URLs for parts from..from+count-1
         const b = (await req.json()) as { from: number; count: number };
         const m = await this.core.meta();
-        const count = Math.min(Math.max(1, b.count | 0), 32);
+        const count = Math.min(Math.max(1, b.count | 0), 128);
         const urls: Array<{ n: number; url: string }> = [];
         for (let i = 0; i < count; i++) urls.push({ n: b.from + i, url: await this.putUrl(m, b.from + i, base) });
         return json({ method: "PUT", urls });
@@ -182,12 +192,14 @@ export class Registry implements DurableObject {
     const p = new URL(req.url).pathname;
     if (p === "/upsert") {
       const b = (await req.json()) as any;
-      if (b.remove) await this.ctx.storage.delete("t:" + b.id);
-      else await this.ctx.storage.put("t:" + b.id, b);
+      // Upserts from parallel acks can arrive out of order: keep the newest version and leave a tombstone for finished transfers
+      const old = (await this.ctx.storage.get("t:" + b.id)) as any;
+      if (old && typeof b.version === "number" && typeof old.version === "number" && b.version <= old.version) return json({ ok: true, stale: true });
+      await this.ctx.storage.put("t:" + b.id, b.remove ? { id: b.id, removed: true, version: b.version ?? 0, expiresAt: b.expiresAt ?? Date.now() + 3600_000 } : b);
       return json({ ok: true });
     }
     const all = [...(await this.ctx.storage.list({ prefix: "t:" })).values()] as any[];
     const cutoff = Date.now();
-    return json({ transfers: all.filter((x) => x.expiresAt > cutoff).sort((a, b) => b.createdAt - a.createdAt) });
+    return json({ transfers: all.filter((x) => !x.removed && x.expiresAt > cutoff).sort((a, b) => b.createdAt - a.createdAt) });
   }
 }

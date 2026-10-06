@@ -165,6 +165,10 @@ internal sealed class PosGate
 /// </summary>
 internal static class Receiver
 {
+    private static readonly bool Debug = Environment.GetEnvironmentVariable("R2PIPE_DEBUG") == "1";
+    private static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
+    private static void Dbg(string m) { if (Debug) Console.Error.WriteLine($"[{Clock.ElapsedMilliseconds,6} ms] {m}"); }
+
     public static async Task<ReceiveResult> RunAsync(IPipeApi api, IBlobs blobs, string id, ISink sink, ResumeFile resume, ReceiveOptions o, Meter meter, CancellationToken ct)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -186,6 +190,7 @@ internal static class Receiver
                 while (!linked.IsCancellationRequested)
                 {
                     var item = await feed.NextAsync(linked.Token).ConfigureAwait(false);
+                    if (item is StateItem d0) Dbg($"feed state v{d0.State.Meta.Version} {d0.State.Meta.Status} total={d0.State.Meta.TotalParts} parts={d0.State.Parts.Count} [{string.Join(',', d0.State.Parts.Select(p => p.N + p.State[0].ToString()))}]"); else if (item is InlineItem d1) Dbg($"feed inline @{d1.Offset} +{d1.Data.Length}"); else Dbg("feed ended");
                     if (item == null) { if (tracker.Meta?.Status is not ("done" or "complete")) tracker.Fail("the connection to the transfer was closed"); return; }
                     if (item is StateItem si)
                     {
@@ -224,8 +229,9 @@ internal static class Receiver
                 while (true)
                 {
                     int n = Interlocked.Increment(ref next);
+                    Dbg($"worker claims part {n}");
                     var info = await tracker.WaitForPartAsync(n, linked.Token).ConfigureAwait(false);
-                    if (info == null) return;
+                    if (info == null) { Dbg($"worker: no part {n}, exits"); return; }
                     if (info.State == "acked")
                     {
                         if (!resume.Done.Contains(n)) throw new PipeException($"part {n} was already received and deleted, and is not in the resume file");
@@ -262,7 +268,9 @@ internal static class Receiver
         }
 
         var workers = Enumerable.Range(0, Math.Max(1, o.Parallel)).Select(_ => Task.Run(Worker, CancellationToken.None)).ToArray();
+        var dog = Debug ? Task.Run(async () => { while (!linked.IsCancellationRequested) { await Task.Delay(10000).ConfigureAwait(false); Dbg($"watchdog: next={next} pos={pos.Pos} count={count} metaStatus={tracker.Meta?.Status} total={tracker.Meta?.TotalParts} failure={tracker.Failure} workersDone={workers.Count(w => w.IsCompleted)}"); } }) : Task.CompletedTask;
         await Task.WhenAll(workers).ConfigureAwait(false);
+        Dbg("all workers finished");
         // all parts are in; the state says complete, but inline bytes may still be on their way (they come first, so they are done already)
         var meta = tracker.Meta!;
         if (failure == null && meta.TotalParts is not null && inlineGot < meta.InlineSize)
@@ -270,7 +278,8 @@ internal static class Receiver
             try { await pos.WaitFor(meta.InlineSize).WaitAsync(TimeSpan.FromSeconds(30), linked.Token).ConfigureAwait(false); } catch (Exception e) { failure ??= new PipeException("inline data incomplete: " + e.Message); }
         }
         linked.Cancel();
-        try { await pump.ConfigureAwait(false); } catch { }
+        Dbg("waiting for the feed to stop");
+        try { await pump.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); } catch (Exception e) { Dbg("feed did not stop: " + e.GetType().Name); }
         ct.ThrowIfCancellationRequested();
         if (failure != null && failure is not OperationCanceledException) throw failure is ApiException or PipeException ? failure : new PipeException(failure.Message);
         if (failure != null) throw new PipeException(tracker.Failure ?? "cancelled");

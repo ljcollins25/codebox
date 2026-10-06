@@ -111,11 +111,19 @@ internal sealed class HttpPipeApi : IPipeApi, IBlobs
 
     private async Task<T> Send<T>(HttpMethod m, string path, object? body, CancellationToken ct)
     {
-        using var req = Req(m, _base + path);
-        if (body != null) req.Content = JsonContent.Create(body, options: Json);
-        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
-        await Check(res).ConfigureAwait(false);
-        return (await res.Content.ReadFromJsonAsync<T>(Json, ct).ConfigureAwait(false))!;
+        // no request may hang for ever: a long poll (?wait=S) gets S + 20 s, everything else 30 s; a timeout is retried by the callers
+        int wait = path.Contains("wait=") && int.TryParse(path[(path.IndexOf("wait=") + 5)..].Split('&')[0], out var w) ? w : 0;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(30 + wait));
+        try
+        {
+            using var req = Req(m, _base + path);
+            if (body != null) req.Content = JsonContent.Create(body, options: Json);
+            using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token).ConfigureAwait(false);
+            await Check(res).ConfigureAwait(false);
+            return (await res.Content.ReadFromJsonAsync<T>(Json, cts.Token).ConfigureAwait(false))!;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new IOException($"request to {path.Split('?')[0]} timed out"); }
     }
 
     internal static async Task Check(HttpResponseMessage res)
@@ -146,26 +154,44 @@ internal sealed class HttpPipeApi : IPipeApi, IBlobs
         return r.GetProperty("transfers").Deserialize<List<ListEntry>>(Json) ?? new();
     }
 
+    /// <summary>Longest a transfer of one part may sit without progress before it is abandoned (then retried with a fresh URL).</summary>
+    internal TimeSpan StallTimeout { get; set; } = TimeSpan.FromSeconds(45);
+
     public async Task PutAsync(UrlResult url, byte[] data, int length, CancellationToken ct)
     {
-        using var req = Req(HttpMethod.Put, url.Url);
-        req.Content = new ByteArrayContent(data, 0, length);
-        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
-        await Check(res).ConfigureAwait(false);
+        // a PUT has no progress signal: allow the stall time plus one second per MB (a slow link still finishes)
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(StallTimeout + TimeSpan.FromSeconds(length / 1_000_000.0));
+        try
+        {
+            using var req = Req(HttpMethod.Put, url.Url);
+            req.Content = new ByteArrayContent(data, 0, length);
+            using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token).ConfigureAwait(false);
+            await Check(res).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new IOException("upload stalled (timed out)"); }
     }
 
     public async Task GetAsync(UrlResult url, byte[] buffer, int expected, CancellationToken ct)
     {
-        using var req = Req(HttpMethod.Get, url.Url);
-        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-        await Check(res).ConfigureAwait(false);
-        await using var s = await res.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        int got = 0;
-        while (got < expected)
+        // inactivity timeout: reset after every read, so a slow but moving download is fine and a stalled one is retried
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(StallTimeout);
+        try
         {
-            int n = await s.ReadAsync(buffer.AsMemory(got, expected - got), ct).ConfigureAwait(false);
-            if (n == 0) throw new IOException($"part ended after {got} of {expected} bytes");
-            got += n;
+            using var req = Req(HttpMethod.Get, url.Url);
+            using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+            await Check(res).ConfigureAwait(false);
+            await using var s = await res.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
+            int got = 0;
+            while (got < expected)
+            {
+                int n = await s.ReadAsync(buffer.AsMemory(got, expected - got), cts.Token).ConfigureAwait(false);
+                if (n == 0) throw new IOException($"part ended after {got} of {expected} bytes");
+                got += n;
+                cts.CancelAfter(StallTimeout);
+            }
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new IOException("download stalled (timed out)"); }
     }
 }

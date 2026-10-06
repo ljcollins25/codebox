@@ -11,7 +11,9 @@
     "ACCESS_AUD": "430edc5c0631389af5d4b8af4f32c92386e189afdfd60d1247813a92bf0be553",
     "R2_BUCKET_NAME": "r2pipe",
     "TRANSFER_TTL_SECONDS": "86400",
-    "HTTP_HOST_SUFFIX": "pipe.ref12.dev"
+    "HTTP_HOST_SUFFIX": "pipe.ref12.dev",
+    "HTTP_PREFETCH": "6",
+    "HTTP_PREFETCH_BYTES": "67108864"
     // R2_ACCOUNT_ID is a var too, set in wrangler.local.jsonc-free way: see README (--var R2_ACCOUNT_ID:...).
   },
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "r2pipe" }],

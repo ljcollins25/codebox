@@ -56,8 +56,8 @@ interface Pending {
   resolve: (r: Response) => void;
   responded: boolean;
   chain: Promise<void>;
-  parts: Map<number, string>;
-  ahead: Map<number, Promise<R2ObjectBody | null>>;
+  parts: Map<number, { key: string; size: number }>;
+  ahead: Map<number, Promise<Uint8Array>>;
   nextPart: number;
   expectParts: number | null;
   keys: string[];
@@ -142,27 +142,42 @@ export class Provider implements DurableObject {
     ws.send(JSON.stringify({ t: "req-end", rid, parts: part }));
   }
 
-  /** Streams R2 parts into the visitor's response in order, as they are announced. */
+  /**
+   * Streams R2 parts into the visitor's response in order. Up to `prefetch` parts (and `prefetchBytes` bytes) are read from R2
+   * into memory concurrently while the current one is written, so the download runs at the speed of several parts, not one.
+   * Memory is bounded by prefetchBytes plus the part being written; when the visitor goes away the writes fail and everything stops.
+   */
   private async pumpParts(p: Pending) {
+    const maxN = Math.max(1, Number(this.env.HTTP_PREFETCH ?? 6));
+    const maxBytes = Number(this.env.HTTP_PREFETCH_BYTES ?? 64 * 1024 * 1024);
     try {
       for (;;) {
         if (p.closed) return;
-        const g = p.parts.get(p.nextPart);
-        if (!g) {
+        // top up the window
+        let inFlight = 0, bytes = 0;
+        for (let k = p.nextPart; p.parts.has(k) && inFlight < maxN; k++) {
+          const info = p.parts.get(k)!;
+          if (inFlight > 0 && bytes + info.size > maxBytes) break;
+          if (!p.ahead.has(k)) p.ahead.set(k, this.env.BUCKET.get(info.key).then(async (o) => { if (!o) throw new Error("part " + k + " is missing in R2"); return new Uint8Array(await o.arrayBuffer()); }));
+          p.ahead.get(k)!.catch(() => {}); // a failure is reported when that part's turn comes
+          inFlight++; bytes += info.size;
+        }
+        const head = p.ahead.get(p.nextPart);
+        if (!head) {
           if (p.expectParts != null && p.nextPart > p.expectParts) { await p.writable.close(); p.closed = true; this.finish(p); return; }
           await new Promise<void>((r) => { p.waiter = r; });
           continue;
         }
         await p.chain; // the inline bytes come first
-        const o = await (p.ahead.get(p.nextPart) ?? this.env.BUCKET.get(g));
+        const data = await head;
         p.ahead.delete(p.nextPart);
-        const nk = p.parts.get(p.nextPart + 1);
-        if (nk) p.ahead.set(p.nextPart + 1, this.env.BUCKET.get(nk)); // open the next part while this one streams
-        if (!o) throw new Error("part " + p.nextPart + " is missing in R2");
-        await o.body.pipeTo(new WritableStream({ write: (c) => p.writable.write(c) }));
+        if (p.closed) return;
+        await p.writable.write(data);
+        p.bytes += data.length;
         p.parts.delete(p.nextPart); p.nextPart++;
       }
     } catch (e) {
+      p.ahead.clear();
       this.fail(p, 502, (e as Error).message);
     }
   }
@@ -182,7 +197,7 @@ export class Provider implements DurableObject {
     this.pending.delete(p.rid);
     this.wake(p);
     if (p.keys.length) this.ctx.waitUntil(this.env.BUCKET.delete(p.keys).catch(() => {}));
-    p.keys = [];
+    p.keys = []; p.ahead.clear();
   }
 
   async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
@@ -225,7 +240,7 @@ export class Provider implements DurableObject {
     } else if (m.t === "part") {
       p.chain = p.chain.then(() => {
         const key = this.keyFor(p, m.n);
-        p.parts.set(m.n, key); // read lazily, in order: only one R2 body is open at a time
+        p.parts.set(m.n, { key, size: Number(m.size) || 0 });
         p.keys.push(key);
         this.wake(p);
       });

@@ -100,3 +100,57 @@ The API token has no K2 permission (`GET /accounts/<id>/k2/streams` → `10000 A
 * The state machine and presigning are unit-tested (vitest); the Durable Object classes and the WebSocket paths were exercised against the deployed Worker, not under Miniflare.
 * The receiver acks only after a verified write; a part that was acked cannot be fetched again (a second receiver must join before the acks, or resume from its own `.r2pipe` file). Several receivers on one transfer therefore compete for the acks; fan-out is not supported.
 * `recv` into a pipe cannot resume (it cannot re-hash earlier output).
+
+## Performance work (branch r2pipe-perf, 2026-10-05/06)
+
+**Read this first: the cross-machine data is thin and noisy.** The single-machine sweep is solid (3 runs per cell). The two-runner (Linux ⇄ Windows) benchmark was disrupted: a runner outage, a transfer the Windows side missed (L2W p8-k1, p32-k1: no number), and two real client hangs found on the way (a receiver and a `serve`-less `ls` poll stuck on a request with no timeout, and a registry race that left finished transfers listed). Those were fixed in 04185d2f (30 s timeout on every signaling request, 45 s stall timeout per part PUT/GET with retry on a fresh URL, Transfer DO serializes requests). Not every cell has three clean runs; one run is shown where that is all there is.
+
+### 1. Parallelism sweep (one runner, send+recv at once, 1 GiB, presigned, pipeline MB/s = 1 GiB ÷ wall time; 3 runs: min–max)
+
+| in flight | part size | pipeline MB/s | send MB/s | recv MB/s |
+|---|---|---|---|---|
+| 8 | 32M | 47.1–51.5 | 61–82 | 62–71 |
+| 16 | 32M | 56–73 (one run 18, receiver stalled: the hang above) | 90–142 | 83–129 |
+| 32 | 32M | 51–76 | 88–166 | 72–138 |
+| 16 | 8M | 60–72 | 89–111 | 83–106 |
+| 16 | 16M | 71–80 | 124–153 | 104–122 |
+| 16 | 64M | 52–72 | 86–123 | 69–106 |
+
+URL batch size (16 in flight, 32M parts): batch 4 → 53–76, batch 32 → 55–71: no effect, so batch size is not the limit (cap raised to 128 anyway). Client: 4 cores, 677 MB RSS, one core ~90 % busy in recv at 16 in flight (SHA-256 + copy), so a single process stops scaling around 130–160 MB/s on this 4-core runner; run-to-run spread (±30 %) is larger than the difference between 16 and 32 in flight. Scaling stops at about 16 in flight: beyond that there is no gain, and the limits are the shared runner link (both processes on one NIC) and client CPU, not signaling (WebSocket pushes carry the GET URLs) and not R2.
+
+**Chosen defaults:** 16 in flight, 16 MiB largest part, URL batch 16 (slow start 1, 2, 4 … MiB unchanged), inline 1 MiB. Before: 4 / 32 MiB / 8.
+
+### 2. HTTP front prefetch
+
+The Provider DO now reads up to `HTTP_PREFETCH` (6) parts / `HTTP_PREFETCH_BYTES` (64 MiB) ahead from R2 into memory while the current part is written to the visitor, in order; a failed or cancelled visitor stops the window and deletes the parts. `serve` uploads response parts 16 at once (parts up to 32 MiB).
+
+| download via `<name>--pipe` / `/p/<name>` (curl on the same runner) | before | after (3 runs) |
+|---|---|---|
+| 25 MB | 2.0–2.6 s | 1.8–2.5 s (10–14 MB/s; part count and round trips dominate, not bandwidth) |
+| 1 GB | 46 s (23 MB/s) | 24–29 s (**37–45 MB/s**), first byte 0.2–0.3 s |
+| tunnel bus (figures from the task, basic) | 18–25 MB/s | |
+
+`--parallel 8` and `16` for `serve` gave the same 1 GB time. About 2× the bus for 1 GB; 25 MB is limited by per-part round trips.
+
+### 3. Two machines (Linux runner ⇄ Windows runner, 1 GiB, 16M parts)
+
+| direction | in flight | runs (MB/s) | seconds |
+|---|---|---|---|
+| Linux sends, Windows receives | 8 | 51.1, 53.3, 45.0, 46.8 (build before the fixes) | 20–24 |
+| Linux sends, Windows receives | 16 | 86.0, 72.9, 26.3, 96.1, 58 | 12–41 |
+| Linux sends, Windows receives | 32 | no result (missed) | |
+| Linux sends (send side only, stats of the sender) | 8 / 16 / 32 | 49–54 / 30, 89, 61 / 32, 37 | |
+| Windows sends, Linux receives | 8 | 27.9, 30.3, 30.4 | 35–38 |
+| Windows sends, Linux receives | 16 | 30.5, 28.7, 27.7 | 35–39 |
+| Windows sends, Linux receives | 32 | 30.7, 30.0, 29.1 | 35–37 |
+
+What it shows: Windows → Linux is flat at about 30 MB/s regardless of 8, 16 or 32 in flight, so that direction is limited by the Windows runner's upload, not by r2pipe or R2. Linux → Windows scales from about 50 (8) to 70–95 (16) but swings 26–96 between identical runs, which is the Windows runner's download variance; all runs verified SHA-256 and the Windows client passed 48/48 tests. First byte on the receiver: 94–330 ms in both directions. No retries in any run on the final build.
+
+### 4. What limits throughput now
+
+1. The link of the weaker runner (about 30 MB/s up from the Windows runner; 50–95 MB/s down), then
+2. a single client process at about 130–160 MB/s (hash + copy on 4 cores) when the link is not the limit,
+3. for the HTTP front: one ordered stream through one Durable Object with a 64 MiB window, about 40 MB/s,
+4. not: URL batch size, signaling latency, R2 itself.
+
+**A future cross-machine benchmark** should be driven by one coordinator that starts both sides with per-step timeouts and a shared run id (so a missed transfer fails that cell instead of waiting for it), and writes one result file per cell. Or measure each side against R2 on its own (upload to R2, then download from R2, one machine at a time), which removes the pairing and the waiting altogether.
