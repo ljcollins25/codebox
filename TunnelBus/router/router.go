@@ -167,6 +167,16 @@ type providerView struct {
 	Host         string     `json:"host,omitempty"`         // <name>[suffix].<base>
 	PrefixedHost string     `json:"prefixedHost,omitempty"` // <prefix>--<name>[suffix].<base> (literal "<prefix>")
 	Path         string     `json:"path"`                   // path form, for workers.dev
+	// Metadata (untrusted text; the dashboard must escape it) and connection times.
+	Description    string     `json:"description"`
+	Label          string     `json:"label"`
+	Owner          string     `json:"owner"`
+	Kind           string     `json:"kind"`
+	Session        Session    `json:"session"`
+	SessionURL     string     `json:"sessionUrl"`
+	MetaUpdatedAt  *time.Time `json:"metaUpdatedAt"`
+	ConnectedSince *time.Time `json:"connectedSince"` // current connection start; null when not connected
+	Reconnects     int        `json:"reconnects"`
 }
 
 // probe checks every registered provider's reverse port concurrently and records last-seen times.
@@ -184,13 +194,24 @@ func (rt *Router) probe() []providerView {
 				v.PrefixedHost = "<prefix>--" + v.Host
 			}
 			v.Up = portOpen(e.Port)
+			now := time.Now().UTC()
+			rt.Reg.Observe(e.Name, v.Up, now)
+			cur, _ := rt.Reg.Get(e.Name)
 			if v.Up {
-				now := time.Now().UTC()
-				rt.Reg.Touch(e.Name, now)
 				v.LastSeen = &now
-			} else if !e.LastSeen.IsZero() {
-				t := e.LastSeen
+			} else if !cur.LastSeen.IsZero() {
+				t := cur.LastSeen
 				v.LastSeen = &t
+			}
+			v.Description, v.Label, v.Owner, v.Kind, v.Reconnects = cur.Description, cur.Label, cur.Owner, cur.Kind, cur.Reconnects
+			v.Session, v.SessionURL = cur.Session, cur.SessionURL
+			if !cur.UpdatedAt.IsZero() {
+				u := cur.UpdatedAt
+				v.MetaUpdatedAt = &u
+			}
+			if v.Up && !cur.ConnectedSince.IsZero() {
+				c := cur.ConnectedSince
+				v.ConnectedSince = &c
 			}
 			views[i] = v
 		}(i, e)
@@ -235,6 +256,7 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 	case sub == "register" && req.Method == http.MethodPost:
 		var body struct {
 			Name string `json:"name"`
+			MetaPatch
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&body); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "bad json: " + err.Error()})
@@ -244,7 +266,7 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "name is reserved for the control host"})
 			return
 		}
-		e, created, err := rt.Reg.Register(body.Name)
+		e, created, err := rt.Reg.RegisterWith(body.Name, body.MetaPatch)
 		if err != nil {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
@@ -253,8 +275,26 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 			"name": e.Name, "created": created, "port": e.Port,
 			"user": e.User, "password": e.Password,
 			"chiselPath": chiselPrefix, "path": "/" + e.Name + "/",
+			"description": e.Description, "label": e.Label, "owner": e.Owner, "kind": e.Kind,
+			"session": e.Session, "sessionUrl": e.SessionURL, "registeredAt": e.RegisteredAt,
 			"consumer": map[string]any{"user": e.ConsumerUser, "password": e.ConsumerPassword, "remoteHost": "127.0.0.1", "remotePort": e.Port},
 		})
+	case strings.HasPrefix(sub, "register/") && req.Method == http.MethodPatch:
+		name := strings.TrimPrefix(sub, "register/")
+		var patch MetaPatch
+		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&patch); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "bad json: " + err.Error()})
+			return
+		}
+		e, found, err := rt.Reg.Update(name, patch)
+		switch {
+		case !found:
+			writeJSON(w, 404, map[string]string{"error": "not registered"})
+		case err != nil:
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+		default:
+			writeJSON(w, 200, map[string]any{"name": e.Name, "description": e.Description, "label": e.Label, "owner": e.Owner, "kind": e.Kind, "session": e.Session, "sessionUrl": e.SessionURL, "updatedAt": e.UpdatedAt})
+		}
 	case strings.HasPrefix(sub, "register/") && req.Method == http.MethodDelete:
 		name := strings.TrimPrefix(sub, "register/")
 		if !rt.Reg.Remove(name) {
@@ -267,6 +307,11 @@ func (rt *Router) api(w http.ResponseWriter, req *http.Request) {
 	case sub == "status" && req.Method == http.MethodGet:
 		out := rt.status()
 		out["you"] = who
+		if d, err := url.PathUnescape(req.Header.Get("X-Bus-Display")); err == nil && who != "admin-token" {
+			if d = cleanText(d); d != "" && len([]rune(d)) <= 80 {
+				out["you"] = d // chosen by the Worker: GitHub login, else name, else email
+			}
+		}
 		writeJSON(w, 200, out)
 	case sub == "registry" && req.Method == http.MethodGet:
 		type row struct {
@@ -312,6 +357,7 @@ func newProxy(hostport, path, prefix, publicHost, hostPrefix string) *httputil.R
 			pr.Out.Header.Set("X-Forwarded-Host", publicHost)
 			pr.Out.Header.Del("X-Bus-Host")
 			pr.Out.Header.Del("X-Bus-User") // never reaches providers
+			pr.Out.Header.Del("X-Bus-Display")
 			pr.Out.Header.Del("X-Bus-CSRF")
 			pr.Out.Header.Del("X-Bus-Host-Prefix")
 			if hostPrefix != "" {

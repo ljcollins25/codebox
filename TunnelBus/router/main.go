@@ -12,7 +12,7 @@ import (
 )
 
 // version is the router version shown on the dashboard.
-var version = "0.3.0"
+var version = "0.4.0"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -33,6 +33,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if sp := os.Getenv("STATE_FILE"); sp != "" { // optional: keep metadata across a router process restart
+		if err := reg.LoadState(sp); err != nil {
+			log.Printf("state file ignored: %v", err)
+		}
+	}
 	rt := &Router{Reg: reg, AdminToken: token, started: time.Now(),
 		BaseDomain: strings.ToLower(strings.Trim(os.Getenv("BUS_BASE_DOMAIN"), ". ")), ControlHost: strings.ToLower(os.Getenv("BUS_CONTROL_HOST")), LabelSuffix: strings.ToLower(os.Getenv("BUS_LABEL_SUFFIX"))}
 	rt.Version = version
@@ -44,7 +49,7 @@ func main() {
 		}
 	}
 	go func() { // keep last-seen times fresh even when nobody has the dashboard open
-		for range time.Tick(15 * time.Second) {
+		for range time.Tick(5 * time.Second) {
 			rt.probe()
 		}
 	}()

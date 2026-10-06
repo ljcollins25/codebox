@@ -22,9 +22,11 @@ internal sealed class BusClient : IDisposable
         foreach (var (k, v) in accessHeaders) _http.DefaultRequestHeaders.TryAddWithoutValidation(k, v);
     }
 
-    public async Task<Registration> RegisterAsync(string name, CancellationToken ct)
+    public async Task<Registration> RegisterAsync(string name, CancellationToken ct, ShareMeta? meta = null)
     {
-        using var body = new StringContent(JsonSerializer.Serialize(new { name }), Encoding.UTF8, "application/json");
+        var fields = new Dictionary<string, object?> { ["name"] = name };
+        if (meta != null) foreach (var (k, v) in meta.ToFields()) fields[k] = v;
+        using var body = new StringContent(JsonSerializer.Serialize(fields), Encoding.UTF8, "application/json");
         using var resp = await _http.PostAsync(_bus + "/_api/register", body, ct).ConfigureAwait(false);
         var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         Check(resp, text, "register " + name);
@@ -33,6 +35,17 @@ internal sealed class BusClient : IDisposable
         var reg = new Registration(name, r.GetProperty("port").GetInt32(), r.GetProperty("user").GetString()!, r.GetProperty("password").GetString()!);
         Log.Register(reg.Password);
         return reg;
+    }
+
+    /// <summary>Changes metadata without re-registering (PATCH /_api/register/{name}). False if the name is not registered.</summary>
+    public async Task<bool> UpdateAsync(string name, ShareMeta meta, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Patch, _bus + "/_api/register/" + Uri.EscapeDataString(name))
+        { Content = new StringContent(JsonSerializer.Serialize(meta.ToFields()), Encoding.UTF8, "application/json") };
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        if (resp.StatusCode == HttpStatusCode.NotFound) return false;
+        Check(resp, await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false), "update " + name);
+        return true;
     }
 
     public async Task<List<RegistryRow>> ListAsync(CancellationToken ct)

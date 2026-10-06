@@ -15,6 +15,8 @@ interface Env {
   BUS_LABEL_SUFFIX?: string;
   /** Comma-separated Access identities (emails) allowed to use the admin API from the dashboard. */
   BUS_ADMIN_EMAILS?: string;
+  /** "clientid=label,...": how service tokens are named on the dashboard (passed at deploy, not committed). */
+  BUS_SERVICE_NAMES?: string;
 }
 
 /**

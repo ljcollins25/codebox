@@ -12,6 +12,7 @@ FROM --platform=linux/amd64 alpine:3.20
 RUN apk add --no-cache ca-certificates && mkdir -p /data
 COPY --from=build /go/bin/chisel /usr/local/bin/chisel
 COPY --from=build /out/router /usr/local/bin/router
+ENV STATE_FILE=/data/state.json
 ENV LISTEN=:8080 AUTHFILE=/data/authfile.json CHISEL_BIN=/usr/local/bin/chisel
 LABEL tunnelbus.config="host-routing-1"
 EXPOSE 8080
