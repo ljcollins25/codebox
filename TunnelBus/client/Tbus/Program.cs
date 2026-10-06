@@ -19,9 +19,15 @@ internal static class App
         tbus - share a local (or remote) port on the tunnel bus
 
         usage:
-          tbus share <target>... [--name NAME] [--bus both|chisel|pipe] [--pipe-url URL] [--pipe-token T] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
+          tbus share <target>... [--name NAME] [--bus both|chisel|pipe] [--pipe-url URL] [--pipe-token T] [--no-register] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
                        [--session-name N] [--session-id ID] [--hexad H] [--session-url URL]
                                                  share and stay in the foreground; Ctrl+C unregisters.
+                                                 --no-register: the name is already registered; do not register or unregister, and
+                                                 never read an admin token. Connect with the name's own credentials:
+                                                   chisel lane: TBUS_CHISEL_USER, TBUS_CHISEL_PASSWORD, TBUS_CHISEL_PORT
+                                                   pipe lane:   TBUS_PIPE_NAME_TOKEN, TUNNEL_PIPE_URL
+                                                 A lane without its credentials is skipped; with neither, tbus exits non-zero.
+
                                                  The description (max 200 chars), label (60), kind (hexad, app, vscode, ...)
                                                  and owner ("hexad project") are shown on the bus dashboard.
               tbus share 3000 --label "My app" --description "Staging build" --kind app
@@ -95,7 +101,8 @@ internal static class App
 
     private static async Task<int> Share(string[] args, Host host, Log log, CancellationToken ct)
     {
-        var (pos, opts) = ParseOptions(args, ["name", "bus", "kind", "pipe-url", "pipe-token", ..ShareMeta.ValueOptions], []);
+        if (args.Any(a => a is "-h" or "--help")) { host.Out.WriteLine(Usage); return 0; }
+        var (pos, opts) = ParseOptions(args, ["name", "bus", "kind", "pipe-url", "pipe-token", ..ShareMeta.ValueOptions], ["no-register"]);
         var meta = ShareMeta.FromOptions(opts, host.GetEnv);
         if (meta.Label != null && pos.Count > 1) throw new UserError("--label works with a single target; one label cannot title several shares.");
         if (pos.Count == 0) throw new UserError("Nothing to share. Example: tbus share 3000 --name myapp");
@@ -111,6 +118,7 @@ internal static class App
         if (opts.TryGetValue("bus", out var busOpt)) { var bv = busOpt!.Trim().ToLowerInvariant(); if (DualShare.IsMode(bv)) mode = bv; else config.Bus = NormalizeBus(busOpt!); }
         if (opts.TryGetValue("kind", out var kindOpt)) config.Kind = kindOpt!.Trim().ToLowerInvariant();
         var creds = new Credentials(host);
+        if (opts.ContainsKey("no-register")) return await DualShare.RunNoRegisterAsync(host, config, creds, log, specs, mode, opts.GetValueOrDefault("pipe-url"), ct);
         return await DualShare.RunAsync(host, config, creds, log, meta, specs, mode, opts.GetValueOrDefault("pipe-url"), opts.GetValueOrDefault("pipe-token"), ct);
     }
 
