@@ -19,6 +19,8 @@ export default {
     try {
       const bus = (await adminApi(req, env, url)) ?? (await viewer(req, env, url));
       if (bus) return bus;
+      // an unregistered p-<name> host is a 404, never the r2pipe root or another name
+      if (/^(?:[^.]*--)?p-[^.]*\.ref12\.dev$/i.test(url.hostname) || (env.BUS_BASE_DOMAIN && new RegExp(`^(?:[^.]*--)?p-[^.]*\\.${env.BUS_BASE_DOMAIN.replace(/\./g, "\\.")}$`, "i").test(url.hostname))) return err(404, "no such name on the pipe bus");
       const front = await handleHttpFront(req, env, url);
       if (front) return front;
       const m = url.pathname.match(/^\/t(?:\/([a-z2-7]{12}))?(\/.*)?$/);
