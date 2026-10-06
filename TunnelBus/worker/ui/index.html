@@ -112,7 +112,7 @@ function order(a,b){if(a.up!==b.up)return a.up?-1:1;
  if(a.up)return sortKey(b)-sortKey(a);
  return new Date(b.lastSeen||b.registeredAt).getTime()-new Date(a.lastSeen||a.registeredAt).getTime()}
 function matches(p,q){if(!q)return true;var s=p.session||{},t=[p.name,p.label,p.description,p.owner,p.kind,s.name,s.id,s.hexad].join(" ").toLowerCase();return q.toLowerCase().split(/\s+/).every(function(w){return t.indexOf(w)>=0})}
-function openUrl(p){return p.host?"https://"+p.host+"/":location.origin+p.path}
+function openUrl(p){var L=p.lanes||{};return L.chisel&&L.chisel.url?L.chisel.url:L.pipe&&L.pipe.url?L.pipe.url:p.host?"https://"+p.host+"/":location.origin+p.path}
 function card(p){
  var c=el("div","card app"+(p.up?" up":""));
  var t=link(openUrl(p),null);t.className="title";t.textContent=p.label||p.name;
@@ -134,6 +134,12 @@ function card(p){
  if(p.owner&&state.group!=="owner"&&!ss.name)tags.appendChild(el("span",null,"from "+p.owner));
  if(p.reconnects)tags.appendChild(el("span",null,p.reconnects+(p.reconnects===1?" reconnect":" reconnects")));
  c.appendChild(tags);
+ var L=p.lanes||{},lk=el("div","tags");
+ [["chisel","current"],["pipe","pipe"]].forEach(function(x){var l=L[x[0]];if(!l)return;
+  var s=el("span","st "+(l.up?"up":"down"));s.appendChild(el("span","dot"+(l.up?" up":"")));
+  if(l.url)s.appendChild(link(l.url,x[1]));else s.appendChild(document.createTextNode(x[1]));
+  s.appendChild(document.createTextNode(l.unknown?" (not answering)":l.up?" up":" down"));lk.appendChild(s)});
+ if(lk.childNodes.length)c.appendChild(lk);
  var times=el("div","times"),r=el("span",null,"registered ");r.appendChild(tm(p.registeredAt));times.appendChild(r);
  var l=el("span",null,"last seen ");if(p.up)l.appendChild(document.createTextNode("now"));else l.appendChild(tm(p.lastSeen));times.appendChild(l);
  c.appendChild(times);
@@ -147,10 +153,10 @@ function card(p){
  var del=el("button","danger","Unregister\u2026");box.appendChild(del);
  del.onclick=function(){
   if(box.querySelector(".confirm"))return;
-  var q=el("div","confirm");q.appendChild(el("span",null,"Unregister \u201C"+p.name+"\u201D? Its chisel credentials stop working."));
+  var q=el("div","confirm");q.appendChild(el("span",null,"Unregister \u201C"+p.name+"\u201D? It is removed from both buses and its credentials stop working."));
   var yes=el("button","danger","Yes, unregister"),no=el("button",null,"Cancel");q.appendChild(yes);q.appendChild(no);box.appendChild(q);
   no.onclick=function(){q.remove()};
-  yes.onclick=function(){yes.disabled=true;api("DELETE","/_api/register/"+encodeURIComponent(p.name)).then(refresh,function(e){$("err").textContent=e.message;q.remove()})};
+  yes.onclick=function(){yes.disabled=true;Promise.all([(p.lanes&&!p.lanes.chisel)?null:api("DELETE","/_api/register/"+encodeURIComponent(p.name)),(p.lanes&&p.lanes.pipe&&!p.lanes.pipe.unknown)?api("DELETE","/_api/pipe/register/"+encodeURIComponent(p.name)):null]).then(refresh,function(e){$("err").textContent=e.message;q.remove()})};
  };
  c.appendChild(det);
  return c}
@@ -173,10 +179,19 @@ function renderList(){var box=$("list");box.textContent="";
   var up=groups[k].filter(function(p){return p.up}).length;g.appendChild(el("span",null,up+" of "+groups[k].length+" connected"));box.appendChild(g);
   groups[k].forEach(function(p){box.appendChild(card(p))});
  })}
+// One entry per name: the container bus row (chisel) and the pipe bus row, each with its own state. A bus that did not answer is "unknown".
+function merge(chisel,pipe){var by={},out=[];
+ (chisel||[]).forEach(function(p){p.lanes={chisel:{up:p.up,since:p.connectedSince,url:p.host?"https://"+p.host+"/":null}};by[p.name]=p;out.push(p)});
+ (pipe===null?[]:pipe).forEach(function(q){var l={up:q.up,since:q.connectedSince,url:q.host?"https://"+q.host+"/":null};
+  var p=by[q.name];if(!p){q.lanes={pipe:l};if(chisel&&!q.session)q.session={};by[q.name]=q;out.push(q);return}
+  p.lanes.pipe=l;p.up=p.up||q.up;if(q.up&&!p.connectedSince)p.connectedSince=q.connectedSince;
+  ["description","label","owner","kind","sessionUrl"].forEach(function(k){if(!p[k]&&q[k])p[k]=q[k]})});
+ if(pipe===null)out.forEach(function(p){p.lanes.pipe={up:false,unknown:true}});
+ return out}
 function refresh(){
  $("err").textContent="";
- return Promise.all([api("GET","/_api/status"),api("GET","/_api/providers")]).then(function(r){
-  state.status=r[0];state.providers=r[1];renderStatus();renderList();$("foot").textContent="Updated "+new Date().toLocaleTimeString();
+ return Promise.all([api("GET","/_api/status"),api("GET","/_api/providers"),api("GET","/_api/pipe/registry").catch(function(){return null})]).then(function(r){
+  state.status=r[0];state.providers=merge(r[1],r[2]);renderStatus();renderList();$("foot").textContent="Updated "+new Date().toLocaleTimeString();
  },function(e){var box=$("err");box.textContent="Could not load: "+e.message+" ";
   // an expired Access session answers the API with a cross-origin redirect; reloading the page runs the sign-in
   var b=el("button",null,"Sign in again / retry");b.onclick=function(){location.reload()};box.appendChild(b)});

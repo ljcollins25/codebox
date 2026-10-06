@@ -20,8 +20,8 @@ public class PipeBusTests
     public void ViewerUrlsFollowTheSuffix()
     {
         var c = new AppConfig { Kind = "pipe" };
-        Assert.Equal("https://app--pipe.ref12.dev/", c.PublicUrl("app"));
-        c.ViewerSuffix = "";
+        Assert.Equal("https://p-app.ref12.dev/", c.PublicUrl("app"));
+        c.Cutover = true;
         Assert.Equal("https://app.ref12.dev/", c.PublicUrl("app"));
         Assert.Equal("https://app.ref12.dev/", new AppConfig().PublicUrl("app"));
     }

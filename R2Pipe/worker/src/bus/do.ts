@@ -18,8 +18,9 @@ export class BusRegistry implements DurableObject {
       if (url.pathname === "/exists") return json({ ok: (await this.core.get(String(body.name))) != null });
       if (url.pathname === "/connected") { await this.core.setConnected(String(body.name), !!body.connected); return json({ ok: true }); }
       if (url.pathname === "/list") {
-        const sfx = this.env.HTTP_HOST_SUFFIX ?? "";
-        return json(await this.core.list((n) => ({ host: sfx ? `${n}--${sfx}` : "", prefixedHost: sfx ? `<prefix>--${n}--${sfx}` : "", path: `/p/${n}/` })));
+        const sfx = this.env.HTTP_HOST_SUFFIX ?? "", dom = this.env.BUS_BASE_DOMAIN ?? "";
+        // p-<name>.<domain> is the address; the older <name>--<suffix> keeps working until it is dropped
+        return json(await this.core.list((n) => (dom ? { host: `p-${n}.${dom}`, prefixedHost: `<prefix>--p-${n}.${dom}`, path: `/p/${n}/` } : { host: sfx ? `${n}--${sfx}` : "", prefixedHost: sfx ? `<prefix>--${n}--${sfx}` : "", path: `/p/${n}/` })));
       }
       return err(404, "not found");
     } catch (e) {

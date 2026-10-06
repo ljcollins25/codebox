@@ -24,13 +24,17 @@ export function unpackWs(buf: ArrayBuffer): { kind: number; sid: number; opcode:
 
 export const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const MAX_NAME = 40;
-export const validName = (n: string) => n.length >= 1 && n.length <= MAX_NAME && NAME_RE.test(n);
+/** The `p-` prefix is reserved: <name> is reachable as p-<name>.<domain> on the pipe bus, so no registry accepts a name that starts with it. */
+export const RESERVED_PREFIX = "p-";
+export const validName = (n: string) => n.length >= 1 && n.length <= MAX_NAME && NAME_RE.test(n) && !n.startsWith(RESERVED_PREFIX);
 
 export interface HostConfig {
   /** "pipe.ref12.dev": hosts "<name>--pipe.ref12.dev" and "<prefix>--<name>--pipe.ref12.dev". */
   suffix?: string;
-  /** "ref12.dev" (cutover): hosts "<name>.ref12.dev" and "<prefix>--<name>.ref12.dev". */
+  /** "ref12.dev": hosts "p-<name>.ref12.dev" and "<prefix>--p-<name>.ref12.dev" (the transition form). */
   baseDomain?: string;
+  /** After the cutover: plain "<name>.ref12.dev" and "<prefix>--<name>.ref12.dev" are the pipe's too (the p- form keeps working). */
+  cutover?: boolean;
   /** Labels under baseDomain that are not providers. */
   reserved?: string[];
 }
@@ -46,7 +50,11 @@ export function parseViewerHost(host: string, cfg: HostConfig): { name: string; 
   }
   if (!label) return null;
   const i = label.lastIndexOf("--");
-  const name = i >= 0 ? label.slice(i + 2) : label;
+  let name = i >= 0 ? label.slice(i + 2) : label;
+  if (!viaSuffix) {
+    if (name.startsWith(RESERVED_PREFIX)) name = name.slice(RESERVED_PREFIX.length);
+    else if (!cfg.cutover) return null; // a plain name belongs to the container bus until the cutover
+  }
   const prefix = i >= 0 ? label.slice(0, i) : undefined;
   if (!validName(name) || (prefix !== undefined && prefix.length === 0)) return null;
   if (cfg.reserved?.includes(name) && !viaSuffix) return null;

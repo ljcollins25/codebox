@@ -10,7 +10,7 @@ const exists = async (env: Env, name: string) => ((await (await call(env, "/exis
 const provider = (env: Env, name: string) => env.BUSPROV!.get(env.BUSPROV!.idFromName(name));
 
 export function viewerOf(url: URL, env: Env): { name: string; prefix?: string } | null {
-  return parseViewerHost(url.hostname, { suffix: env.HTTP_HOST_SUFFIX, baseDomain: env.BUS_BASE_DOMAIN, reserved: env.BUS_RESERVED?.split(",").map((s) => s.trim()).filter(Boolean) });
+  return parseViewerHost(url.hostname, { suffix: env.HTTP_HOST_SUFFIX, baseDomain: env.BUS_BASE_DOMAIN, cutover: env.BUS_CUTOVER === "true", reserved: env.BUS_RESERVED?.split(",").map((s) => s.trim()).filter(Boolean) });
 }
 
 /** Provider side: GET /_bus/ws/<name> with "Authorization: Bearer <that name's token>". Outside Access (workers.dev). */

@@ -16,8 +16,10 @@ describe("hosts", () => {
   it("parses names and prefixes", () => {
     expect(parseViewerHost("app--pipe.ref12.dev", cfg)).toEqual({ name: "app", prefix: undefined });
     expect(parseViewerHost("3000--app--pipe.ref12.dev", cfg)).toEqual({ name: "app", prefix: "3000" });
-    expect(parseViewerHost("app.ref12.dev", cfg)).toEqual({ name: "app", prefix: undefined });
-    expect(parseViewerHost("3000--app.ref12.dev:443", cfg)).toEqual({ name: "app", prefix: "3000" });
+    expect(parseViewerHost("p-app.ref12.dev", cfg)).toEqual({ name: "app", prefix: undefined });
+    expect(parseViewerHost("3000--p-app.ref12.dev:443", cfg)).toEqual({ name: "app", prefix: "3000" });
+    expect(parseViewerHost("app.ref12.dev", cfg)).toBeNull(); // plain names are the container bus's until the cutover
+    expect(parseViewerHost("app.ref12.dev", { ...cfg, cutover: true })).toEqual({ name: "app", prefix: undefined });
   });
   it("refuses reserved, nested and bad hosts", () => {
     expect(parseViewerHost("ctl.ref12.dev", cfg)).toBeNull();
@@ -26,7 +28,7 @@ describe("hosts", () => {
     expect(parseViewerHost("--app--pipe.ref12.dev", cfg)).toBeNull();
     expect(parseViewerHost("app.ref12.dev", { suffix: "pipe.ref12.dev" })).toBeNull();
   });
-  it("validates names", () => { expect(validName("a-b1")).toBe(true); for (const n of ["", "A", "a--b", "-a", "a-", "x".repeat(41)]) expect(validName(n)).toBe(false); });
+  it("validates names", () => { expect(validName("a-b1")).toBe(true); for (const n of ["", "A", "a--b", "p-x", "p-", "-a", "a-", "x".repeat(41)]) expect(validName(n)).toBe(false); });
 });
 
 describe("frames and limits", () => {

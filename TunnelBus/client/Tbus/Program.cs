@@ -19,7 +19,7 @@ internal static class App
         tbus - share a local (or remote) port on the tunnel bus
 
         usage:
-          tbus share <target>... [--name NAME] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
+          tbus share <target>... [--name NAME] [--bus both|chisel|pipe] [--pipe-url URL] [--pipe-token T] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
                        [--session-name N] [--session-id ID] [--hexad H] [--session-url URL]
                                                  share and stay in the foreground; Ctrl+C unregisters.
                                                  The description (max 200 chars), label (60), kind (hexad, app, vscode, ...)
@@ -95,7 +95,7 @@ internal static class App
 
     private static async Task<int> Share(string[] args, Host host, Log log, CancellationToken ct)
     {
-        var (pos, opts) = ParseOptions(args, ["name", "bus", "kind", ..ShareMeta.ValueOptions], []);
+        var (pos, opts) = ParseOptions(args, ["name", "bus", "kind", "pipe-url", "pipe-token", ..ShareMeta.ValueOptions], []);
         var meta = ShareMeta.FromOptions(opts, host.GetEnv);
         if (meta.Label != null && pos.Count > 1) throw new UserError("--label works with a single target; one label cannot title several shares.");
         if (pos.Count == 0) throw new UserError("Nothing to share. Example: tbus share 3000 --name myapp");
@@ -106,12 +106,12 @@ internal static class App
         if (dup != null) throw new UserError($"The name '{dup.Key}' is used twice; give each share its own name (NAME=TARGET).");
 
         var config = AppConfig.Load(host);
-        if (opts.TryGetValue("bus", out var busOpt)) config.Bus = NormalizeBus(busOpt!);
+        // --bus both|chisel|pipe picks the lanes; any other value is a bus URL, as before
+        string? mode = null;
+        if (opts.TryGetValue("bus", out var busOpt)) { var bv = busOpt!.Trim().ToLowerInvariant(); if (DualShare.IsMode(bv)) mode = bv; else config.Bus = NormalizeBus(busOpt!); }
         if (opts.TryGetValue("kind", out var kindOpt)) config.Kind = kindOpt!.Trim().ToLowerInvariant();
         var creds = new Credentials(host);
-        var admin = creds.RequireAdminToken();
-        using var bus = new BusClient(config.Bus, admin, creds.AccessHeaders());
-        return await new ShareRunner(host, config, creds, log, bus, meta).RunAsync(specs, ct);
+        return await DualShare.RunAsync(host, config, creds, log, meta, specs, mode, opts.GetValueOrDefault("pipe-url"), opts.GetValueOrDefault("pipe-token"), ct);
     }
 
     private static BusClient Client(Host host, out AppConfig config)

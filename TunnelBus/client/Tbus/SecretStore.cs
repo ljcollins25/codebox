@@ -65,6 +65,10 @@ internal sealed class Credentials(Host host)
 
     public string? AdminToken => First(host.GetEnv("TUNNEL_BUS_ADMIN_TOKEN"), _store.Get(AdminKey));
 
+    public const string PipeAdminKey = "pipe_admin_token";
+    /// <summary>Admin token of the pipe bus (its own registry; never the container bus's token).</summary>
+    public string? PipeAdminToken => First(host.GetEnv("TUNNEL_PIPE_ADMIN_TOKEN"), _store.Get(PipeAdminKey));
+
     /// <summary>Headers Access wants: the service token pair, else the browser-login JWT (cf-access-token).</summary>
     public Dictionary<string, string> AccessHeaders()
     {

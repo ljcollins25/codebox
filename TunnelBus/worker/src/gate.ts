@@ -10,11 +10,24 @@ export interface GateEnv {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   BUS_CONTROL_HOST?: string;
+  BUS_BASE_DOMAIN?: string;
   /** "clientid=label,...": names for service tokens on the dashboard (deploy-time variable). */
   BUS_SERVICE_NAMES?: string;
 }
 
+/** Hosts of the pipe bus: p-<name>.<domain> and <prefix>--p-<name>.<domain>. The `p-` prefix is reserved in both registries. */
+export function isPipeHost(host: string, baseDomain?: string): boolean {
+  host = host.toLowerCase().replace(/:\d+$/, "");
+  if (!baseDomain || !host.endsWith("." + baseDomain.toLowerCase())) return false;
+  const label = host.slice(0, -(baseDomain.length + 1));
+  if (label.includes(".")) return false;
+  const i = label.lastIndexOf("--");
+  return (i >= 0 ? label.slice(i + 2) : label).startsWith("p-");
+}
+
 export interface GateDeps {
+  /** Service binding to the r2pipe Worker. Absent: p- hosts go to the container like any other (and find no such name). */
+  pipe?(request: Request): Promise<Response>;
   forward(request: Request): Promise<Response>;
   verify?: typeof verifyAccessJwt;
   fetchIdentity?: Parameters<typeof displayName>[2]["fetch"];
@@ -69,6 +82,20 @@ export async function handle(request: Request, env: GateEnv, deps: GateDeps): Pr
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("method not allowed", { status: 405 });
     return new Response(request.method === "HEAD" ? null : UI_HTML, { headers: UI_HEADERS });
   }
+  // The `p-` prefix belongs to the pipe bus: the container's registry never gets such a name (refused here, the container is untouched).
+  if (url.pathname === "/_api/register" && request.method === "POST") {
+    const body = (await request.clone().json().catch(() => null)) as { name?: unknown } | null;
+    if (typeof body?.name === "string" && body.name.toLowerCase().startsWith("p-")) {
+      return new Response(JSON.stringify({ error: "names starting with p- are reserved for the pipe bus" }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+  }
+  // The dashboard reads (and unregisters in) the pipe registry through the binding: /_api/pipe/<x> is the pipe Worker's /_api/<x>.
+  if (deps.pipe && url.pathname.startsWith("/_api/pipe/")) {
+    const u = new URL(request.url); u.pathname = "/_api/" + url.pathname.slice("/_api/pipe/".length);
+    return deps.pipe(new Request(u, request));
+  }
+  // p- hosts go Worker to Worker to the pipe bus, never through the container. The Access JWT header travels on, so the pipe Worker verifies it too.
+  if (deps.pipe && isPipeHost(url.hostname, env.BUS_BASE_DOMAIN)) return deps.pipe(request);
   // The router gets the public host and the verified identity. Whatever the client sent for these is overwritten.
   const fwd = new Request(request);
   fwd.headers.set("X-Bus-Host", url.host);

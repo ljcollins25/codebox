@@ -3,6 +3,8 @@ import { handle } from "./gate.ts";
 
 interface Env {
   BUS: DurableObjectNamespace<TunnelBusContainer>;
+  /** Service binding to the r2pipe Worker (pipe bus): p- hosts. */
+  PIPE?: Fetcher;
   /** Bus admin token (Worker secret). Handed to the router, which checks it on /_api/*. */
   ADMIN_TOKEN: string;
   /** "true" = reject requests without a valid Cloudflare Access JWT. */
@@ -57,6 +59,6 @@ export class TunnelBusContainer extends Container<Env> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     // Access verification, identity headers and the dashboard page live in gate.ts (unit-tested).
-    return handle(request, env, { forward: (r) => getContainer(env.BUS, "bus").fetch(r) });
+    return handle(request, env, { forward: (r) => getContainer(env.BUS, "bus").fetch(r), pipe: env.PIPE ? (r) => env.PIPE!.fetch(r) : undefined });
   },
 } satisfies ExportedHandler<Env>;
