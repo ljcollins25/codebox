@@ -224,8 +224,10 @@ internal sealed class PipeProvider
     {
         private readonly SemaphoreSlim _lock = new(1, 1);
         public ClientWebSocket Ws = ws; private int _unacked; private bool _disposed;
+        public readonly TaskCompletionSource<bool> Connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public async Task FromViewer(byte op, byte[] data)
         {
+            try { if (!await Connected.Task.ConfigureAwait(false)) return; } catch { return; }
             await _lock.WaitAsync().ConfigureAwait(false);
             try
             {
@@ -250,13 +252,14 @@ internal sealed class PipeProvider
         }
         if (protocols.ValueKind == JsonValueKind.Array) foreach (var pr in protocols.EnumerateArray()) ws.Options.AddSubProtocol(pr.GetString()!);
         var lw = new LocalWs(this, sid, ws);
+        lock (_ws) _ws[sid] = lw; // viewer messages that arrive while we connect wait on lw.Connected (in order is kept by the lock chain below)
         try
         {
             using var to = CancellationTokenSource.CreateLinkedTokenSource(ct); to.CancelAfter(10_000);
             await ws.ConnectAsync(new Uri(Target(path).Replace("http://", "ws://")), to.Token).ConfigureAwait(false);
         }
-        catch (Exception e) { _log($"web socket {sid}: {e.Message}"); lw.Dispose(); try { await SendJson(new { t = "ws-close", sid, code = 1011 }, ct).ConfigureAwait(false); } catch { } return; }
-        lock (_ws) _ws[sid] = lw;
+        catch (Exception e) { _log($"web socket {sid}: {e.Message}"); lw.Connected.TrySetResult(false); lock (_ws) _ws.Remove(sid); lw.Dispose(); try { await SendJson(new { t = "ws-close", sid, code = 1011 }, ct).ConfigureAwait(false); } catch { } return; }
+        lw.Connected.TrySetResult(true);
         var buf = new byte[64 * 1024];
         try
         {
