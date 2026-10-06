@@ -154,3 +154,40 @@ What it shows: Windows → Linux is flat at about 30 MB/s regardless of 8, 16 or
 4. not: URL batch size, signaling latency, R2 itself.
 
 **A future cross-machine benchmark** should be driven by one coordinator that starts both sides with per-step timeouts and a shared run id (so a missed transfer fails that cell instead of waiting for it), and writes one result file per cell. Or measure each side against R2 on its own (upload to R2, then download from R2, one machine at a time), which removes the pairing and the waiting altogether.
+
+
+## pipe-bus: a container-free tunnel bus (same Worker)
+
+**What.** `tbus share` can talk to this Worker instead of the chisel router. No container, nothing always on: a Durable Object per registered name, hibernating while idle.
+
+**Architecture.**
+* Provider: `wss://<worker>.workers.dev/_bus/ws/<name>` with `Authorization: Bearer <that name's token>`. workers.dev is outside the `*.ref12.dev` Access app, so no Access change is needed (and none was made). Each name's token is minted by `POST /_api/register` (admin bearer or Access, same as the old router), returned once, stored as SHA-256 only, valid for that name only; re-registering or `DELETE /_api/register/<name>` revokes it and closes the live socket (close code 4001).
+* `BusRegistry` DO: names, token hashes, metadata (description, label, kind, owner, session, sessionUrl), connected-since, reconnect count. `GET /_api/registry` returns the dashboard's row shape (`bus: "pipe"`, `host`, `prefixedHost`, `path`; no token hash).
+* `BusProvider` DO (one per name, extends the r2pipe Provider): HTTP as in the r2pipe front (first 1 MiB inline, then R2 parts via presigned URLs, parallel prefetch, both directions), plus SSE/streaming responses (text/event-stream stays inline, flushed as it arrives), and web sockets: each viewer socket is a logical stream (sid) on the provider socket: JSON `ws-open`/`ws-close`/`ws-ack`, binary frames `[kind 4|5][sid u32][opcode][payload]`. Viewer-to-provider bytes are capped at 8 MiB un-acked per stream (the provider acks every 256 KiB), beyond that the viewer is closed with 1013. Frames are inline only.
+* Viewers: `<name>--pipe.ref12.dev` (Access with GitHub login, already routed) and `<prefix>--<name>--pipe.ref12.dev` (prefix goes to the app as `X-Bus-Host-Prefix`). After the cutover, set `BUS_BASE_DOMAIN=ref12.dev` (and `BUS_RESERVED=ctl,pipe`) and route `*.ref12.dev/*` here: `<name>.ref12.dev`, `<port>--<name>.ref12.dev`. A host that is not a registered pipe-bus name falls through to the old behaviour, so unknown names never reach another name's DO.
+* A stuck provider only occupies its own DO.
+
+**Limits and defaults** (vars): `BUS_RATE=50`/s with `BUS_BURST=100` requests per name (429 + retry-after), `BUS_MAX_STREAMS=64` concurrent requests per name, `BUS_MAX_WS=32` viewer sockets per name; 90 s to the first response header; 1 MiB inline each way; web socket frames carried inline (a Workers web socket message is limited to 32 MiB, in practice keep frames well below 1 MiB). Not measured: CPU limits under sustained load (the DO does no per-byte work except copying frames), nor the real concurrent-stream ceiling; the defaults are conservative guesses, not measurements.
+
+**Measurements** (same GitHub runner, one coordinator script, Access service token to the old bus; 1 runner location, so numbers are indicative; old = ctl.ref12.dev chisel container):
+
+| | old bus (chisel) | pipe-bus |
+|---|---|---|
+| small GET p50 / p90 (60 req) | 122-154 / 202-239 ms | 39-49 / 47-60 ms |
+| 25 MB download MB/s (4 runs) | 3.5, 4.2, 3.9, 3.7 | 16.2, 13.6, 21.1, 23.7 |
+| 1 GB download MB/s (2 runs) | **failed** (no result) | 33.2, 40.0 |
+| 25 MB upload MB/s (3 runs) | **failed** (no result) | 6.6, 4.9, 7.7 |
+| WS echo p50 / p90 | 150-156 / 235-247 ms | 12.3-13.0 / 15.7-15.9 ms |
+| WS throughput 64 KB x 400 | 3.2-3.5 MB/s | 22-23 MB/s |
+| SSE 10 events x 200 ms, first event | 305-434 ms, 10/10 | 239-248 ms, 10/10 |
+| kill provider -> served again | 1.9-2.5 s | 1.46-1.55 s |
+
+The old bus numbers are lower than the 17-25 MB/s seen before, and its 1 GB and upload runs failed in this harness (timed out or errored; cause not investigated: not claimed as an old-bus limit, the Access service token path may be involved). Treat the old column as "what this runner got through Access on that day".
+
+**tbus.** `tbus share 3000 --name app --bus https://r2pipe.ref12cf.workers.dev [--kind pipe]`; the kind is also picked by a workers.dev bus URL, `TUNNEL_BUS_KIND=pipe|chisel`, or `tbus config --kind pipe --viewer-suffix pipe.ref12.dev` (empty suffix after the cutover). `TUNNEL_BUS_ADMIN_TOKEN` is the admin credential as before; the Access headers are not sent to the provider socket. `tbus list/update/stop` use the same /_api shapes.
+
+**Cutover plan.** (1) hexad sets `TUNNEL_BUS_URL`/`TUNNEL_BUS_KIND` for some sessions; run both buses side by side. (2) Dashboard: make the old Worker's `/_api/providers` also fetch `<worker>/_api/registry` with the admin token and merge rows (they already carry host/prefixedHost/path and `bus`); Unregister on a pipe row calls the new Worker. This needs a change to the old Worker, so it is a proposal, not done. (3) Add Worker routes `*.ref12.dev/*` for r2pipe with `BUS_BASE_DOMAIN`; Access, ctl and the old container stay until names are moved. (4) Retire the container.
+
+**hexad side.** Small: give tbus `TUNNEL_BUS_URL=https://r2pipe.ref12cf.workers.dev` (or `TUNNEL_BUS_KIND=pipe` with the existing URL) and, for the viewer URL, `TUNNEL_BUS_VIEWER_SUFFIX` (default `pipe.ref12.dev`; empty after the cutover). The admin token is the Worker's `ADMIN_TOKEN`. No per-name credential handling is needed in hexad: tbus registers and keeps the token in memory.
+
+**Tests.** Worker: `R2Pipe/worker/test/bus.test.ts` (hosts, frames, rate limit, registry, token hashing, per-name validity, revocation, dashboard rows). tbus: `Tbus.Tests/PipeBusTests.cs` (kind selection, viewer URLs, streamed body feed, provider serving HTTP and a web socket over a fake Worker socket). Not covered by automated tests: the Worker routes and DO behaviour (HTTP inline-to-R2 switch, SSE, websocket relay, auth refusal on the socket route), which were checked by hand locally with `wrangler dev` and on the deployed Worker by the benchmark. Windows runs of the tbus tests were not done here.
