@@ -52,7 +52,7 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
                 if (stopped) return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
-            catch (Exception e) when (e is BusException or HttpRequestException or TaskCanceledException or IOException or ChiselRefusedException or System.Net.WebSockets.WebSocketException or System.Net.Sockets.SocketException)
+            catch (Exception e) when (e is BusException or HttpRequestException or TaskCanceledException or IOException or ChiselRefusedException or PipeAuthException or System.Net.WebSockets.WebSocketException or System.Net.Sockets.SocketException)
             {
                 log.Error($"{tag} {e.Message}");
             }
@@ -68,6 +68,7 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
     {
         var tag = $"[{s.Name}]";
         using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (reg.Token != null) return await RunPipeConnection(s, reg, run, ct).ConfigureAwait(false);
         var options = new ChiselOptions
         {
             Server = ChiselClient.WebSocketUrl(config.Bus),
@@ -108,6 +109,40 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
             run.Cancel();
             try { await conn.ConfigureAwait(false); } catch (Exception) when (stopped || !conn.IsCompletedSuccessfully) { /* surfaced by the loop above when it matters */ }
         }
+    }
+
+    /// <summary>Pipe bus: one WebSocket to the name's Durable Object with this name's own token. No Access headers go to it.</summary>
+    private async Task<bool> RunPipeConnection(ShareSpec s, Registration reg, CancellationTokenSource run, CancellationToken ct)
+    {
+        var tag = $"[{s.Name}]";
+        var provider = new PipeProvider(config.ProviderSocketUrl(reg.SocketPath ?? "/_bus/ws/" + s.Name), reg.Token!, s.TargetHost, s.TargetPort, m => log.Info($"{tag} {m}"));
+        var conn = Task.Run(() => provider.RunOnceAsync(() => log.Info($"{tag} connected: {config.PublicUrl(s.Name)} -> {s.Target}"), run.Token), CancellationToken.None);
+        try
+        {
+            var lastCheck = DateTime.UtcNow;
+            var tick = TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds));
+            while (true)
+            {
+                var done = await Task.WhenAny(conn, Task.Delay(tick, ct)).ConfigureAwait(false);
+                if (ct.IsCancellationRequested) return true;
+                if (done == conn)
+                {
+                    try { await conn.ConfigureAwait(false); log.Info($"{tag} connection closed"); }
+                    catch (PipeAuthException e) { log.Info($"{tag} {e.Message}; registering again"); }
+                    return false;
+                }
+                if (File.Exists(StopMarker(host, s.Name))) { log.Info($"{tag} stopped by 'tbus stop'"); return true; }
+                if (DateTime.UtcNow - lastCheck < host.PollInterval) continue;
+                lastCheck = DateTime.UtcNow;
+                try
+                {
+                    var rows = await bus.ListAsync(ct).ConfigureAwait(false);
+                    if (rows.All(r => r.Name != s.Name)) { log.Info($"{tag} the bus no longer knows this name; re-registering"); return false; }
+                }
+                catch (Exception e) when (e is BusException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested) { }
+            }
+        }
+        finally { run.Cancel(); try { await conn.ConfigureAwait(false); } catch (Exception) { } }
     }
 
     private async Task WarnIfUnreachable(ShareSpec s, CancellationToken ct)

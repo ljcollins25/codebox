@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace Tbus;
 
-internal sealed record Registration(string Name, int Port, string User, string Password);
+internal sealed record Registration(string Name, int Port, string User, string Password, string? Token = null, string? SocketPath = null);
 internal sealed record RegistryRow(string Name, int Port, bool Up);
 
 /// <summary>The router API on the control host, called directly (the Access headers go on the request, not on any command line).</summary>
@@ -32,8 +32,11 @@ internal sealed class BusClient : IDisposable
         Check(resp, text, "register " + name);
         using var doc = JsonDocument.Parse(text);
         var r = doc.RootElement;
-        var reg = new Registration(name, r.GetProperty("port").GetInt32(), r.GetProperty("user").GetString()!, r.GetProperty("password").GetString()!);
-        Log.Register(reg.Password);
+        // the pipe bus answers with a per-name token and the socket path; the chisel router with a port, user and password
+        var reg = r.TryGetProperty("token", out var tok)
+            ? new Registration(name, 0, "", "", tok.GetString()!, r.TryGetProperty("path", out var pp) ? pp.GetString() : "/_bus/ws/" + name)
+            : new Registration(name, r.GetProperty("port").GetInt32(), r.GetProperty("user").GetString()!, r.GetProperty("password").GetString()!);
+        Log.Register(reg.Token ?? reg.Password);
         return reg;
     }
 

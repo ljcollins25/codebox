@@ -1,30 +1,25 @@
 // pipe-bus: shared protocol helpers (pure, unit-tested).
 //
-// Provider WebSocket = text frames (JSON control) + binary frames: [kind u8][stream id u32 BE][seq u32 BE][payload].
-// For web socket relay frames "seq" carries the opcode (1 text, 2 binary).
+// The provider's WebSocket carries the r2pipe HTTP-front protocol (JSON control + 5-byte binary frames: kind 1 request body,
+// kind 3 response body) plus logical web socket streams:
+//   JSON  DO -> provider  {t:"ws-open", sid, path, headers}   {t:"ws-close", sid, code}
+//   JSON  provider -> DO  {t:"ws-close", sid, code}           {t:"ws-ack", sid, n}   (n bytes consumed, credit for the viewer)
+//   binary [kind u8][sid u32 BE][opcode u8][payload]: kind 4 viewer -> provider, kind 5 provider -> viewer; opcode 1 text, 2 binary.
 
-export const K_REQ_BODY = 1; //   DO -> provider: request body bytes inline (seq = order)
-export const K_RES_BODY = 3; //   provider -> DO: response body bytes inline (seq = order)
-export const K_WS_IN = 4; //      DO -> provider: a message from the viewer's web socket (seq = opcode)
-export const K_WS_OUT = 5; //     provider -> DO: a message for the viewer's web socket (seq = opcode)
-export const HEADER = 9;
+export const K_WS_IN = 4, K_WS_OUT = 5, WS_HEADER = 6;
+export const WS_WINDOW = 8 * 1024 * 1024; // viewer->provider bytes allowed un-acked before the viewer is shed
 
-export const INLINE_MAX = 1024 * 1024; // first bytes of a body travel inline
-export const RES_WINDOW = 4 * 1024 * 1024; // inline response bytes the provider may have un-acked per stream (credit)
-export const WS_WINDOW = 8 * 1024 * 1024; // viewer->provider web socket bytes allowed un-acked before the viewer is shed
-
-export function packFrame(kind: number, sid: number, seq: number, data: Uint8Array): ArrayBuffer {
-  const out = new Uint8Array(HEADER + data.byteLength);
+export function packWs(kind: number, sid: number, opcode: number, data: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(WS_HEADER + data.byteLength);
   const v = new DataView(out.buffer);
-  v.setUint8(0, kind); v.setUint32(1, sid); v.setUint32(5, seq);
-  out.set(data, HEADER);
+  v.setUint8(0, kind); v.setUint32(1, sid); v.setUint8(5, opcode);
+  out.set(data, WS_HEADER);
   return out.buffer;
 }
-
-export function unpackFrame(buf: ArrayBuffer): { kind: number; sid: number; seq: number; data: Uint8Array } {
-  if (buf.byteLength < HEADER) throw new Error("short frame");
+export function unpackWs(buf: ArrayBuffer): { kind: number; sid: number; opcode: number; data: Uint8Array } {
+  if (buf.byteLength < WS_HEADER) throw new Error("short frame");
   const v = new DataView(buf);
-  return { kind: v.getUint8(0), sid: v.getUint32(1), seq: v.getUint32(5), data: new Uint8Array(buf, HEADER) };
+  return { kind: v.getUint8(0), sid: v.getUint32(1), opcode: v.getUint8(5), data: new Uint8Array(buf, WS_HEADER) };
 }
 
 export const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -56,27 +51,6 @@ export function parseViewerHost(host: string, cfg: HostConfig): { name: string; 
   if (!validName(name) || (prefix !== undefined && prefix.length === 0)) return null;
   if (cfg.reserved?.includes(name) && !viaSuffix) return null;
   return { name, prefix };
-}
-
-/** Reassembles items that may arrive out of order (response parts finish in any order) and hands them out in sequence. */
-export class SeqBuffer<T> {
-  private items = new Map<number, T>();
-  private next: number;
-  private last: number | null = null;
-  constructor(first = 1) { this.next = first; }
-  put(seq: number, item: T) { if (seq >= this.next) this.items.set(seq, item); }
-  setLast(last: number) { this.last = last; }
-  /** The next in-order item, or undefined when it has not arrived. */
-  take(): T | undefined {
-    const it = this.items.get(this.next);
-    if (it === undefined) return undefined;
-    this.items.delete(this.next); this.next++;
-    return it;
-  }
-  peek(offset = 0): T | undefined { return this.items.get(this.next + offset); }
-  get finished(): boolean { return this.last !== null && this.next > this.last; }
-  get pending(): number { return this.items.size; }
-  get nextSeq(): number { return this.next; }
 }
 
 /** Per-name request rate limit. */

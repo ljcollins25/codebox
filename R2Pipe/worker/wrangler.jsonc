@@ -21,12 +21,15 @@
     "bindings": [
       { "name": "TRANSFER", "class_name": "Transfer" },
       { "name": "REGISTRY", "class_name": "Registry" },
-      { "name": "PROVIDER", "class_name": "Provider" }
+      { "name": "PROVIDER", "class_name": "Provider" },
+      { "name": "BUSREG", "class_name": "BusRegistry" },
+      { "name": "BUSPROV", "class_name": "BusProvider" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Transfer", "Registry"] },
-    { "tag": "v2", "new_sqlite_classes": ["Provider"] }
+    { "tag": "v2", "new_sqlite_classes": ["Provider"] },
+    { "tag": "v3", "new_sqlite_classes": ["BusRegistry", "BusProvider"] }
   ],
   "observability": { "enabled": true }
 }

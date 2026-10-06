@@ -24,8 +24,8 @@ export function providerNameFromHost(host: string, env: Env): string | null {
   return NAME_RE.test(name) && name.length <= 40 ? name : null;
 }
 
-export async function handleHttpFront(req: Request, env: Env, url: URL): Promise<Response | null> {
-  let name = providerNameFromHost(url.hostname, env);
+export async function handleHttpFront(req: Request, env: Env, url: URL, pick: (name: string) => Promise<DurableObjectNamespace> = async () => env.PROVIDER, viewer?: { name: string; prefix?: string } | null): Promise<Response | null> {
+  let name = viewer ? viewer.name : providerNameFromHost(url.hostname, env);
   let path = url.pathname;
   let prefix = "";
   if (!name) {
@@ -46,10 +46,13 @@ export async function handleHttpFront(req: Request, env: Env, url: URL): Promise
   if (prefix) headers.set("x-forwarded-prefix", prefix);
   headers.set("x-r2pipe-path", path + url.search);
   headers.set("x-r2pipe-base", url.origin);
-  return env.PROVIDER.get(env.PROVIDER.idFromName(name)).fetch(new Request("https://do/request", { method: req.method, headers, body: req.body, duplex: "half" } as RequestInit));
+  const ns = await pick(name);
+  headers.delete("x-bus-host-prefix"); if (viewer?.prefix) headers.set("x-bus-host-prefix", viewer.prefix);
+  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") return ns.get(ns.idFromName(name)).fetch(new Request("https://do/request", { method: req.method, headers }));
+  return ns.get(ns.idFromName(name)).fetch(new Request("https://do/request", { method: req.method, headers, body: req.body, duplex: "half" } as RequestInit));
 }
 
-interface Pending {
+export interface Pending {
   rid: number;
   name: string;
   writable: WritableStreamDefaultWriter<Uint8Array>;
@@ -68,11 +71,15 @@ interface Pending {
 }
 
 export class Provider implements DurableObject {
-  private pending = new Map<number, Pending>();
-  private nextRid = 1;
-  constructor(private ctx: DurableObjectState, private env: Env) {}
+  protected pending = new Map<number, Pending>();
+  protected nextRid = 1;
+  constructor(protected ctx: DurableObjectState, protected env: Env) {}
 
-  private socket(): WebSocket | null { return this.ctx.getWebSockets("provider")[0] ?? null; }
+  /** Hooks for the pipe-bus subclass. */
+  protected admit(_req: Request): Response | null { return null; }
+  protected afterWrite(_p: Pending, _bytes: number): void {}
+
+  protected socket(): WebSocket | null { return this.ctx.getWebSockets("provider")[0] ?? null; }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -86,9 +93,11 @@ export class Provider implements DurableObject {
     return err(404, "not found");
   }
 
-  private async request(req: Request): Promise<Response> {
+  protected async request(req: Request): Promise<Response> {
     const ws = this.socket();
     if (!ws) return json({ error: "no provider is connected for this name" }, 502);
+    const refused = this.admit(req);
+    if (refused) return refused;
     const rid = this.nextRid++;
     const ts = new TransformStream<Uint8Array, Uint8Array>();
     const result = new Promise<Response>((resolve) => {
@@ -184,7 +193,7 @@ export class Provider implements DurableObject {
 
   private wake(p: Pending) { const w = p.waiter; p.waiter = null; w?.(); }
 
-  private fail(p: Pending, status: number, message: string) {
+  protected fail(p: Pending, status: number, message: string) {
     if (p.closed) return;
     p.closed = true;
     if (!p.responded) { p.responded = true; p.resolve(json({ error: message }, status)); }
@@ -193,7 +202,7 @@ export class Provider implements DurableObject {
     this.finish(p);
   }
 
-  private finish(p: Pending) {
+  protected finish(p: Pending) {
     this.pending.delete(p.rid);
     this.wake(p);
     if (p.keys.length) this.ctx.waitUntil(this.env.BUCKET.delete(p.keys).catch(() => {}));
@@ -207,7 +216,7 @@ export class Provider implements DurableObject {
       const p = this.pending.get(v.getUint32(1));
       if (!p || p.closed) return;
       const data = new Uint8Array(msg, 5);
-      p.chain = p.chain.then(async () => { if (!p.closed) { try { await p.writable.write(data.slice()); p.bytes += data.length; } catch { this.fail(p, 499, "visitor went away"); } } });
+      p.chain = p.chain.then(async () => { if (!p.closed) { try { await p.writable.write(data.slice()); p.bytes += data.length; this.afterWrite(p, data.length); } catch { this.fail(p, 499, "visitor went away"); } } });
       return;
     }
     if (msg === "ping") { ws.send("pong"); return; }

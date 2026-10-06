@@ -95,7 +95,7 @@ internal static class App
 
     private static async Task<int> Share(string[] args, Host host, Log log, CancellationToken ct)
     {
-        var (pos, opts) = ParseOptions(args, ["name", ..ShareMeta.ValueOptions], []);
+        var (pos, opts) = ParseOptions(args, ["name", "bus", "kind", ..ShareMeta.ValueOptions], []);
         var meta = ShareMeta.FromOptions(opts, host.GetEnv);
         if (meta.Label != null && pos.Count > 1) throw new UserError("--label works with a single target; one label cannot title several shares.");
         if (pos.Count == 0) throw new UserError("Nothing to share. Example: tbus share 3000 --name myapp");
@@ -106,6 +106,8 @@ internal static class App
         if (dup != null) throw new UserError($"The name '{dup.Key}' is used twice; give each share its own name (NAME=TARGET).");
 
         var config = AppConfig.Load(host);
+        if (opts.TryGetValue("bus", out var busOpt)) config.Bus = NormalizeBus(busOpt!);
+        if (opts.TryGetValue("kind", out var kindOpt)) config.Kind = kindOpt!.Trim().ToLowerInvariant();
         var creds = new Credentials(host);
         var admin = creds.RequireAdminToken();
         using var bus = new BusClient(config.Bus, admin, creds.AccessHeaders());
@@ -169,18 +171,21 @@ internal static class App
 
     private static int Config(string[] args, Host host, Log log)
     {
-        var (_, opts) = ParseOptions(args, ["bus", "domain"], []);
+        var (_, opts) = ParseOptions(args, ["bus", "domain", "kind", "viewer-suffix"], []);
         var c = AppConfig.Load(host);
         if (opts.Count > 0)
         {
             var saved = File.Exists(host.ConfigPath) ? AppConfigFile(host) : new AppConfig();
             if (opts.TryGetValue("bus", out var bus)) saved.Bus = NormalizeBus(bus!);
+            if (opts.TryGetValue("kind", out var kd)) { kd = kd!.Trim().ToLowerInvariant(); if (kd is not ("chisel" or "pipe" or "")) throw new UserError("--kind is chisel or pipe."); saved.Kind = kd == "" ? null : kd; }
+            if (opts.TryGetValue("viewer-suffix", out var vsf)) saved.ViewerSuffix = vsf!.Trim().Trim('.').ToLowerInvariant();
             if (opts.TryGetValue("domain", out var dom)) saved.Domain = dom!.Trim().Trim('.').ToLowerInvariant();
             saved.Save(host);
             c = AppConfig.Load(host);
         }
         log.Info($"bus:    {c.Bus}");
         log.Info($"domain: {c.Domain}");
+        log.Info($"kind:   {(c.IsPipe ? "pipe (Worker, no chisel)" : "chisel")}" + (c.IsPipe ? $"; viewers {c.PublicUrl("<name>")}" : ""));
         log.Info($"state:  {host.Home}");
         var creds = new Credentials(host);
         log.Info($"admin token: {(creds.AdminToken != null ? "set" : "not set")}");
