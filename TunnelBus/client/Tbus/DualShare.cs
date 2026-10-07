@@ -91,7 +91,7 @@ Host host, AppConfig config, Credentials creds, Log log, ShareMeta meta, IReadOn
         var pipeTok = pipeToken ?? creds.PipeAdminToken ?? (config.IsPipe ? creds.AdminToken : null);
         var chiselTok = creds.AdminToken;
         var lanes = ChooseLanes(mode, chiselCfg != null && chiselTok != null, !string.IsNullOrEmpty(pipeBase) && pipeTok != null);
-        if (string.IsNullOrEmpty(mode) && lanes.Count == 1)
+        if (string.IsNullOrEmpty(mode) && lanes.Count == 1 && lanes[0] != "chisel") // chisel only: exactly the old output, no extra note
             log.Info(lanes[0] == "chisel" ? "note: no pipe bus configured (set TUNNEL_PIPE_ADMIN_TOKEN); sharing on the container bus only" : "note: no container bus admin token; sharing on the pipe bus only");
 
         var tasks = new List<Task>();
@@ -115,7 +115,7 @@ Host host, AppConfig config, Credentials creds, Log log, ShareMeta meta, IReadOn
                 catch (Exception e) { log.Error($"[{lane}] stopped: {e.Message}"); codes[idx] = 1; } // this lane only; the other keeps running
             }));
         }
-        log.Info("lanes: " + string.Join(", ", lanes.Select(l => l + " -> " + string.Join(" ", specs.Select(s => (l == "pipe" ? new AppConfig { Kind = "pipe", Domain = config.Domain, Cutover = config.Cutover } : config.ForChisel()).PublicUrl(s.Name))))));
+        if (lanes.Count > 1 || lanes[0] != "chisel") log.Info("lanes: " + string.Join(", ", lanes.Select(l => l + " -> " + string.Join(" ", specs.Select(s => (l == "pipe" ? new AppConfig { Kind = "pipe", Domain = config.Domain, Cutover = config.Cutover } : config.ForChisel()).PublicUrl(s.Name))))));
         await Task.WhenAll(tasks).ConfigureAwait(false);
         return codes.All(x => x != 0) ? 1 : 0; // fails only when every lane failed
     }

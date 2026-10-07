@@ -102,6 +102,31 @@ public class DualBusTests
     }
 
     [SkippableFact]
+    public async Task Without_a_pipe_token_share_is_chisel_only_with_the_old_output()
+    {
+        using var t = new TestEnv(withChisel: true);
+        var port = t.StartEcho();
+        var (task, cts) = Start(t, "share", $"127.0.0.1:{port}", "--name", "web");
+        await TestEnv.WaitFor(() => t.AllOutput.Contains("[web] connected"), "chisel lane connected");
+        await t.AssertEchoes("web", "plain");
+        cts.Cancel(); Assert.Equal(0, await task.WaitAsync(TimeSpan.FromSeconds(15)));
+        Assert.DoesNotContain("[chisel", t.AllOutput); Assert.DoesNotContain("pipe", t.AllOutput); Assert.DoesNotContain("lanes:", t.AllOutput);
+        Assert.False(t.Bus.Has("web"));
+    }
+
+    [SkippableFact]
+    public async Task Stop_unregisters_both_lanes()
+    {
+        using var t = new TestEnv(withChisel: true); using var p = new FakePipeBus(); ConfigurePipe(t, p);
+        var port = t.StartEcho();
+        var (task, cts) = Start(t, "share", $"127.0.0.1:{port}", "--name", "web");
+        await TestEnv.WaitFor(() => t.AllOutput.Contains("[chisel:web] connected") && t.AllOutput.Contains("[pipe:web] connected"), "both lanes connected");
+        Assert.Equal(0, await t.Run(default, "stop", "web"));
+        Assert.False(t.Bus.Has("web")); Assert.False(p.Has("web"));
+        cts.Cancel(); await task.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    [SkippableFact]
     public async Task Both_buses_connect_with_one_command_and_the_same_name_and_metadata()
     {
         using var t = new TestEnv(withChisel: true); using var p = new FakePipeBus(); ConfigurePipe(t, p);

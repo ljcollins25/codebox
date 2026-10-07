@@ -158,13 +158,34 @@ internal static class App
     {
         if (args.Length != 1) throw new UserError("usage: tbus stop <name>");
         var name = args[0].ToLowerInvariant(); ShareSpec.Validate(name);
-        using var bus = Client(host, out _);
+        var config = AppConfig.Load(host); var creds = new Credentials(host);
         // a 'tbus share' for this name (in another process) watches this marker, so it ends instead of re-registering
         Directory.CreateDirectory(Path.Combine(host.Home, "stop"));
         File.WriteAllText(ShareRunner.StopMarker(host, name), DateTime.UtcNow.ToString("O"));
-        var removed = await bus.UnregisterAsync(name, ct);
-        log.Info(removed ? $"unregistered {name}" : $"{name} was not registered");
-        return removed ? 0 : 1;
+        var pipeBase = config.IsPipe ? config.Bus : config.PipeBus;
+        var pipeTok = creds.PipeAdminToken ?? (config.IsPipe ? creds.AdminToken : null);
+        var pipeOn = !string.IsNullOrEmpty(pipeBase) && pipeTok != null;
+        var chiselOn = !config.IsPipe && creds.AdminToken != null;
+        if (!pipeOn)
+        {   // exactly the single-bus behaviour of the previous release
+            using var bus = Client(host, out _);
+            var removed = await bus.UnregisterAsync(name, ct);
+            log.Info(removed ? $"unregistered {name}" : $"{name} was not registered");
+            return removed ? 0 : 1;
+        }
+        var any = false; var failed = false;
+        if (chiselOn)
+        {
+            using var cb = new BusClient(config.ForChisel().Bus, creds.AdminToken!, creds.AccessHeaders());
+            try { var r = await cb.UnregisterAsync(name, ct); any |= r; log.Info(r ? $"[chisel] unregistered {name}" : $"[chisel] {name} was not registered"); }
+            catch (Exception e) when (e is not OperationCanceledException) { failed = true; log.Error($"[chisel] could not unregister {name}: {e.Message}"); }
+        }
+        using (var pb = new BusClient(pipeBase!.TrimEnd('/'), pipeTok!, new Dictionary<string, string>()))
+        {
+            try { var r = await pb.UnregisterAsync(name, ct); any |= r; log.Info(r ? $"[pipe] unregistered {name}" : $"[pipe] {name} was not registered"); }
+            catch (Exception e) when (e is not OperationCanceledException) { failed = true; log.Error($"[pipe] could not unregister {name}: {e.Message}"); }
+        }
+        return any && !failed ? 0 : 1;
     }
 
     private static int Open(string[] args, Host host, Log log)
