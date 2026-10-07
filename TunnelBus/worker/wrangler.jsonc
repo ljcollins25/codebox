@@ -14,6 +14,7 @@
     "BUS_LABEL_SUFFIX": "",
     "BUS_ADMIN_EMAILS": "lancec@microsoft.com"
   },
+  "services": [{ "binding": "PIPE", "service": "r2pipe" }],
   "observability": { "enabled": true },
   "containers": [
     {

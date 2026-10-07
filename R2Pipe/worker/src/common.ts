@@ -6,6 +6,12 @@ export interface Env {
   TRANSFER: DurableObjectNamespace;
   REGISTRY: DurableObjectNamespace;
   PROVIDER: DurableObjectNamespace;
+  /** pipe-bus: registry DO and per-name provider DOs. */
+  BUSREG?: DurableObjectNamespace;
+  BUSPROV?: DurableObjectNamespace;
+  BUS_RATE?: string; BUS_BURST?: string; BUS_MAX_STREAMS?: string; BUS_MAX_WS?: string;
+  /** Cutover: also serve "<name>.<domain>" and "<prefix>--<name>.<domain>". */
+  BUS_STALE_HOURS?: string; BUS_BASE_DOMAIN?: string; BUS_CUTOVER?: string; BUS_RESERVED?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   ADMIN_TOKEN?: string;

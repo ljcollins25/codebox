@@ -12,6 +12,9 @@
     "R2_BUCKET_NAME": "r2pipe",
     "TRANSFER_TTL_SECONDS": "86400",
     "HTTP_HOST_SUFFIX": "pipe.ref12.dev",
+    "BUS_BASE_DOMAIN": "ref12.dev",
+    "BUS_RESERVED": "ctl,pipe",
+    "BUS_STALE_HOURS": "24",
     "HTTP_PREFETCH": "6",
     "HTTP_PREFETCH_BYTES": "67108864"
     // R2_ACCOUNT_ID is a var too, set in wrangler.local.jsonc-free way: see README (--var R2_ACCOUNT_ID:...).
@@ -21,12 +24,15 @@
     "bindings": [
       { "name": "TRANSFER", "class_name": "Transfer" },
       { "name": "REGISTRY", "class_name": "Registry" },
-      { "name": "PROVIDER", "class_name": "Provider" }
+      { "name": "PROVIDER", "class_name": "Provider" },
+      { "name": "BUSREG", "class_name": "BusRegistry" },
+      { "name": "BUSPROV", "class_name": "BusProvider" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Transfer", "Registry"] },
-    { "tag": "v2", "new_sqlite_classes": ["Provider"] }
+    { "tag": "v2", "new_sqlite_classes": ["Provider"] },
+    { "tag": "v3", "new_sqlite_classes": ["BusRegistry", "BusProvider"] }
   ],
   "observability": { "enabled": true }
 }

@@ -66,3 +66,28 @@ test("misconfigured Access fails closed", async () => {
   const res = await handle(new Request("https://ctl.ref12.dev/"), { ACCESS_REQUIRED: "true" }, { forward: recorder().forward });
   assert.equal(res.status, 500);
 });
+
+test("p- hosts go to the pipe service binding, not the container; other hosts are unaffected", async () => {
+  const rec = recorder(); const piped: string[] = [];
+  const e = { ...env, BUS_BASE_DOMAIN: "ref12.dev" };
+  const deps = { forward: rec.forward, pipe: async (r: Request) => (piped.push(new URL(r.url).host), new Response("from pipe")), verify: ok({ email: "a@b.c" }) };
+  const get = (u: string) => handle(new Request(u, { headers: { "Cf-Access-Jwt-Assertion": "j" } }), e, deps);
+  assert.equal(await (await get("https://p-app.ref12.dev/x")).text(), "from pipe");
+  assert.equal(await (await get("https://3000--p-app.ref12.dev/x")).text(), "from pipe");
+  for (const u of ["https://app.ref12.dev/", "https://hexad-project.ref12.dev/", "https://3000--app.ref12.dev/", "https://pipe.ref12.dev/", "https://ctl.ref12.dev/_api/registry", "https://x.p-y.ref12.dev/"]) assert.equal(await (await get(u)).text(), "from router", u);
+  assert.deepEqual(piped, ["p-app.ref12.dev", "3000--p-app.ref12.dev"]);
+});
+
+test("registering a name that starts with p- is refused before the container sees it", async () => {
+  const rec = recorder();
+  const post = (name: string) => handle(new Request("https://ctl.ref12.dev/_api/register", { method: "POST", body: JSON.stringify({ name }), headers: { "Cf-Access-Jwt-Assertion": "j" } }), env, { forward: rec.forward, verify: ok({ email: "a@b.c" }) });
+  assert.equal((await post("p-x")).status, 400);
+  assert.equal(rec.seen.length, 0);
+  assert.equal((await post("px")).status, 200);
+});
+
+test("/_api/pipe/* reaches the pipe Worker as /_api/*", async () => {
+  const seen: string[] = [];
+  const res = await handle(new Request("https://ctl.ref12.dev/_api/pipe/registry", { headers: { "Cf-Access-Jwt-Assertion": "j" } }), env, { forward: recorder().forward, pipe: async (r) => (seen.push(new URL(r.url).pathname), new Response("[]")), verify: ok({ email: "a@b.c" }) });
+  assert.equal(res.status, 200); assert.deepEqual(seen, ["/_api/registry"]);
+});

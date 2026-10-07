@@ -51,6 +51,7 @@ internal sealed record ShareSpec(string Name, string TargetHost, int TargetPort)
 
     public static void Validate(string name)
     {
+        if (name.StartsWith("p-", StringComparison.Ordinal)) throw new UserError($"Bad name '{name}': names starting with 'p-' are reserved for the pipe bus address (p-<name>).");
         if (name.Length > MaxName || !NameRx.IsMatch(name))
             throw new UserError($"Bad name '{name}': lowercase letters, digits and single hyphens, up to {MaxName} characters (no '--').");
     }

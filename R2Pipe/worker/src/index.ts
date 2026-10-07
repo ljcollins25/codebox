@@ -3,15 +3,24 @@ import { HttpError } from "./state";
 import { Env, json, err, s3Config, newId } from "./common";
 export { Transfer, Registry } from "./transfer";
 export { Provider } from "./provider";
+export { BusRegistry } from "./bus/do";
+export { BusProvider } from "./bus/provider";
+import { providerSocket, adminApi, viewer } from "./bus/route";
 import { handleHttpFront, providerNameFromHost } from "./provider";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/_health" && !providerNameFromHost(url.hostname, env)) return json({ ok: true, presigned: s3Config(env) != null });
+    const ps = await providerSocket(req, env, url); // the provider's own token, not Access
+    if (ps) return ps;
     const a = await authenticate(req, env);
     if (!a.ok) return err(403, `forbidden: ${a.reason}`);
     try {
+      const bus = (await adminApi(req, env, url)) ?? (await viewer(req, env, url));
+      if (bus) return bus;
+      // an unregistered p-<name> host is a 404, never the r2pipe root or another name
+      if (/^(?:[^.]*--)?p-[^.]*\.ref12\.dev$/i.test(url.hostname) || (env.BUS_BASE_DOMAIN && new RegExp(`^(?:[^.]*--)?p-[^.]*\\.${env.BUS_BASE_DOMAIN.replace(/\./g, "\\.")}$`, "i").test(url.hostname))) return err(404, "no such name on the pipe bus");
       const front = await handleHttpFront(req, env, url);
       if (front) return front;
       const m = url.pathname.match(/^\/t(?:\/([a-z2-7]{12}))?(\/.*)?$/);

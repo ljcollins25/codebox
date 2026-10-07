@@ -19,9 +19,15 @@ internal static class App
         tbus - share a local (or remote) port on the tunnel bus
 
         usage:
-          tbus share <target>... [--name NAME] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
+          tbus share <target>... [--name NAME] [--bus both|chisel|pipe] [--pipe-url URL] [--pipe-token T] [--no-register] [--description TEXT] [--label TITLE] [--kind KIND] [--owner WHO]
                        [--session-name N] [--session-id ID] [--hexad H] [--session-url URL]
                                                  share and stay in the foreground; Ctrl+C unregisters.
+                                                 --no-register: the name is already registered; do not register or unregister, and
+                                                 never read an admin token. Connect with the name's own credentials:
+                                                   chisel lane: TBUS_CHISEL_USER, TBUS_CHISEL_PASSWORD, TBUS_CHISEL_PORT
+                                                   pipe lane:   TBUS_PIPE_NAME_TOKEN, TUNNEL_PIPE_URL
+                                                 A lane without its credentials is skipped; with neither, tbus exits non-zero.
+
                                                  The description (max 200 chars), label (60), kind (hexad, app, vscode, ...)
                                                  and owner ("hexad project") are shown on the bus dashboard.
               tbus share 3000 --label "My app" --description "Staging build" --kind app
@@ -95,7 +101,8 @@ internal static class App
 
     private static async Task<int> Share(string[] args, Host host, Log log, CancellationToken ct)
     {
-        var (pos, opts) = ParseOptions(args, ["name", ..ShareMeta.ValueOptions], []);
+        if (args.Any(a => a is "-h" or "--help")) { host.Out.WriteLine(Usage); return 0; }
+        var (pos, opts) = ParseOptions(args, ["name", "bus", "kind", "pipe-url", "pipe-token", ..ShareMeta.ValueOptions], ["no-register"]);
         var meta = ShareMeta.FromOptions(opts, host.GetEnv);
         if (meta.Label != null && pos.Count > 1) throw new UserError("--label works with a single target; one label cannot title several shares.");
         if (pos.Count == 0) throw new UserError("Nothing to share. Example: tbus share 3000 --name myapp");
@@ -106,10 +113,13 @@ internal static class App
         if (dup != null) throw new UserError($"The name '{dup.Key}' is used twice; give each share its own name (NAME=TARGET).");
 
         var config = AppConfig.Load(host);
+        // --bus both|chisel|pipe picks the lanes; any other value is a bus URL, as before
+        string? mode = null;
+        if (opts.TryGetValue("bus", out var busOpt)) { var bv = busOpt!.Trim().ToLowerInvariant(); if (DualShare.IsMode(bv)) mode = bv; else config.Bus = NormalizeBus(busOpt!); }
+        if (opts.TryGetValue("kind", out var kindOpt)) config.Kind = kindOpt!.Trim().ToLowerInvariant();
         var creds = new Credentials(host);
-        var admin = creds.RequireAdminToken();
-        using var bus = new BusClient(config.Bus, admin, creds.AccessHeaders());
-        return await new ShareRunner(host, config, creds, log, bus, meta).RunAsync(specs, ct);
+        if (opts.ContainsKey("no-register")) return await DualShare.RunNoRegisterAsync(host, config, creds, log, specs, mode, opts.GetValueOrDefault("pipe-url"), ct);
+        return await DualShare.RunAsync(host, config, creds, log, meta, specs, mode, opts.GetValueOrDefault("pipe-url"), opts.GetValueOrDefault("pipe-token"), ct);
     }
 
     private static BusClient Client(Host host, out AppConfig config)
@@ -148,13 +158,34 @@ internal static class App
     {
         if (args.Length != 1) throw new UserError("usage: tbus stop <name>");
         var name = args[0].ToLowerInvariant(); ShareSpec.Validate(name);
-        using var bus = Client(host, out _);
+        var config = AppConfig.Load(host); var creds = new Credentials(host);
         // a 'tbus share' for this name (in another process) watches this marker, so it ends instead of re-registering
         Directory.CreateDirectory(Path.Combine(host.Home, "stop"));
         File.WriteAllText(ShareRunner.StopMarker(host, name), DateTime.UtcNow.ToString("O"));
-        var removed = await bus.UnregisterAsync(name, ct);
-        log.Info(removed ? $"unregistered {name}" : $"{name} was not registered");
-        return removed ? 0 : 1;
+        var pipeBase = config.IsPipe ? config.Bus : config.PipeBus;
+        var pipeTok = creds.PipeAdminToken ?? (config.IsPipe ? creds.AdminToken : null);
+        var pipeOn = !string.IsNullOrEmpty(pipeBase) && pipeTok != null;
+        var chiselOn = !config.IsPipe && creds.AdminToken != null;
+        if (!pipeOn)
+        {   // exactly the single-bus behaviour of the previous release
+            using var bus = Client(host, out _);
+            var removed = await bus.UnregisterAsync(name, ct);
+            log.Info(removed ? $"unregistered {name}" : $"{name} was not registered");
+            return removed ? 0 : 1;
+        }
+        var any = false; var failed = false;
+        if (chiselOn)
+        {
+            using var cb = new BusClient(config.ForChisel().Bus, creds.AdminToken!, creds.AccessHeaders());
+            try { var r = await cb.UnregisterAsync(name, ct); any |= r; log.Info(r ? $"[chisel] unregistered {name}" : $"[chisel] {name} was not registered"); }
+            catch (Exception e) when (e is not OperationCanceledException) { failed = true; log.Error($"[chisel] could not unregister {name}: {e.Message}"); }
+        }
+        using (var pb = new BusClient(pipeBase!.TrimEnd('/'), pipeTok!, new Dictionary<string, string>()))
+        {
+            try { var r = await pb.UnregisterAsync(name, ct); any |= r; log.Info(r ? $"[pipe] unregistered {name}" : $"[pipe] {name} was not registered"); }
+            catch (Exception e) when (e is not OperationCanceledException) { failed = true; log.Error($"[pipe] could not unregister {name}: {e.Message}"); }
+        }
+        return any && !failed ? 0 : 1;
     }
 
     private static int Open(string[] args, Host host, Log log)
@@ -169,18 +200,21 @@ internal static class App
 
     private static int Config(string[] args, Host host, Log log)
     {
-        var (_, opts) = ParseOptions(args, ["bus", "domain"], []);
+        var (_, opts) = ParseOptions(args, ["bus", "domain", "kind", "viewer-suffix"], []);
         var c = AppConfig.Load(host);
         if (opts.Count > 0)
         {
             var saved = File.Exists(host.ConfigPath) ? AppConfigFile(host) : new AppConfig();
             if (opts.TryGetValue("bus", out var bus)) saved.Bus = NormalizeBus(bus!);
+            if (opts.TryGetValue("kind", out var kd)) { kd = kd!.Trim().ToLowerInvariant(); if (kd is not ("chisel" or "pipe" or "")) throw new UserError("--kind is chisel or pipe."); saved.Kind = kd == "" ? null : kd; }
+            if (opts.TryGetValue("viewer-suffix", out var vsf)) saved.ViewerSuffix = vsf!.Trim().Trim('.').ToLowerInvariant();
             if (opts.TryGetValue("domain", out var dom)) saved.Domain = dom!.Trim().Trim('.').ToLowerInvariant();
             saved.Save(host);
             c = AppConfig.Load(host);
         }
         log.Info($"bus:    {c.Bus}");
         log.Info($"domain: {c.Domain}");
+        log.Info($"kind:   {(c.IsPipe ? "pipe (Worker, no chisel)" : "chisel")}" + (c.IsPipe ? $"; viewers {c.PublicUrl("<name>")}" : ""));
         log.Info($"state:  {host.Home}");
         var creds = new Credentials(host);
         log.Info($"admin token: {(creds.AdminToken != null ? "set" : "not set")}");
