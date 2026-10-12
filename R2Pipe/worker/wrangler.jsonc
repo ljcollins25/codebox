@@ -29,10 +29,12 @@
       { "name": "BUSPROV", "class_name": "BusProvider" }
     ]
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Transfer", "Registry"] },
-    { "tag": "v2", "new_sqlite_classes": ["Provider"] },
-    { "tag": "v3", "new_sqlite_classes": ["BusRegistry", "BusProvider"] }
-  ],
+  "exports": {
+    "Transfer": { "type": "durable-object", "storage": "sqlite" },
+    "Registry": { "type": "durable-object", "storage": "sqlite" },
+    "Provider": { "type": "durable-object", "storage": "sqlite" },
+    "BusRegistry": { "type": "durable-object", "storage": "sqlite" },
+    "BusProvider": { "type": "durable-object", "storage": "sqlite" }
+  },
   "observability": { "enabled": true }
 }
