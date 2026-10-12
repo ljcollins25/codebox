@@ -59,7 +59,13 @@ public class PipeBusTests
             while (got.Count < 3 && ws.State == WebSocketState.Open)
             {
                 var r = await ws.ReceiveAsync(buf, default); if (r.MessageType == WebSocketMessageType.Close) break;
-                if (r.MessageType == WebSocketMessageType.Text) got.Add(Encoding.UTF8.GetString(buf, 0, r.Count)); else got.Add("bin:" + buf[0] + ":" + Encoding.UTF8.GetString(buf, buf[0] == 5 ? 6 : 5, r.Count - (buf[0] == 5 ? 6 : 5)));
+                if (r.MessageType == WebSocketMessageType.Text && Encoding.UTF8.GetString(buf, 0, r.Count) == "ping")
+                {
+                    await ws.SendAsync("pong"u8.ToArray(), WebSocketMessageType.Text, true, default);
+                    continue;
+                }
+                if (r.MessageType == WebSocketMessageType.Text) got.Add
+(Encoding.UTF8.GetString(buf, 0, r.Count)); else got.Add("bin:" + buf[0] + ":" + Encoding.UTF8.GetString(buf, buf[0] == 5 ? 6 : 5, r.Count - (buf[0] == 5 ? 6 : 5)));
                 if (got.Any(g => g == "bin:5:xy") && got.Any(g => g.StartsWith("{\"t\":\"end\""))) { bodyOk = 1; break; }
             }
             done.TrySetResult(); await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", default);
@@ -76,5 +82,22 @@ public class PipeBusTests
         l.Close(); appL.Close();
     }
 
-    private static int Free() { var s = new TcpListener(IPAddress.Loopback, 0); s.Start(); var p = ((IPEndPoint)s.LocalEndpoint).Port; s.Stop(); return p; }
+    [Fact]
+    public async Task MissingPongAbortsConnectionSoShareRunnerCanReconnect()
+    {
+        using var l = new HttpListener(); var port = Free(); l.Prefixes.Add($"http://127.0.0.1:{port}/"); l.Start();
+        using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var p = new PipeProvider($"ws://127.0.0.1:{port}/", "test", "127.0.0.1", 1, _ => {})
+        { PingInterval = TimeSpan.FromMilliseconds(30), PongTimeout = TimeSpan.FromMilliseconds(100) };
+        var run = p.RunOnceAsync(() => {}, ct.Token);
+        var c = await l.GetContextAsync().WaitAsync(ct.Token);
+        using var ws = (await c.AcceptWebSocketAsync(null)).WebSocket;
+        var b = new byte[32]; var msg = await ws.ReceiveAsync(b, ct.Token);
+        Assert.Equal("ping", Encoding.UTF8.GetString(b, 0, msg.Count));
+        // No pong: RunOnce returns promptly, allowing the existing outer loop to reconnect.
+        await run.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    private static int Free()
+ { var s = new TcpListener(IPAddress.Loopback, 0); s.Start(); var p = ((IPEndPoint)s.LocalEndpoint).Port; s.Stop(); return p; }
 }

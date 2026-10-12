@@ -23,14 +23,26 @@ export async function providerSocket(req: Request, env: Env, url: URL): Promise<
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!validName(name) || !token || !((await (await call(env, "/verify", "POST", { name, token })).json()) as { ok: boolean }).ok) return err(401, "unauthorized");
-  return provider(env, name).fetch(new Request("https://do/ws", { headers: { upgrade: "websocket", "x-bus-name": name } }));
+  return provider(env, name).fetch(new Request("https://do/ws", { headers: { upgrade: "websocket", "x-bus-name": name, "x-hexad-instance-id": req.headers.get("x-hexad-instance-id") ?? "" } }));
 }
 
 /** Admin side (Access or admin bearer): same paths and shapes as the old router's /_api. */
 export async function adminApi(req: Request, env: Env, url: URL): Promise<Response | null> {
   if (!url.pathname.startsWith("/_api/") || !env.BUSREG) return null;
   const m = url.pathname.match(/^\/_api\/register(?:\/([^/]+))?$/);
-  if (url.pathname === "/_api/registry" && req.method === "GET") return call(env, "/list", "GET");
+  if (url.pathname === "/_api/registry" && req.method === "GET") {
+    const rows = await (await call(env, "/list", "GET")).json() as Array<{ name: string; up: boolean }>;
+    // Dashboard reads are demand-driven, not a heartbeat/alarm. Registry flags
+    // alone cannot detect a half-open socket while its DO is hibernating.
+    await Promise.all(rows.map(async row => {
+      try {
+        const stats = await (await provider(env, row.name).fetch("https://do/stats")).json() as { connected: boolean };
+        row.up = stats.connected;
+      } catch { row.up = false; }
+    }));
+    return json(rows);
+  }
+
   if (url.pathname === "/_api/status" && req.method === "GET") return json({ bus: "pipe", version: "pipe-bus 1" });
   if (!m) return err(404, "not found");
   const name = m[1] ? decodeURIComponent(m[1]) : undefined;

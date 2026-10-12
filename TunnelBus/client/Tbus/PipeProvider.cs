@@ -25,8 +25,12 @@ internal sealed class PipeProvider
     private readonly Dictionary<uint, Req> _reqs = new();
     private readonly Dictionary<uint, TaskCompletionSource<List<(int n, string url)>>> _urlWaits = new();
     private readonly Dictionary<uint, LocalWs> _ws = new();
+    private readonly string _instanceId = Guid.NewGuid().ToString("N");
     private ClientWebSocket? _sock;
     public int Served;
+    internal TimeSpan PingInterval { get; init; } = TimeSpan.FromSeconds(25);
+    internal TimeSpan PongTimeout { get; init; } = TimeSpan.FromSeconds(20);
+    private TaskCompletionSource? _pong;
 
     public PipeProvider(string wsUrl, string token, string targetHost, int targetPort, Action<string> log, HttpMessageHandler? localHandler = null)
     {
@@ -42,17 +46,38 @@ internal sealed class PipeProvider
     {
         using var ws = new ClientWebSocket();
         ws.Options.SetRequestHeader("Authorization", "Bearer " + _token);
+        ws.Options.SetRequestHeader("x-hexad-instance-id", _instanceId);
         ws.Options.KeepAliveInterval = TimeSpan.Zero; // our own text ping: the Durable Object answers it without waking up
         try { await ws.ConnectAsync(new Uri(_wsUrl), ct).ConfigureAwait(false); }
         catch (WebSocketException e) when (e.Message.Contains("401") || e.Message.Contains("403")) { throw new PipeAuthException("the bus refused the provider token (revoked or name unregistered)"); }
         _sock = ws;
         onConnected();
         using var ping = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var pinger = Task.Run(async () => { try { while (!ping.IsCancellationRequested) { await Task.Delay(25_000, ping.Token).ConfigureAwait(false); await Send("ping"u8.ToArray(), WebSocketMessageType.Text, ping.Token).ConfigureAwait(false); } } catch { } });
+        var pinger = Task.Run(async () =>
+        {
+            try
+            {
+                while (!ping.IsCancellationRequested)
+                {
+                    var pong = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Volatile.Write(ref _pong, pong);
+                    await Send("ping"u8.ToArray(), WebSocketMessageType.Text, ping.Token).WaitAsync(PongTimeout, ping.Token).ConfigureAwait(false);
+                    await pong.Task.WaitAsync(PongTimeout, ping.Token).ConfigureAwait(false);
+                    await Task.Delay(PingInterval, ping.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (ping.IsCancellationRequested) { }
+            catch { _log("pipe heartbeat lost; reconnecting"); ws.Abort(); }
+        });
         try { await ReadLoop(ws, ct).ConfigureAwait(false); }
+        catch (Exception e) when (e is WebSocketException or OperationCanceledException && !ct.IsCancellationRequested && ws.State == WebSocketState.Aborted) { }
         finally
         {
             ping.Cancel();
+            await pinger.ConfigureAwait(false);
+            Volatile.Write(ref _pong, null);
+            _sock = null;
+            lock (_urlWaits) { foreach (var w in _urlWaits.Values) w.TrySetException(new IOException("provider disconnected")); _urlWaits.Clear(); }
             lock (_reqs) { foreach (var r in _reqs.Values) r.Cancel.Cancel(); _reqs.Clear(); }
             lock (_ws) { foreach (var w in _ws.Values) w.Dispose(); _ws.Clear(); }
         }
@@ -67,7 +92,7 @@ internal sealed class PipeProvider
             do { r = await ws.ReceiveAsync(buf, ct).ConfigureAwait(false); if (r.MessageType == WebSocketMessageType.Close) { if (ws.CloseStatus == (WebSocketCloseStatus)4001) throw new PipeAuthException("the provider token was revoked"); return; } ms.Write(buf, 0, r.Count); } while (!r.EndOfMessage);
             var data = ms.GetBuffer().AsMemory(0, (int)ms.Length);
             if (r.MessageType == WebSocketMessageType.Binary) { OnBinary(data); continue; }
-            if (data.Length == 4 && data.Span.SequenceEqual("pong"u8)) continue;
+            if (data.Length == 4 && data.Span.SequenceEqual("pong"u8)) { Volatile.Read(ref _pong)?.TrySetResult(); continue; }
             using var doc = JsonDocument.Parse(data);
             OnJson(doc.RootElement, ct);
         }

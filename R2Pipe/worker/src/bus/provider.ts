@@ -25,6 +25,14 @@ export class BusProvider extends Provider {
 
   private viewers(): WebSocket[] { return this.ctx.getWebSockets().filter((w) => this.ctx.getTags(w).some((t) => t[0] === "v")); }
   private sidOf(ws: WebSocket): number | null { const t = this.ctx.getTags(ws).find((x) => x[0] === "v"); return t ? Number(t.slice(1)) : null; }
+  private closeViewers(reason: string) {
+    this.unacked.clear();
+    for (const v of this.viewers()) {
+      v.serializeAttachment({ retired: true });
+      try { v.close(1001, reason); } catch {}
+    }
+  }
+  protected providerLost() { this.note(false); this.closeViewers("provider went away"); }
   private registry(): DurableObjectStub { return this.env.BUSREG!.get(this.env.BUSREG!.idFromName("registry")); }
   private note(connected: boolean) {
     if (!this.name) return;
@@ -36,16 +44,23 @@ export class BusProvider extends Provider {
     const n = req.headers.get("x-bus-name");
     if (n && n !== this.name) { this.name = n; await this.ctx.storage.put("name", n); }
     if (url.pathname === "/revoke") {
-      for (const w of this.ctx.getWebSockets()) { try { w.close(this.ctx.getTags(w).includes("provider") ? 4001 : 1001, "revoked"); } catch { /* */ } }
-      for (const p of [...this.pending.values()]) this.fail(p, 502, "revoked");
+      if (this.provider) this.retireProvider(this.provider, "revoked", 4001);
+      this.closeViewers("revoked");
+      this.note(false);
       return json({ ok: true });
     }
     if (url.pathname === "/ws") {
+      this.closeViewers("provider replaced");
       const r = await super.fetch(req);
       if (r.status === 101) this.note(true);
       return r;
     }
-    if (url.pathname === "/stats") return json({ pending: this.pending.size, viewers: this.viewers().length, connected: this.socket() != null });
+    if (url.pathname === "/stats") {
+      const connected = this.socket() != null;
+      if (!connected) this.note(false);
+      return json({ pending: this.pending.size, viewers: this.viewers().length, connected });
+    }
+
     return super.fetch(req);
   }
 
@@ -58,7 +73,7 @@ export class BusProvider extends Provider {
   protected async request(req: Request): Promise<Response> {
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return super.request(req);
     const ws = this.socket();
-    if (!ws) return json({ error: "no provider is connected for this name" }, 502);
+    if (!ws) return this.offline();
     const refused = this.admit();
     if (refused) return refused;
     if (this.viewers().length >= this.maxWs) return json({ error: "too many web sockets for this name" }, 429);
@@ -68,7 +83,9 @@ export class BusProvider extends Provider {
     const protocols = (req.headers.get("sec-websocket-protocol") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], ["v" + sid]);
-    ws.send(JSON.stringify({ t: "ws-open", sid, path: req.headers.get("x-r2pipe-path") ?? "/", headers, protocols }));
+    try { this.sendProvider(ws, JSON.stringify({ t: "ws-open", sid, path: req.headers.get("x-r2pipe-path") ?? "/", headers, protocols })); }
+    catch { try { pair[1].close(1013, "provider offline"); } catch {} return this.offline(); }
+
     const h = new Headers();
     if (protocols[0]) h.set("sec-websocket-protocol", protocols[0]);
     return new Response(null, { status: 101, webSocket: pair[0], headers: h });
@@ -77,15 +94,17 @@ export class BusProvider extends Provider {
   async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
     const sid = this.sidOf(ws);
     if (sid != null) { // a viewer's message goes to the provider
+      if (ws.readyState !== WebSocket.OPEN || ws.deserializeAttachment()?.retired) return;
       const prov = this.socket();
       if (!prov) { try { ws.close(1013, "no provider"); } catch { /* */ } return; }
       const bytes = typeof msg === "string" ? new TextEncoder().encode(msg) : new Uint8Array(msg);
       const un = (this.unacked.get(sid) ?? 0) + bytes.length;
       if (un > WS_WINDOW) { try { ws.close(1013, "too much unread data for the provider"); } catch { /* */ } return; }
       this.unacked.set(sid, un);
-      prov.send(packWs(K_WS_IN, sid, typeof msg === "string" ? 1 : 2, bytes));
+      try { this.sendProvider(prov, packWs(K_WS_IN, sid, typeof msg === "string" ? 1 : 2, bytes)); } catch {}
       return;
     }
+    if (ws !== this.provider) return;
     if (typeof msg !== "string") {
       if (new DataView(msg).getUint8(0) === K_WS_OUT) {
         const f = unpackWs(msg);
@@ -112,15 +131,13 @@ export class BusProvider extends Provider {
     if (sid != null) {
       this.unacked.delete(sid);
       try { ws.close(code === 1005 || code === 1006 ? 1000 : code); } catch { /* */ }
-      try { this.socket()?.send(JSON.stringify({ t: "ws-close", sid, code })); } catch { /* */ }
+      if (!ws.deserializeAttachment()?.retired) {
+        const prov = this.socket();
+        try { if (prov) this.sendProvider(prov, JSON.stringify({ t: "ws-close", sid, code })); } catch {}
+      }
       return;
     }
-    super.webSocketClose(ws, code);
-    if (!this.socket()) {
-      this.note(false);
-      for (const v of this.viewers()) { try { v.close(1001, "provider went away"); } catch { /* */ } }
-    }
-  }
+    super.webSocketClose(ws, code);  }
 
   webSocketError(ws: WebSocket) { this.webSocketClose(ws, 1006); }
 }

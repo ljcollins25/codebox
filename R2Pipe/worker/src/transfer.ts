@@ -8,6 +8,7 @@ export class Transfer implements DurableObject {
   private core: TransferCore;
   private waiters: Array<() => void> = [];
   constructor(private ctx: DurableObjectState, private env: Env) {
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     const bucket = env.BUCKET;
     const objects: Objects = {
       delete: (keys) => bucket.delete(keys),

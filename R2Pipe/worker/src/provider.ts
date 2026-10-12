@@ -54,6 +54,7 @@ export async function handleHttpFront(req: Request, env: Env, url: URL, pick: (n
 
 export interface Pending {
   rid: number;
+  provider: WebSocket;
   name: string;
   writable: WritableStreamDefaultWriter<Uint8Array>;
   resolve: (r: Response) => void;
@@ -73,20 +74,79 @@ export interface Pending {
 export class Provider implements DurableObject {
   protected pending = new Map<number, Pending>();
   protected nextRid = 1;
-  constructor(protected ctx: DurableObjectState, protected env: Env) {}
+  protected provider: WebSocket | null = null;
+  protected slot: { id: string; connectedAt: number; instanceId: string | null } | null = null;
+  constructor(protected ctx: DurableObjectState, protected env: Env) {
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    ctx.blockConcurrencyWhile(async () => {
+      this.slot = (await ctx.storage.get<typeof this.slot>("providerSlot")) ?? null;
+      const currentId = await ctx.storage.get<string>("currentId");
+      // One-time migration of pre-slot sockets: force their normal client reconnect.
+      if (!currentId) for (const old of ctx.getWebSockets("provider"))
+        this.retireProvider(old, "provider slot required", 4000);
+      this.provider = currentId ? ctx.getWebSockets("conn-" + currentId)[0] ?? null : null;
+      if (this.provider && (this.provider.readyState !== WebSocket.OPEN || this.provider.deserializeAttachment()?.retired))
+        this.provider = null;
+      if (!this.provider) {
+        this.slot = null;
+        await ctx.storage.delete(["providerSlot", "currentId"]);
+      }
+    });
+
+  }
 
   /** Hooks for the pipe-bus subclass. */
   protected admit(_req: Request): Response | null { return null; }
   protected afterWrite(_p: Pending, _bytes: number): void {}
 
-  protected socket(): WebSocket | null { return this.ctx.getWebSockets("provider")[0] ?? null; }
+  protected providerLost(): void {}
+  protected offline(): Response { return json({ error: "provider offline" }, 503); }
+
+  protected retireProvider(ws: WebSocket, reason = "provider disconnected", code = 1000) {
+    ws.serializeAttachment({ ...(ws.deserializeAttachment() ?? {}), retired: true });
+    if (ws === this.provider) {
+      this.provider = null; this.slot = null;
+      this.ctx.waitUntil(this.ctx.storage.delete(["providerSlot", "currentId"]));
+      this.providerLost();
+    }
+    try { ws.close(code === 1005 || code === 1006 ? 1000 : code, reason); } catch {}
+    for (const p of [...this.pending.values()])
+      if (p.provider === ws) this.fail(p, 502, reason);
+  }
+
+  protected socket(): WebSocket | null {
+    const ws = this.provider;
+    if (!ws) return null;
+    const attachment = ws.deserializeAttachment();
+    const ping = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? attachment?.connectedAt;
+    // Lazy only: no liveness timer or alarm wakes the idle object.
+    if (ws.readyState !== WebSocket.OPEN || (ping != null && Date.now() - ping > 60_000)) {
+      this.retireProvider(ws, "provider heartbeat expired", 4000);
+      return null;
+    }
+    return ws;
+  }
+
+  protected sendProvider(ws: WebSocket, message: string | ArrayBuffer) {
+    if (ws !== this.provider) throw new Error("provider superseded");
+    try { ws.send(message); }
+    catch { this.retireProvider(ws, "provider send failed", 4000); throw new Error("provider offline"); }
+  }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/ws") {
-      for (const old of this.ctx.getWebSockets("provider")) { try { old.close(4000, "replaced by a new provider"); } catch { /* */ } }
       const pair = new WebSocketPair();
-      this.ctx.acceptWebSocket(pair[1], ["provider"]);
+      await this.ctx.blockConcurrencyWhile(async () => {
+        const old = this.provider;
+        const slot = { id: crypto.randomUUID(), connectedAt: Date.now(), instanceId: req.headers.get("x-hexad-instance-id") };
+        this.ctx.acceptWebSocket(pair[1], ["provider", "conn-" + slot.id]);
+        pair[1].serializeAttachment({ ...slot, retired: false });
+        await this.ctx.storage.put({ providerSlot: slot, currentId: slot.id });
+        this.slot = slot; this.provider = pair[1];
+        if (old) this.retireProvider(old, "replaced by a new provider", 4000);
+      });
+
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
     if (url.pathname === "/request") return this.request(req);
@@ -95,13 +155,13 @@ export class Provider implements DurableObject {
 
   protected async request(req: Request): Promise<Response> {
     const ws = this.socket();
-    if (!ws) return json({ error: "no provider is connected for this name" }, 502);
+    if (!ws) return this.offline();
     const refused = this.admit(req);
     if (refused) return refused;
     const rid = this.nextRid++;
     const ts = new TransformStream<Uint8Array, Uint8Array>();
     const result = new Promise<Response>((resolve) => {
-      const p: Pending = { rid, name: "", writable: ts.writable.getWriter(), resolve, responded: false, chain: Promise.resolve(), parts: new Map(), ahead: new Map(), nextPart: 1, expectParts: null, keys: [], pump: null, waiter: null, closed: false, bytes: 0 };
+      const p: Pending = { rid, provider: ws, name: "", writable: ts.writable.getWriter(), resolve, responded: false, chain: Promise.resolve(), parts: new Map(), ahead: new Map(), nextPart: 1, expectParts: null, keys: [], pump: null, waiter: null, closed: false, bytes: 0 };
       p.pump = this.pumpParts(p);
       this.pending.set(rid, p);
       p.resolve = (r) => resolve(r);
@@ -110,18 +170,22 @@ export class Provider implements DurableObject {
     const p = this.pending.get(rid)!;
     const headers: [string, string][] = [];
     req.headers.forEach((v, k) => { if (!HOP.has(k) && !k.startsWith("x-r2pipe-") && !k.startsWith("cf-") && k !== "x-forwarded-for") headers.push([k, v]); });
-    ws.send(JSON.stringify({ t: "req", rid, method: req.method, path: req.headers.get("x-r2pipe-path") ?? "/", headers, hasBody: req.body != null }));
+    try { this.sendProvider(ws, JSON.stringify({ t: "req", rid, method: req.method, path: req.headers.get("x-r2pipe-path") ?? "/", headers, hasBody: req.body != null })); }
+    catch { return result; }
     // the request body goes on in the background: inline first, then R2 parts
     this.uploadBody(p, ws, req).catch((e) => this.fail(p, 502, "request body: " + (e as Error).message));
-    const timeout = new Promise<Response>((res) => setTimeout(() => res(json({ error: "provider did not answer in time" }, 504)), 90_000));
-    const r = await Promise.race([result, timeout]);
-    if (!p.responded) this.fail(p, 504, "timeout");
-    return r;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<Response>((res) => {
+      timer = setTimeout(() => { this.fail(p, 504, "provider did not answer in time"); res(json({ error: "provider did not answer in time" }, 504)); }, 90_000);
+    });
+    try { return await Promise.race([result, timeout]); }
+    finally { clearTimeout(timer); }
   }
 
   private async uploadBody(p: Pending, ws: WebSocket, req: Request) {
+    if (p.closed) return;
     const rid = p.rid;
-    if (!req.body) { ws.send(JSON.stringify({ t: "req-end", rid, parts: 0 })); return; }
+    if (!req.body) { this.sendProvider(ws, JSON.stringify({ t: "req-end", rid, parts: 0 })); return; }
     const reader = req.body.getReader();
     let inline = 0, part = 0, buf: Uint8Array[] = [], bufLen = 0;
     const cfg = s3Config(this.env);
@@ -133,7 +197,7 @@ export class Provider implements DurableObject {
       const key = `h/${rid}-${crypto.randomUUID().slice(0, 8)}/${++part}`;
       await this.env.BUCKET.put(key, merged);
       p.keys.push(key);
-      ws.send(JSON.stringify({ t: "req-part", rid, n: part, size: merged.length, url: await presign(cfg, "GET", key, 3600) }));
+      this.sendProvider(ws, JSON.stringify({ t: "req-part", rid, n: part, size: merged.length, url: await presign(cfg, "GET", key, 3600) }));
     };
     for (;;) {
       const { value, done } = await reader.read();
@@ -142,13 +206,13 @@ export class Provider implements DurableObject {
       let v: Uint8Array = value;
       if (inline < MAX_INLINE) {
         const take = Math.min(v.length, MAX_INLINE - inline);
-        ws.send(frame(K_REQ_BODY, rid, v.subarray(0, take)));
+        this.sendProvider(ws, frame(K_REQ_BODY, rid, v.subarray(0, take)));
         inline += take; v = v.subarray(take);
       }
       if (v.length) { buf.push(v); bufLen += v.length; if (bufLen >= REQ_PART_SIZE) await flush(); }
     }
     await flush();
-    ws.send(JSON.stringify({ t: "req-end", rid, parts: part }));
+    this.sendProvider(ws, JSON.stringify({ t: "req-end", rid, parts: part }));
   }
 
   /**
@@ -197,8 +261,8 @@ export class Provider implements DurableObject {
     if (p.closed) return;
     p.closed = true;
     if (!p.responded) { p.responded = true; p.resolve(json({ error: message }, status)); }
-    else p.writable.abort(new Error(message)).catch(() => {});
-    try { this.socket()?.send(JSON.stringify({ t: "abort", rid: p.rid })); } catch { /* */ }
+    p.writable.abort(new Error(message)).catch(() => {});
+    try { if (p.provider === this.provider) this.sendProvider(p.provider, JSON.stringify({ t: "abort", rid: p.rid })); } catch {}
     this.finish(p);
   }
 
@@ -210,6 +274,7 @@ export class Provider implements DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
+    if (ws !== this.provider) return;
     if (typeof msg !== "string") {
       const v = new DataView(msg);
       if (v.getUint8(0) !== K_RES_BODY) return;
@@ -219,19 +284,19 @@ export class Provider implements DurableObject {
       p.chain = p.chain.then(async () => { if (!p.closed) { try { await p.writable.write(data.slice()); p.bytes += data.length; this.afterWrite(p, data.length); } catch { this.fail(p, 499, "visitor went away"); } } });
       return;
     }
-    if (msg === "ping") { ws.send("pong"); return; }
+    if (msg === "ping") { this.sendProvider(ws, "pong"); return; }
     let m: any;
     try { m = JSON.parse(msg); } catch { return; }
     const p: Pending | undefined = this.pending.get(m.rid);
     if (m.t === "urls") { // batch of presigned PUT URLs for the response parts
       const cfg = s3Config(this.env);
-      if (!p || !cfg) { ws.send(JSON.stringify({ t: "urls", rid: m.rid, urls: [], error: "presigned mode is not configured" })); return; }
+      if (!p || !cfg) { this.sendProvider(ws, JSON.stringify({ t: "urls", rid: m.rid, urls: [], error: "presigned mode is not configured" })); return; }
       const urls: Array<{ n: number; url: string }> = [];
       for (let i = 0; i < Math.min(m.count | 0, 16); i++) {
         const key = this.keyFor(p, m.from + i);
         urls.push({ n: m.from + i, url: await presign(cfg, "PUT", key, 3600) });
       }
-      ws.send(JSON.stringify({ t: "urls", rid: m.rid, urls }));
+      this.sendProvider(ws, JSON.stringify({ t: "urls", rid: m.rid, urls }));
       return;
     }
     if (!p) return;
@@ -267,8 +332,8 @@ export class Provider implements DurableObject {
 
   private keyFor(p: Pending, n: number): string { return `h/${p.rid}-${this.ctx.id.toString().slice(0, 8)}/${n}`; }
 
+  webSocketError(ws: WebSocket) { this.webSocketClose(ws, 1006); }
+
   webSocketClose(ws: WebSocket, code: number) {
-    try { ws.close(code); } catch { /* */ }
-    for (const p of [...this.pending.values()]) this.fail(p, 502, "provider disconnected");
-  }
+    this.retireProvider(ws, "provider disconnected", code);  }
 }
