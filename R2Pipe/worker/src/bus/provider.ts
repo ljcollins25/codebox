@@ -39,7 +39,7 @@ export class BusProvider extends Provider {
     this.ctx.waitUntil(this.registry().fetch("https://do/connected", { method: "POST", body: JSON.stringify({ name: this.name, connected }) }).then((r) => r.body?.cancel()).catch(() => {}));
   }
 
-  async fetch(req: Request): Promise<Response> {
+  protected async fetchProvider(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const n = req.headers.get("x-bus-name");
     if (n && n !== this.name) { this.name = n; await this.ctx.storage.put("name", n); }
@@ -51,7 +51,7 @@ export class BusProvider extends Provider {
     }
     if (url.pathname === "/ws") {
       this.closeViewers("provider replaced");
-      const r = await super.fetch(req);
+      const r = await super.fetchProvider(req);
       if (r.status === 101) this.note(true);
       return r;
     }
@@ -61,7 +61,7 @@ export class BusProvider extends Provider {
       return json({ pending: this.pending.size, viewers: this.viewers().length, connected });
     }
 
-    return super.fetch(req);
+    return super.fetchProvider(req);
   }
 
   protected admit(): Response | null {

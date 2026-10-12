@@ -5,6 +5,7 @@
   "compatibility_date": "2025-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "version_metadata": { "binding": "VERSION_METADATA" },
   "vars": {
     // Access (same application as the tunnel bus: *.ref12.dev). Programs send the service token, browsers log in with GitHub.
     "ACCESS_TEAM_DOMAIN": "laxid.cloudflareaccess.com",

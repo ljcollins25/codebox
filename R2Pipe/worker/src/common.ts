@@ -2,6 +2,7 @@ import type { Kv } from "./state";
 import type { S3Config } from "./presign";
 
 export interface Env {
+  VERSION_METADATA?: { id: string };
   BUCKET: R2Bucket;
   TRANSFER: DurableObjectNamespace;
   REGISTRY: DurableObjectNamespace;
@@ -62,4 +63,12 @@ export function packInline(offset: number, data: ArrayBuffer | Uint8Array): Arra
 export function unpackInline(buf: ArrayBuffer): { offset: number; data: ArrayBuffer } {
   const v = new DataView(buf);
   return { offset: v.getUint32(0) * 2 ** 32 + v.getUint32(4), data: buf.slice(8) };
+}
+
+/** Stamp at the executing layer, overriding any upstream/provider-supplied value. Preserve upgrades and streaming bodies. */
+export function versionResponse(response: Response, header: string, env: Env): Response {
+  const headers = new Headers(response.headers);
+  headers.set(header, env.VERSION_METADATA?.id ?? "unknown");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers,
+    ...(response.status === 101 ? { webSocket: response.webSocket } : {}) });
 }

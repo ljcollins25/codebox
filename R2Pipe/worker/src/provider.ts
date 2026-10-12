@@ -1,6 +1,6 @@
 // HTTP front: visitors' requests reach a provider (r2pipe serve) over the provider's Durable Object WebSocket.
 // Control and small data (the first MAX_INLINE bytes each way) travel in WebSocket frames; the bulk goes through R2 parts.
-import { Env, json, err, s3Config } from "./common";
+import { Env, json, err, s3Config, versionResponse } from "./common";
 import { presign } from "./presign";
 
 export const MAX_INLINE = 1024 * 1024;
@@ -134,6 +134,13 @@ export class Provider implements DurableObject {
   }
 
   async fetch(req: Request): Promise<Response> {
+    let response: Response;
+    try { response = await this.fetchProvider(req); }
+    catch (e) { response = err(500, (e as Error).message); }
+    return versionResponse(response, "x-r2pipe-provider-version", this.env);
+  }
+
+  protected async fetchProvider(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/ws") {
       const pair = new WebSocketPair();

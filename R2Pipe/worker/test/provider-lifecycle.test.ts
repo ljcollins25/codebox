@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Provider } from "../src/provider";
 import { BusProvider } from "../src/bus/provider";
 import type { Env } from "../src/common";
+import worker from "../src/index";
 
 class Socket {
   static OPEN = 1;
@@ -40,6 +41,7 @@ function fixture(kind: "base" | "bus" = "base") {
     id: { toString: () => "fixture" },
   } as unknown as DurableObjectState;
   const env = {
+    VERSION_METADATA: { id: "do-version" },
     BUCKET: { delete: vi.fn(async () => {}) },
     BUSREG: { idFromName: (n: string) => n, get: () => ({ fetch: async (_u: string, i: any) => { events.push(JSON.parse(i.body)); return new Response(null); } }) },
   } as unknown as Env;
@@ -62,6 +64,72 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("provider socket lifecycle", () => {
+  it.each(["base", "bus"] as const)("retires legacy untagged sockets and recovers after attach (%s)", async (kind) => {
+    const NativeResponse = Response;
+    vi.stubGlobal("Response", class extends NativeResponse {
+      constructor(body?: any, init?: any) {
+        super(body, init?.status === 101 ? { ...init, status: 200 } : init);
+        if (init?.status === 101) Object.defineProperty(this, "status", { value: 101 });
+      }
+    });
+    const f = fixture(kind); const legacy = new Socket();
+    f.ctx.acceptWebSocket(asWs(legacy), ["provider"]);
+    f.storage.set("providerSlot", { id: "legacy-stale" });
+    await f.ready();
+    const offline = await f.p.fetch(request());
+    expect(offline.status).toBe(503);
+    expect(offline.headers.get("x-r2pipe-provider-version")).toBe("do-version");
+    expect(legacy.closes).toEqual([4000]); expect(legacy.attachment.retired).toBe(true);
+    expect(legacy.sent).toEqual([]);
+    expect(f.storage.has("currentId")).toBe(false); expect(f.storage.has("providerSlot")).toBe(false);
+    expect((await f.p.fetch(new Request("https://do/ws"))).status).toBe(101);
+    const live = f.sockets[1];
+    live.onSend = (m) => { if (m.t === "req") void f.p.webSocketMessage(asWs(live),
+      JSON.stringify({ t: "res", rid: m.rid, status: 401, headers: [] })); };
+    const recovered = await f.p.fetch(request());
+    expect(recovered.status).toBe(401);
+    expect(recovered.headers.get("x-r2pipe-provider-version")).toBe("do-version");
+    expect(legacy.sent).toEqual([]);
+  });
+  it.each(["base", "bus"] as const)("clears a reset slot with no matching socket (%s)", async (kind) => {
+    const f = fixture(kind);
+    f.storage.set("currentId", "disconnected");
+    f.storage.set("providerSlot", { id: "disconnected", connectedAt: Date.now() });
+    await f.ready();
+    const r = await f.p.fetch(request());
+    expect(r.status).toBe(503); expect(f.count()).toBe(0);
+    expect(r.headers.get("x-r2pipe-provider-version")).toBe("do-version");
+    expect(f.storage.has("currentId")).toBe(false); expect(f.storage.has("providerSlot")).toBe(false);
+  });
+  it("stamps DO errors and stats at the DO boundary", async () => {
+    const f = fixture("bus"); await f.ready();
+    expect((await f.p.fetch(new Request("https://do/stats"))).headers.get("x-r2pipe-provider-version")).toBe("do-version");
+    vi.spyOn(f.ctx.storage, "put").mockRejectedValueOnce(new Error("test storage failure"));
+    const r = await f.p.fetch(new Request("https://do/stats", { headers: { "x-bus-name": "different" } }));
+    expect(r.status).toBe(500); expect(r.headers.get("x-r2pipe-provider-version")).toBe("do-version");
+  });
+  it.each([401, 503, 500])("preserves DO version through Worker proxy status %s", async (status) => {
+    const env = { ADMIN_TOKEN: "test-admin", VERSION_METADATA: { id: "worker-version" },
+      PROVIDER: { idFromName: (n: string) => n, get: () => ({ fetch: async () =>
+        new Response(null, { status, headers: { "x-r2pipe-provider-version": "independent-do", "x-r2pipe-worker-version": "spoofed" } }) }) } } as unknown as Env;
+    const r = await worker.fetch(new Request("https://worker/p/test/", { headers: { authorization: "Bearer test-admin" } }), env);
+    expect(r.status).toBe(status);
+    expect(r.headers.get("x-r2pipe-worker-version")).toBe("worker-version");
+    expect(r.headers.get("x-r2pipe-provider-version")).toBe("independent-do");
+  });
+  it("stamps Worker authorization and unexpected errors without inventing a DO version", async () => {
+    const env = { VERSION_METADATA: { id: "worker-version" } } as Env;
+    const denied = await worker.fetch(new Request("https://worker/p/test/"), env);
+    expect(denied.status).toBe(403);
+    expect(denied.headers.get("x-r2pipe-worker-version")).toBe("worker-version");
+    expect(denied.headers.has("x-r2pipe-provider-version")).toBe(false);
+    const failed = await worker.fetch(new Request("https://worker/p/test/", { headers: { authorization: "Bearer test-admin" } }),
+      { ...env, ADMIN_TOKEN: "test-admin" });
+    expect(failed.status).toBe(500);
+    expect(failed.headers.get("x-r2pipe-worker-version")).toBe("worker-version");
+    expect(failed.headers.has("x-r2pipe-provider-version")).toBe(false);
+  });
+
   it("skips a closed first socket and forwards on the open socket", async () => {
     const f = fixture(); const old = f.add(new Socket()); old.readyState = 3;
     const live = f.add(new Socket()); f.autoReply(live);

@@ -1,6 +1,6 @@
 import { authenticate } from "./auth";
 import { HttpError } from "./state";
-import { Env, json, err, s3Config, newId } from "./common";
+import { Env, json, err, s3Config, newId, versionResponse } from "./common";
 export { Transfer, Registry } from "./transfer";
 export { Provider } from "./provider";
 export { BusRegistry } from "./bus/do";
@@ -10,6 +10,14 @@ import { handleHttpFront, providerNameFromHost } from "./provider";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    let response: Response;
+    try { response = await route(req, env); }
+    catch (e) { response = err(e instanceof HttpError ? e.status : 500, (e as Error).message); }
+    return versionResponse(response, "x-r2pipe-worker-version", env);
+  },
+};
+
+async function route(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/_health" && !providerNameFromHost(url.hostname, env)) return json({ ok: true, presigned: s3Config(env) != null });
     const ps = await providerSocket(req, env, url); // the provider's own token, not Access
@@ -45,5 +53,4 @@ export default {
       if (e instanceof HttpError) return err(e.status, e.message);
       return err(500, (e as Error).message);
     }
-  },
-};
+}
