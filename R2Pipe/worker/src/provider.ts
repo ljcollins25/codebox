@@ -1,6 +1,6 @@
 // HTTP front: visitors' requests reach a provider (r2pipe serve) over the provider's Durable Object WebSocket.
 // Control and small data (the first MAX_INLINE bytes each way) travel in WebSocket frames; the bulk goes through R2 parts.
-import { Env, json, err, s3Config, versionResponse } from "./common";
+import { Env, json, err, s3Config, versionResponse, diagnostic, DIAGNOSTIC_BUILD } from "./common";
 import { presign } from "./presign";
 
 export const MAX_INLINE = 1024 * 1024;
@@ -76,9 +76,12 @@ export class Provider implements DurableObject {
   protected nextRid = 1;
   protected provider: WebSocket | null = null;
   protected slot: { id: string; connectedAt: number; instanceId: string | null } | null = null;
+  protected readonly boot = { id: crypto.randomUUID(), at: Date.now() };
   constructor(protected ctx: DurableObjectState, protected env: Env) {
+    diagnostic(env, "do-constructor", this.boot.id, undefined, { class: this.constructor.name, startedAt: this.boot.at });
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     ctx.blockConcurrencyWhile(async () => {
+      try {
       this.slot = (await ctx.storage.get<typeof this.slot>("providerSlot")) ?? null;
       const currentId = await ctx.storage.get<string>("currentId");
       // One-time migration of pre-slot sockets: force their normal client reconnect.
@@ -91,6 +94,8 @@ export class Provider implements DurableObject {
         this.slot = null;
         await ctx.storage.delete(["providerSlot", "currentId"]);
       }
+      diagnostic(env, "do-initialized", this.boot.id, undefined, { restored: !!this.provider });
+      } catch (e) { diagnostic(env, "do-init-rejected", this.boot.id, e); throw e; }
     });
 
   }
@@ -136,8 +141,15 @@ export class Provider implements DurableObject {
   async fetch(req: Request): Promise<Response> {
     let response: Response;
     try { response = await this.fetchProvider(req); }
-    catch (e) { response = err(500, (e as Error).message); }
-    return versionResponse(response, "x-r2pipe-provider-version", this.env);
+    catch (e) { diagnostic(this.env, "do-fetch-rejected", req.headers.get("x-r2pipe-correlation") ?? this.boot.id, e); response = err(500, (e as Error).message); }
+    diagnostic(this.env, "do-fetch", req.headers.get("x-r2pipe-correlation") ?? this.boot.id, undefined,
+      { boot: this.boot.id, startedAt: this.boot.at, status: response.status });
+    const stamped = versionResponse(response, "x-r2pipe-provider-version", this.env);
+    stamped.headers.set("x-r2pipe-provider-build", DIAGNOSTIC_BUILD);
+    stamped.headers.set("x-r2pipe-provider-boot", this.boot.id);
+    stamped.headers.set("x-r2pipe-provider-started", new Date(this.boot.at).toISOString());
+    return stamped;
+
   }
 
   protected async fetchProvider(req: Request): Promise<Response> {

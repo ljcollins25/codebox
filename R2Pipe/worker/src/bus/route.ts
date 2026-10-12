@@ -23,7 +23,7 @@ export async function providerSocket(req: Request, env: Env, url: URL): Promise<
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!validName(name) || !token || !((await (await call(env, "/verify", "POST", { name, token })).json()) as { ok: boolean }).ok) return err(401, "unauthorized");
-  return provider(env, name).fetch(new Request("https://do/ws", { headers: { upgrade: "websocket", "x-bus-name": name, "x-hexad-instance-id": req.headers.get("x-hexad-instance-id") ?? "" } }));
+  return provider(env, name).fetch(new Request("https://do/ws", { headers: { "x-r2pipe-correlation": req.headers.get("x-r2pipe-correlation") ?? "", upgrade: "websocket", "x-bus-name": name, "x-hexad-instance-id": req.headers.get("x-hexad-instance-id") ?? "" } }));
 }
 
 /** Admin side (Access or admin bearer): same paths and shapes as the old router's /_api. */

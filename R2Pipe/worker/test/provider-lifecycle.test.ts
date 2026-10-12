@@ -130,6 +130,36 @@ describe("provider socket lifecycle", () => {
     expect(failed.headers.has("x-r2pipe-provider-version")).toBe(false);
   });
 
+  it("records constructor failures before any DO HTTP response can be stamped", async () => {
+    const f = fixture();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(f.ctx.storage, "get").mockRejectedValueOnce(new Error("sensitive-message"));
+    await expect(f.ready()).rejects.toThrow("sensitive-message");
+    const records = log.mock.calls.map(([s]) => JSON.parse(s));
+    expect(records.some(r => r.phase === "do-init-rejected" && r.version === "do-version")).toBe(true);
+    expect(JSON.stringify(records)).not.toContain("sensitive-message");
+    log.mockRestore();
+  });
+  it("correlates rejected frontend RPC without fabricating a DO version", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const env = { ADMIN_TOKEN: "test-admin", VERSION_METADATA: { id: "worker-version" },
+      PROVIDER: { idFromName: (n: string) => n, get: () => ({ fetch: async () => { throw new Error("test RPC"); } }) } } as unknown as Env;
+    const r = await worker.fetch(new Request("https://worker/p/test/", { headers: { authorization: "Bearer test-admin" } }), env);
+    expect(r.status).toBe(500);
+    expect(r.headers.has("x-r2pipe-provider-version")).toBe(false);
+    const correlation = r.headers.get("x-r2pipe-correlation");
+    expect(log.mock.calls.map(([s]) => JSON.parse(s)).some(r => r.phase === "route-rpc-rejected" && r.correlation === correlation)).toBe(true);
+    log.mockRestore();
+  });
+  it("keeps a stable boot marker through fetches and changes it on reconstruction", async () => {
+    const f = fixture(); await f.ready();
+    const a = await f.p.fetch(request()); const b = await f.p.fetch(request());
+    expect(a.headers.get("x-r2pipe-provider-boot")).toBe(b.headers.get("x-r2pipe-provider-boot"));
+    f.reconstruct(); await f.ready();
+    const c = await f.p.fetch(request());
+    expect(c.headers.get("x-r2pipe-provider-boot")).not.toBe(a.headers.get("x-r2pipe-provider-boot"));
+    expect(c.headers.get("x-r2pipe-provider-build")).toBe("pipe-diag-20261012-1");
+  });
   it("skips a closed first socket and forwards on the open socket", async () => {
     const f = fixture(); const old = f.add(new Socket()); old.readyState = 3;
     const live = f.add(new Socket()); f.autoReply(live);

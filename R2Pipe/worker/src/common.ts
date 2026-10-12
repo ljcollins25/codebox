@@ -72,3 +72,11 @@ export function versionResponse(response: Response, header: string, env: Env): R
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers,
     ...(response.status === 101 ? { webSocket: response.webSocket } : {}) });
 }
+
+export const DIAGNOSTIC_BUILD = "pipe-diag-20261012-1";
+/** No request URLs, bodies, headers, tokens or arbitrary exception messages are logged. */
+export function diagnostic(env: Env, phase: string, correlation: string, error?: unknown, extra: Record<string, unknown> = {}) {
+  const e = error instanceof Error ? error : null;
+  console.log(JSON.stringify({ event: "r2pipe", build: DIAGNOSTIC_BUILD, version: env.VERSION_METADATA?.id ?? "unknown",
+    phase, correlation, ...extra, ...(e ? { errorType: e.name, frames: e.stack?.split("\n").slice(1, 7).map(s => s.replace(/https?:\/\/\S+/g, "[url]")) } : {}) }));
+}

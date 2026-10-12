@@ -1,6 +1,6 @@
 import { authenticate } from "./auth";
 import { HttpError } from "./state";
-import { Env, json, err, s3Config, newId, versionResponse } from "./common";
+import { Env, json, err, s3Config, newId, versionResponse, diagnostic } from "./common";
 export { Transfer, Registry } from "./transfer";
 export { Provider } from "./provider";
 export { BusRegistry } from "./bus/do";
@@ -10,10 +10,17 @@ import { handleHttpFront, providerNameFromHost } from "./provider";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    const correlation = crypto.randomUUID();
+    const headers = new Headers(req.headers); headers.set("x-r2pipe-correlation", correlation);
+    req = new Request(req, { headers });
+    diagnostic(env, "worker-fetch", correlation);
     let response: Response;
     try { response = await route(req, env); }
-    catch (e) { response = err(e instanceof HttpError ? e.status : 500, (e as Error).message); }
-    return versionResponse(response, "x-r2pipe-worker-version", env);
+    catch (e) { diagnostic(env, "worker-rpc-rejected", correlation, e); response = err(e instanceof HttpError ? e.status : 500, (e as Error).message); }
+    const stamped = versionResponse(response, "x-r2pipe-worker-version", env);
+    stamped.headers.set("x-r2pipe-correlation", correlation);
+    return stamped;
+
   },
 };
 
@@ -50,6 +57,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       const headers = new Headers(req.headers); headers.set("x-r2pipe-base", url.origin);
       return await stub.fetch(new Request(fwd, { headers }));
     } catch (e) {
+      diagnostic(env, "route-rpc-rejected", req.headers.get("x-r2pipe-correlation") ?? "none", e);
       if (e instanceof HttpError) return err(e.status, e.message);
       return err(500, (e as Error).message);
     }
