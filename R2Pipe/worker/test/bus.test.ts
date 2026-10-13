@@ -105,3 +105,14 @@ describe("own-name lookup budget", () => {
   expect(await r!.json()).toEqual({ok:true});expect(calls).toEqual(["/exists"]);
  });
 });
+
+describe("provider-scoped plain cutover",()=>{
+ it("recognizes plain hexad-project only, including existing port prefixes",async()=>{
+  const {viewerOf}=await import("../src/bus/route");
+  const env={BUS_BASE_DOMAIN:"ref12.dev",BUS_PLAIN_PROVIDERS:"hexad-project"} as any;
+  expect(viewerOf(new URL("https://hexad-project.ref12.dev/daemon"),env)).toEqual({name:"hexad-project",prefix:undefined});
+  expect(viewerOf(new URL("https://7878--hexad-project.ref12.dev/x"),env)).toEqual({name:"hexad-project",prefix:"7878"});
+  expect(viewerOf(new URL("https://other.ref12.dev/x"),env)).toBeNull();
+  expect(viewerOf(new URL("https://p-other.ref12.dev/x"),env)?.name).toBe("other");
+ });
+});

@@ -11,6 +11,7 @@ export interface GateEnv {
   ACCESS_AUD?: string;
   BUS_CONTROL_HOST?: string;
   BUS_BASE_DOMAIN?: string;
+  BUS_PIPE_PROVIDERS?: string;
   /** "clientid=label,...": names for service tokens on the dashboard (deploy-time variable). */
   BUS_SERVICE_NAMES?: string;
 }
@@ -95,7 +96,13 @@ export async function handle(request: Request, env: GateEnv, deps: GateDeps): Pr
     return deps.pipe(new Request(u, request));
   }
   // p- hosts go Worker to Worker to the pipe bus, never through the container. The Access JWT header travels on, so the pipe Worker verifies it too.
-  if (deps.pipe && isPipeHost(url.hostname, env.BUS_BASE_DOMAIN)) return deps.pipe(request);
+  const label = env.BUS_BASE_DOMAIN && url.hostname.endsWith("." + env.BUS_BASE_DOMAIN)
+    ? url.hostname.slice(0, -(env.BUS_BASE_DOMAIN.length + 1)) : "";
+  const plainName = label.slice(label.lastIndexOf("--") + 2);
+  const scopedName = label.includes("--") ? plainName : label;
+  const scopedPipe = !label.includes(".") && (env.BUS_PIPE_PROVIDERS ?? "").split(",").filter(Boolean).includes(scopedName);
+  if (deps.pipe && (isPipeHost(url.hostname, env.BUS_BASE_DOMAIN) || scopedPipe)) return deps.pipe(request);
+
   // The router gets the public host and the verified identity. Whatever the client sent for these is overwritten.
   const fwd = new Request(request);
   fwd.headers.set("X-Bus-Host", url.host);

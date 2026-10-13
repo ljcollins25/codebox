@@ -91,3 +91,18 @@ test("/_api/pipe/* reaches the pipe Worker as /_api/*", async () => {
   const res = await handle(new Request("https://ctl.ref12.dev/_api/pipe/registry", { headers: { "Cf-Access-Jwt-Assertion": "j" } }), env, { forward: recorder().forward, pipe: async (r) => (seen.push(new URL(r.url).pathname), new Response("[]")), verify: ok({ email: "a@b.c" }) });
   assert.equal(res.status, 200); assert.deepEqual(seen, ["/_api/registry"]);
 });
+
+test("scoped plain cutover preserves host path bearer and upgrades; leaves other names and Access unchanged", async () => {
+ const e={...env,BUS_BASE_DOMAIN:"ref12.dev",BUS_PIPE_PROVIDERS:"hexad-project"};
+ for(const host of ["hexad-project.ref12.dev","7878--hexad-project.ref12.dev"]){
+  const rec=recorder();let seen:Request|undefined;
+  const r=new Request(`https://${host}/daemon?x=1`,{headers:{upgrade:"websocket",authorization:"Bearer machine","Cf-Access-Jwt-Assertion":"j"}});
+  await handle(r,e,{forward:rec.forward,verify:ok({}),pipe:async(r)=>{seen=r;return new Response("pipe");}});
+  assert.equal(seen!.url,r.url);assert.equal(seen!.headers.get("authorization"),"Bearer machine");assert.equal(seen!.headers.get("upgrade"),"websocket");assert.equal(rec.seen.length,0);
+  const refused=await handle(r,e,{forward:rec.forward,verify:bad,pipe:async()=>{throw Error("Access bypass");}});
+  assert.equal(refused.status,403);
+ }
+ const rec=recorder();
+ await handle(new Request("https://other.ref12.dev/x"),e,{forward:rec.forward,verify:ok({}),pipe:async()=>{throw Error("unscoped cutover");}});
+ assert.equal(rec.seen.length,1);
+});
