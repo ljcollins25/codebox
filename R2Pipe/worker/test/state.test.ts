@@ -37,7 +37,7 @@ describe("transfer state machine", () => {
     const f = fakes();
     const m = await f.core.create({ id: "abc", name: "x.bin", size: 10, partSize: 4 * MB, mode: "binding" });
     expect(m.status).toBe("open");
-    expect(m.expiresAt).toBe(f.clock.now() + 24 * 3600_000);
+    expect(m.expiresAt).toBe(f.clock.now() + 3600_000);
     expect(await code(f.core.create({ id: "abc", mode: "binding" }))).toBe(409);
     const g = fakes();
     expect(await code(g.core.create({ id: "q", partSize: 10, mode: "binding" }))).toBe(400);
@@ -140,7 +140,7 @@ describe("transfer state machine", () => {
     const f = fakes();
     const m = await f.core.create({ id: "t7", mode: "binding", partSize: MB });
     await upload(f, "t7", 1, 3);
-    f.clock.advance(3600_000);
+    f.clock.advance(3599_000);
     expect((await f.core.expireIfDue()).next).toBe(m.expiresAt);
     expect(f.objs.size).toBe(1);
     f.clock.advance(24 * 3600_000);
@@ -168,5 +168,28 @@ describe("transfer state machine", () => {
     const v0 = (await f.core.meta()).version;
     await upload(f, "t9", 1, 3);
     expect((await f.core.meta()).version).toBeGreaterThan(v0);
+  });
+});
+
+describe("one-hour contract", () => {
+  it("clamps longer configured and legacy stored lifetimes", async () => {
+    const f=fakes();const m=await f.core.create({id:"hour",mode:"binding",partSize:MB});
+    expect(m.expiresAt-m.createdAt).toBe(3600_000);
+    const legacy={...m,expiresAt:m.createdAt+86400_000};f.store.set("meta",legacy);
+    expect((await f.core.meta()).expiresAt).toBe(m.createdAt+3600_000);
+    f.clock.advance(3600_000);
+    expect(await code(f.core.meta())).toBe(410);
+    expect(await code(f.core.allowUpload(1))).toBe(410);
+    expect(await code(f.core.allowDownload(1))).toBe(410);
+    expect(await code(f.core.complete({parts:0,size:0,sha256:H}))).toBe(410);
+    expect(await code(f.core.inlineAppend(0,new ArrayBuffer(1)))).toBe(410);
+    expect((await f.core.expireIfDue()).next).toBeNull();
+    expect(f.store.size).toBe(0);
+  });
+  it("does not extend absolute expiry through completion grace", async()=>{
+    const f=fakes();const m=await f.core.create({id:"late",mode:"binding"});
+    f.clock.advance(3599_000);await f.core.complete({parts:0,size:0,sha256:H});
+    expect((await f.core.meta()).expiresAt).toBe(m.expiresAt);
+    f.clock.advance(1000);expect(await code(f.core.snapshot())).toBe(410);
   });
 });

@@ -21,7 +21,7 @@ sender ──"part N done"──► DO ──push state + GET URL──► recei
 
 ```
 cd R2Pipe/worker && npm ci && npx vitest run && npx tsc -p .
-# bucket (name r2pipe) and a 24 h lifecycle rule (objects and unfinished multipart uploads) were created through the API
+# bucket (name r2pipe) and a 1 h age lifecycle rule (objects and unfinished multipart uploads) were created through the API
 export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=...      # token: Workers Scripts edit, R2 edit, zone Workers Routes edit
 npx wrangler deploy
 # secrets (never printed):
@@ -47,7 +47,7 @@ A killed receiver resumes from `<out>.r2pipe` (the list of parts already written
 
 ## How it works
 
-* **Create** `POST /t {name,size,partSize,mode}` → id. State (`open → complete → done`, or `aborted`/`expired`) lives in the Transfer DO; an alarm wipes everything after 24 h (and the bucket lifecycle rule is the backstop).
+* **Create** `POST /t {name,size,partSize,mode}` → id. State (`open → complete → done`, or `aborted`/`expired`) lives in the Transfer DO; the maximum transfer lifetime is 1 h from creation, enforced on operations even before its cleanup alarm runs (bucket lifecycle is an asynchronous backstop).
 * **Inline first bytes.** The sender opens a WebSocket to the DO (`/t/<id>/ws?role=send`) and sends up to 1 MiB as binary frames (8-byte big-endian offset + bytes, 256 KiB each). The DO forwards each frame to the receivers' sockets before storing it (the store allows late joiners to replay; the sender gets an `inline-ack`). Messages are far below the DO WebSocket limit (32 MiB documented); I did not probe the limit. A transfer of ≤ 1 MiB never touches R2.
 * **Parts.** The rest is cut into parts that **start small and double** (1, 2, 4 … up to `--part-size`), each at an exact stream offset (the first part starts where the inline data ends; `complete` checks that the parts are contiguous, that the sizes add up, and that the inline length matches). PUT URLs are requested 8 at a time; a retry asks for a fresh URL. The sender reports each part (`done`: offset, size, SHA-256); the DO checks the object in R2 with the binding (`head`: size must match) and pushes it, **with its presigned GET URL**, to the receiver's WebSocket.
 * **Receiver.** Opens the WebSocket (state + inline replay + pushes; it falls back to long polling `/state?since=V&wait=S` if it cannot connect), downloads up to N parts at once into pooled buffers, verifies each SHA-256, writes in stream order, acks (the DO deletes the object), and at the end checks the total size and the overall SHA-256 (taken over the stream in order).
@@ -86,7 +86,7 @@ The pipeline figure is lower than either side's speed because the receiver lags 
 
 So small requests are somewhat faster than the bus and bulk is **on par with the bus, not better**: the Worker reads the response parts strictly in order through a single stream, and a 1 GiB response is 36 parts, each with a PUT, a notification and a GET round trip. With a first attempt that opened all parts' R2 bodies at once the stream stalled and was cancelled (request failed at 80 MiB); with one body at a time it ran 72 s, with one-ahead prefetch 46 s. A browser or client that can use `r2pipe recv` should do that for big files instead.
 
-**Cost of a run** (R2 operations). One 1 GiB transfer with 32 MiB parts is ≈ 38 parts: 38 PutObject (Class A) + 38 GetObject + 38 HeadObject by the Worker (Class B) + 38 deletes (free) ≈ **38 Class A + 76 Class B** ≈ $0.0002 at list prices ($4.50 / M A, $0.36 / M B), within the free tier (1 M A, 10 M B per month). Storage is transient (parts live seconds to minutes; 24 h cap). Egress is free. This session's 17 one-GiB runs plus the HTTP tests were about 1,000 A and 2,000 B operations. Worker requests and Durable Object requests are billed separately (a few hundred per GiB).
+**Cost of a run** (R2 operations). One 1 GiB transfer with 32 MiB parts is ≈ 38 parts: 38 PutObject (Class A) + 38 GetObject + 38 HeadObject by the Worker (Class B) + 38 deletes (free) ≈ **38 Class A + 76 Class B** ≈ $0.0002 at list prices ($4.50 / M A, $0.36 / M B), within the free tier (1 M A, 10 M B per month). Storage is transient (parts live seconds to minutes; 1 h contract; lifecycle physical deletion may lag expiry). Egress is free. This session's 17 one-GiB runs plus the HTTP tests were about 1,000 A and 2,000 B operations. Worker requests and Durable Object requests are billed separately (a few hundred per GiB).
 
 ## Cloudflare K2 (evaluated on paper; not available to this token)
 
@@ -191,3 +191,22 @@ The old bus numbers are lower than the 17-25 MB/s seen before, and its 1 GB and 
 **hexad side.** Small: give tbus `TUNNEL_BUS_URL=https://r2pipe.ref12cf.workers.dev` (or `TUNNEL_BUS_KIND=pipe` with the existing URL) and, for the viewer URL, `TUNNEL_BUS_VIEWER_SUFFIX` (default `pipe.ref12.dev`; empty after the cutover). The admin token is the Worker's `ADMIN_TOKEN`. No per-name credential handling is needed in hexad: tbus registers and keeps the token in memory.
 
 **Tests.** Worker: `R2Pipe/worker/test/bus.test.ts` (hosts, frames, rate limit, registry, token hashing, per-name validity, revocation, dashboard rows). tbus: `Tbus.Tests/PipeBusTests.cs` (kind selection, viewer URLs, streamed body feed, provider serving HTTP and a web socket over a fake Worker socket). Not covered by automated tests: the Worker routes and DO behaviour (HTTP inline-to-R2 switch, SSE, websocket relay, auth refusal on the socket route), which were checked by hand locally with `wrangler dev` and on the deployed Worker by the benchmark. Windows runs of the tbus tests were not done here.
+
+### One-hour compatibility and retention
+`/t` transfers now expire at most 3,600 seconds after creation, including legacy
+stored transfers. Clients relying on 24-hour transfers must create and finish a
+new transfer within one hour; after expiry operations return 410. Presigned URL
+lifetimes are bounded by the remaining transfer lifetime. An already-started
+R2 stream is not forcibly disconnected at exactly one hour.
+
+Hexad's tbus provider uses the HTTP-front `h/` protocol rather than `/t`.
+No longer-lived `/t` use was found in the inspected hexad/tbus sources. Long
+HTTP-front streams remain possible; lifecycle age is per object and deletion
+is asynchronous, so this is not a physical one-hour deletion SLA.
+The all-object lifecycle uses 3,600-second age for deletion and incomplete
+multipart abort; physical cleanup can lag. No sweep cron is configured.
+
+Transfer Registry storage is separate: each upsert prunes at most 128 rows,
+resuming with a cursor. Terminal tombstones remain until the original absolute
+one-hour deadline plus ten minutes; delayed expired updates cannot resurrect
+pruned transfers. Idle registry storage is pruned when writes resume.

@@ -1,8 +1,14 @@
-import { HttpError, TransferCore, Event, Meta, Part, Objects } from "./state";
+import { HttpError, TransferCore, Event, Meta, Part, Objects, MAX_TRANSFER_MS } from "./state";
 import { presign } from "./presign";
 import { Env, json, err, s3Config, kvOf, packInline, unpackInline } from "./common";
 
 type Role = "send" | "recv";
+export function transferUrlSeconds(m: Meta, now = Date.now()): number {
+  const remaining = Math.floor((Math.min(m.expiresAt, m.createdAt + MAX_TRANSFER_MS) - now) / 1000);
+  if (remaining < 1) throw new HttpError(410, "transfer expired");
+  return Math.min(3600, remaining);
+}
+
 
 export class Transfer implements DurableObject {
   private core: TransferCore;
@@ -14,7 +20,7 @@ export class Transfer implements DurableObject {
       delete: (keys) => bucket.delete(keys),
       head: async (k) => { const h = await bucket.head(k); return h ? { size: h.size, etag: h.etag } : null; },
     };
-    this.core = new TransferCore(kvOf(ctx.storage), objects, () => Date.now(), Number(env.TRANSFER_TTL_SECONDS ?? 86400) * 1000);
+    this.core = new TransferCore(kvOf(ctx.storage), objects, () => Date.now(), Number(env.TRANSFER_TTL_SECONDS ?? 3600) * 1000);
   }
 
   private sockets(role: Role) { return this.ctx.getWebSockets(role); }
@@ -30,12 +36,12 @@ export class Transfer implements DurableObject {
 
   private async getUrl(m: Meta, key: string, n: number, base: string): Promise<string> {
     const cfg = s3Config(this.env);
-    return m.mode === "presigned" && cfg ? presign(cfg, "GET", key, 3600) : `${base}/t/${m.id}/parts/${n}/data`;
+    return m.mode === "presigned" && cfg ? presign(cfg, "GET", key, transferUrlSeconds(m)) : `${base}/t/${m.id}/parts/${n}/data`;
   }
   private async putUrl(m: Meta, n: number, base: string): Promise<string> {
     const key = await this.core.allowUpload(n);
     const cfg = s3Config(this.env);
-    return m.mode === "presigned" && cfg ? presign(cfg, "PUT", key, 3600) : `${base}/t/${m.id}/parts/${n}/data`;
+    return m.mode === "presigned" && cfg ? presign(cfg, "PUT", key, transferUrlSeconds(m)) : `${base}/t/${m.id}/parts/${n}/data`;
   }
 
   private tail: Promise<unknown> = Promise.resolve();
@@ -160,7 +166,7 @@ export class Transfer implements DurableObject {
     let snap = await this.core.snapshot();
     if (wait > 0 && snap.meta.version <= since && (snap.meta.status === "open" || snap.meta.status === "complete")) {
       await new Promise<void>((res) => { const t = setTimeout(res, wait * 1000); this.waiters.push(() => { clearTimeout(t); res(); }); });
-      snap = await this.core.snapshot().catch(() => snap);
+      snap = await this.core.snapshot();
     }
     return json({ meta: snap.meta, parts: snap.parts });
   }
@@ -168,11 +174,12 @@ export class Transfer implements DurableObject {
   async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
     if (typeof msg === "string") { if (msg === "ping") ws.send("pong"); return; }
     if (!this.ctx.getTags(ws).includes("send")) return;
-    // forward first (lowest latency), then store for late joiners; an invalid chunk is reported to the sender
-    for (const r of this.sockets("recv")) { try { r.send(msg); } catch { /* closed */ } }
+    // Validate lifetime and store before forwarding: an expired sender cannot
+    // bypass the one-hour contract by keeping its WebSocket connected.
     try {
       const { offset, data } = unpackInline(msg);
       await this.core.inlineAppend(offset, data);
+      for (const r of this.sockets("recv")) { try { r.send(msg); } catch { /* closed */ } }
       ws.send(JSON.stringify({ type: "inline-ack", size: (await this.core.meta()).inlineSize }));
     } catch (e) {
       ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));
@@ -186,21 +193,48 @@ export class Transfer implements DurableObject {
   }
 }
 
-/** One instance lists the open transfers (for `r2pipe ls`). Plain key-value storage. */
+/** One instance lists open transfers; bounded pruning runs only on writes. */
 export class Registry implements DurableObject {
+  private tail: Promise<unknown> = Promise.resolve();
   constructor(private ctx: DurableObjectState) {}
-  async fetch(req: Request): Promise<Response> {
-    const p = new URL(req.url).pathname;
+  fetch(req: Request): Promise<Response> {
+    const run = this.tail.then(() => this.fetchInner(req), () => this.fetchInner(req));
+    this.tail = run.catch(() => {});
+    return run;
+  }
+  private async prune(now: number) {
+    const startAfter = await this.ctx.storage.get<string>("pruneCursor");
+    const rows = await this.ctx.storage.list<any>({ prefix: "t:", limit: 128, ...(startAfter ? { startAfter } : {}) });
+    const expired: string[] = [];
+    for (const [key, row] of rows) {
+      const absolute = Number.isFinite(row.createdAt) ? row.createdAt + MAX_TRANSFER_MS : row.expiresAt;
+      const until = row.removed ? (row.pruneAfter ?? absolute + 600_000) : Math.min(row.expiresAt, absolute);
+      if (Number.isFinite(until) && now >= until) expired.push(key);
+    }
+    if (expired.length) await this.ctx.storage.delete(expired);
+    if (rows.size === 128) await this.ctx.storage.put("pruneCursor", [...rows.keys()].at(-1)!);
+    else await this.ctx.storage.delete("pruneCursor");
+  }
+  private async fetchInner(req: Request): Promise<Response> {
+    const p = new URL(req.url).pathname, now = Date.now();
     if (p === "/upsert") {
       const b = (await req.json()) as any;
-      // Upserts from parallel acks can arrive out of order: keep the newest version and leave a tombstone for finished transfers
-      const old = (await this.ctx.storage.get("t:" + b.id)) as any;
-      if (old && typeof b.version === "number" && typeof old.version === "number" && b.version <= old.version) return json({ ok: true, stale: true });
-      await this.ctx.storage.put("t:" + b.id, b.remove ? { id: b.id, removed: true, version: b.version ?? 0, expiresAt: b.expiresAt ?? Date.now() + 3600_000 } : b);
+      await this.prune(now);
+      if (typeof b.id !== "string" || !Number.isFinite(b.createdAt) || !Number.isFinite(b.expiresAt) || !Number.isFinite(b.version))
+        return err(400, "invalid registry row");
+      const absolute = b.createdAt + MAX_TRANSFER_MS;
+      // After tombstones are pruned, delayed old writes still cannot resurrect.
+      if (now >= Math.min(b.expiresAt, absolute)) return json({ ok: true, stale: true });
+      const key = "t:" + b.id, old = await this.ctx.storage.get<any>(key);
+      if (old && b.version <= old.version) return json({ ok: true, stale: true });
+      await this.ctx.storage.put(key, b.remove
+        ? { id: b.id, removed: true, version: b.version, createdAt: b.createdAt,
+            expiresAt: Math.min(b.expiresAt, absolute), pruneAfter: absolute + 600_000 }
+        : { ...b, expiresAt: Math.min(b.expiresAt, absolute) });
       return json({ ok: true });
     }
     const all = [...(await this.ctx.storage.list({ prefix: "t:" })).values()] as any[];
-    const cutoff = Date.now();
-    return json({ transfers: all.filter((x) => !x.removed && x.expiresAt > cutoff).sort((a, b) => b.createdAt - a.createdAt) });
+    return json({ transfers: all.filter(x => !x.removed && now < Math.min(x.expiresAt,
+      Number.isFinite(x.createdAt) ? x.createdAt + MAX_TRANSFER_MS : x.expiresAt)).sort((a, b) => b.createdAt - a.createdAt) });
   }
 }

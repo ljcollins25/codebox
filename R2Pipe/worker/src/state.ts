@@ -54,6 +54,7 @@ export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
+export const MAX_TRANSFER_MS = 3600_000;
 export const MAX_PARTS = 10000;
 /** Largest inline prefix: well under the 32 MiB WebSocket message limit, small enough to keep in the Durable Object. */
 export const MAX_INLINE = 1024 * 1024;
@@ -66,13 +67,16 @@ export class TransferCore {
     private kv: Kv,
     private objects: Objects,
     private now: () => number = () => Date.now(),
-    private ttlMs = 24 * 3600 * 1000,
+    private ttlMs = MAX_TRANSFER_MS,
     private doneGraceMs = 10 * 60 * 1000,
   ) {}
 
   async meta(): Promise<Meta> {
     const m = await this.kv.get<Meta>("meta");
     if (!m) throw new HttpError(404, "no such transfer");
+    // Clamp legacy stored transfers too; alarms are cleanup, not authorization.
+    m.expiresAt = Math.min(m.expiresAt, m.createdAt + MAX_TRANSFER_MS);
+    if (this.now() >= m.expiresAt) throw new HttpError(410, "transfer expired");
     return m;
   }
   private async save(m: Meta) { m.version++; await this.kv.put("meta", m); }
@@ -86,7 +90,7 @@ export class TransferCore {
     const t = this.now();
     const m: Meta = {
       id: p.id, name: (p.name ?? p.id).slice(0, 200), size: p.size ?? null, partSize, mode: p.mode, status: "open",
-      createdAt: t, expiresAt: t + this.ttlMs, totalParts: null, totalSize: null, inlineSize: 0, sha256: null, version: 0, creator: p.creator,
+      createdAt: t, expiresAt: t + Math.min(MAX_TRANSFER_MS, Number.isFinite(this.ttlMs) && this.ttlMs > 0 ? this.ttlMs : MAX_TRANSFER_MS), totalParts: null, totalSize: null, inlineSize: 0, sha256: null, version: 0, creator: p.creator,
     };
     await this.save(m);
     return m;
@@ -223,14 +227,15 @@ export class TransferCore {
   async expireIfDue(): Promise<{ next: number | null; events: Event[] }> {
     const m = await this.kv.get<Meta>("meta");
     if (!m) return { next: null, events: [] };
+    m.expiresAt = Math.min(m.expiresAt, m.createdAt + MAX_TRANSFER_MS);
     if (this.now() < m.expiresAt) return { next: m.expiresAt, events: [] };
-    await this.purgeObjects();
+    await this.purgeObjects(m);
     await this.kv.deleteAll();
     return { next: null, events: [{ type: "expired" }] };
   }
 
-  private async purgeObjects() {
-    const m = await this.meta();
+  private async purgeObjects(m?: Meta) {
+    m ??= await this.meta();
     const parts = await this.kv.list<Part>("p:");
     const keys = [...parts.values()].filter((p) => p.state === "ready").map((p) => partKey(m.id, p.n));
     for (let i = 0; i < keys.length; i += 500) await this.objects.delete(keys.slice(i, i + 500));
