@@ -87,7 +87,8 @@ public class PipeBusTests
     {
         using var l = new HttpListener(); var port = Free(); l.Prefixes.Add($"http://127.0.0.1:{port}/"); l.Start();
         using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var p = new PipeProvider($"ws://127.0.0.1:{port}/", "test", "127.0.0.1", 1, _ => {})
+        var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var p = new PipeProvider($"ws://127.0.0.1:{port}/", "test", "127.0.0.1", 1, logs.Enqueue)
         { PingInterval = TimeSpan.FromMilliseconds(30), PongTimeout = TimeSpan.FromMilliseconds(100) };
         var run = p.RunOnceAsync(() => {}, ct.Token);
         var c = await l.GetContextAsync().WaitAsync(ct.Token);
@@ -96,6 +97,9 @@ public class PipeBusTests
         Assert.Equal("ping", Encoding.UTF8.GetString(b, 0, msg.Count));
         // No pong: RunOnce returns promptly, allowing the existing outer loop to reconnect.
         await run.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Contains(logs, line => line.StartsWith("note: pipe heartbeat active:"));
+        Assert.Contains("pipe heartbeat lost; reconnecting", logs);
+
     }
 
     private static int Free()

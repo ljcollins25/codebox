@@ -52,7 +52,7 @@ internal sealed class PipeProvider
         catch (WebSocketException e) when (e.Message.Contains("401") || e.Message.Contains("403")) { throw new PipeAuthException("the bus refused the provider token (revoked or name unregistered)"); }
         _sock = ws;
         onConnected();
-        _log($"pipe heartbeat active: interval={PingInterval.TotalSeconds:0.#}s, send/pong deadline={PongTimeout.TotalSeconds:0.#}s");
+        _log($"note: pipe heartbeat active: interval={PingInterval.TotalSeconds:0.#}s, send/pong deadline={PongTimeout.TotalSeconds:0.#}s");
         using var ping = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         var pinger = Task.Run(async () =>
