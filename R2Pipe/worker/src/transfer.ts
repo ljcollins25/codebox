@@ -66,8 +66,8 @@ export class Transfer implements DurableObject {
         await this.publish([], m);
         return json({ id: m.id, ws: `${b.base.replace(/^http/, "ws")}/t/${m.id}/ws`, mode: m.mode, partSize: m.partSize, name: m.name, size: m.size, expiresAt: m.expiresAt });
       }
-      if (p === "/ws") return this.upgrade(req, url);
-      if (p === "/state" && req.method === "GET") return this.state(url);
+      if (p === "/ws") return await this.upgrade(req, url);
+      if (p === "/state" && req.method === "GET") return await this.state(url);
       if (p === "/complete" && req.method === "POST") {
         const r = await this.core.complete((await req.json()) as any);
         await this.publish([], r.meta);
