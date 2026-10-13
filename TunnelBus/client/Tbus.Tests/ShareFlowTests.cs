@@ -35,6 +35,11 @@ public class ShareFlowTests
         Assert.Contains($"connected: https://web.ref12.dev/ -> 127.0.0.1:{port}", t.AllOutput);
 
         await t.AssertEchoes("web", "hello via the bus");
+        // The healthy share never polls the full registry (the test host's
+        // PollInterval is short, so this spans many former polling intervals).
+        await Task.Delay(300);
+        Assert.Equal(0, t.Bus.Count("GET", "/_api/registry"));
+
 
         cts.Cancel();
         Assert.Equal(0, await task.WaitAsync(TimeSpan.FromSeconds(15)));

@@ -89,7 +89,6 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
         var stopped = false;
         try
         {
-            var lastCheck = DateTime.UtcNow;
             var tick = TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds));
             while (true)
             {
@@ -97,17 +96,9 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
                 if (ct.IsCancellationRequested) { stopped = true; return true; }
                 if (done == conn) { await conn.ConfigureAwait(false); log.Info($"{tag} connection closed"); return false; }
                 if (File.Exists(StopMarker(host, s.Name))) { log.Info($"{tag} stopped by 'tbus stop'"); stopped = true; return true; }
-                if (bus == null || DateTime.UtcNow - lastCheck < host.PollInterval) continue; // no registry polling without an admin token
-                lastCheck = DateTime.UtcNow;
-                try
-                {
-                    var rows = await bus.ListAsync(ct).ConfigureAwait(false);
-                    if (rows.All(r => r.Name != s.Name)) { log.Info($"{tag} the bus no longer knows this name (restart?); re-registering"); return false; }
-                }
-                catch (Exception e) when (e is BusException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
-                {
-                    log.Info($"{tag} bus not reachable ({e.Message}); the connection stays up");
-                }
+                // A live SSH session has bounded keepalive and owns its registration.
+                // Do not poll global registry/stats while healthy. On disconnect the
+                // outer loop re-registers this name only.
             }
         }
         finally
@@ -125,7 +116,6 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
         var conn = Task.Run(() => provider.RunOnceAsync(() => log.Info($"{tag} connected: {config.PublicUrl(s.Name)} -> {s.Target}"), run.Token), CancellationToken.None);
         try
         {
-            var lastCheck = DateTime.UtcNow;
             var tick = TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds));
             while (true)
             {
@@ -138,14 +128,9 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
                     return false;
                 }
                 if (File.Exists(StopMarker(host, s.Name))) { log.Info($"{tag} stopped by 'tbus stop'"); return true; }
-                if (bus == null || DateTime.UtcNow - lastCheck < host.PollInterval) continue; // no registry polling without an admin token
-                lastCheck = DateTime.UtcNow;
-                try
-                {
-                    var rows = await bus.ListAsync(ct).ConfigureAwait(false);
-                    if (rows.All(r => r.Name != s.Name)) { log.Info($"{tag} the bus no longer knows this name; re-registering"); return false; }
-                }
-                catch (Exception e) when (e is BusException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested) { }
+                // A live pipe session has a bounded ping/pong deadline. Registry
+                // revocation closes it; reconnect re-registers this name only.
+                // No global registry fan-out or overlapping health polls.
             }
         }
         finally { run.Cancel(); try { await conn.ConfigureAwait(false); } catch (Exception) { } }

@@ -31,7 +31,7 @@ Alternatively skip `login` and set `TUNNEL_BUS_ADMIN_TOKEN`, `CF_ACCESS_CLIENT_I
 
 | Command | |
 |---|---|
-| `share <target>... [--name N]` | Foreground. Prints registering / connected / the public URL, reconnects with backoff (1 s doubling to 30 s), re-registers when the bus forgot the name (checked every 10 s) or the connection dropped. Ctrl+C unregisters (best effort). Target: `PORT`, `HOST:PORT`, `[IPV6]:PORT`, optionally `NAME=target`. Names: `[a-z0-9]+(-[a-z0-9]+)*`, max 40. |
+| `share <target>... [--name N]` | Foreground. Prints registering / connected / the public URL, reconnects with backoff (1 s doubling to 30 s), re-registers its own name when the connection drops. Healthy shares never poll the global registry; bounded SSH or pipe ping/pong checks own connection liveness. Ctrl+C unregisters (best effort). Target: `PORT`, `HOST:PORT`, `[IPV6]:PORT`, optionally `NAME=target`. Names: `[a-z0-9]+(-[a-z0-9]+)*`, max 40. |
 | `list` | The router's registry: name, server port, up, URL. |
 | `update <name> [--description T] [--label T] [--kind K] [--owner W]` | Changes what the dashboard shows without re-registering (`PATCH /_api/register/<name>`); an empty value clears a field. |
 | `stop <name>` | Unregisters; a `tbus share` of that name in another process notices (marker file) and ends instead of re-registering. |
@@ -89,3 +89,16 @@ Credentials never leave the process: there is no child process and no local rela
 The metadata is sent with every (re-)registration, so it comes back by itself after the bus restarts. Only the options you gave are sent: an old `tbus` re-registering never wipes what another client set. Text is shown escaped; never put secrets in it.
 
 **Hexad session:** `--session-name` (the agent's name, 60 characters; shown right under the title), `--session-id`, `--hexad` (which hexad, e.g. `hexad project`) and `--session-url` (an http(s) link back to the session) fill the `session` object the bus stores; the dashboard groups and filters by hexad and by session. Defaults come from the environment: `TBUS_SESSION_NAME`, `TBUS_SESSION_ID`, `TBUS_HEXAD`, `TBUS_SESSION_URL`. A session sent on its own replaces the stored one as a whole (`tbus update` takes the same options).
+
+## Heartbeat and request budget
+Pipe sockets use the fixed text `ping` / `pong` pair. Cloudflare answers via
+`setWebSocketAutoResponse` without waking the hibernatable DO. The existing
+25-second ping and 20-second send/pong deadline remain; old clients use the same
+strings. Registered shares suspend **all registry polling while connected**;
+reconnect registers only their own name. Provider-only shares never use admin
+register/list/unregister endpoints. `tbus list` remains an explicit user command.
+
+Client-originated chisel SSH keepalive defaults to 60 seconds (was 25); the
+container server's own 25-second SSH keepalive remains unchanged. These are
+encrypted SSH application messages, not WebSocket control pings, and still pass
+through the container DO. A deployed binary must be restarted to use the defaults.
