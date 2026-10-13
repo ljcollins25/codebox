@@ -326,6 +326,12 @@ export class Provider implements DurableObject {
         const h = new Headers();
         for (const [k, v] of m.headers as [string, string][]) { if (!HOP.has(k.toLowerCase())) { try { h.append(k, v); } catch { /* bad header */ } } }
         if (typeof m.length === "number") h.set("content-length", String(m.length));
+        // Stamp where the provider's response is constructed as well as at fetch.
+        // Never trust diagnostic headers supplied by the remote HTTP service.
+        h.set("x-r2pipe-provider-version", this.env.VERSION_METADATA?.id ?? "unknown");
+        h.set("x-r2pipe-provider-build", DIAGNOSTIC_BUILD);
+        h.set("x-r2pipe-provider-boot", this.boot.id);
+        h.set("x-r2pipe-provider-started", new Date(this.boot.at).toISOString());
         const nullBody = [101, 204, 205, 304].includes(m.status);
         if (nullBody) { p.resolve(new Response(null, { status: m.status, headers: h })); p.closed = true; p.writable.close().catch(() => {}); this.finish(p); }
         else p.resolve(new Response((p as any).readable, { status: m.status, headers: h }));

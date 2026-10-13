@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Provider } from "../src/provider";
+import { Provider, frame, K_RES_BODY } from "../src/provider";
 import { BusProvider } from "../src/bus/provider";
 import type { Env } from "../src/common";
 import worker from "../src/index";
@@ -100,6 +100,27 @@ describe("provider socket lifecycle", () => {
     expect(r.status).toBe(503); expect(f.count()).toBe(0);
     expect(r.headers.get("x-r2pipe-provider-version")).toBe("do-version");
     expect(f.storage.has("currentId")).toBe(false); expect(f.storage.has("providerSlot")).toBe(false);
+  });
+  it.each(["base", "bus"] as const)("stamps a relayed hexad401 at construction and preserves its stream (%s)", async kind => {
+    const f = fixture(kind), live = f.add(new Socket());
+    await f.ready();
+    const body = new TextEncoder().encode('{"error":"unknown, used or expired join code"}');
+    live.onSend = m => {
+      if (m.t !== "req") return;
+      void (async () => {
+        await f.p.webSocketMessage(asWs(live), JSON.stringify({t:"res", rid:m.rid, status:401,
+          headers:[["content-type","application/json"],["x-test-relay","kept"],["x-r2pipe-provider-version","spoofed"]]}));
+        await f.p.webSocketMessage(asWs(live), frame(K_RES_BODY, m.rid, body));
+        await f.p.webSocketMessage(asWs(live), JSON.stringify({t:"end", rid:m.rid, parts:0}));
+      })();
+    };
+    // Call the protected request directly to prove stamping isn't only the fetch wrapper.
+    const response = await (f.p as any).request(request()) as Response;
+    expect(response.status).toBe(401);
+    expect(response.headers.get("x-r2pipe-provider-version")).toBe("do-version");
+    expect(response.headers.get("x-r2pipe-provider-boot")).toBeTruthy();
+    expect(response.headers.get("x-test-relay")).toBe("kept");
+    expect(await response.text()).toBe(new TextDecoder().decode(body));
   });
   it("stamps DO errors and stats at the DO boundary", async () => {
     const f = fixture("bus"); await f.ready();
