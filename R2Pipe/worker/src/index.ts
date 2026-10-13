@@ -7,6 +7,7 @@ export { BusRegistry } from "./bus/do";
 export { BusProvider } from "./bus/provider";
 import { providerSocket, adminApi, viewer } from "./bus/route";
 import { handleHttpFront, providerNameFromHost } from "./provider";
+import { mediusMount } from "./bus/mount";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -32,6 +33,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     const a = await authenticate(req, env);
     if (!a.ok) return err(403, `forbidden: ${a.reason}`);
     try {
+      const mounted = await mediusMount(req, env, url);
+      if (mounted) return mounted;
       const bus = (await adminApi(req, env, url)) ?? (await viewer(req, env, url));
       if (bus) return bus;
       const front = await handleHttpFront(req, env, url);

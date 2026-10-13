@@ -24,10 +24,11 @@ export function providerNameFromHost(host: string, env: Env): string | null {
   return NAME_RE.test(name) && name.length <= 40 ? name : null;
 }
 
-export async function handleHttpFront(req: Request, env: Env, url: URL, pick: (name: string) => Promise<DurableObjectNamespace> = async () => env.PROVIDER, viewer?: { name: string; prefix?: string } | null): Promise<Response | null> {
+export async function handleHttpFront(req: Request, env: Env, url: URL, pick: (name: string) => Promise<DurableObjectNamespace> = async () => env.PROVIDER, viewer?: { name: string; prefix?: string; mountPrefix?: string } | null): Promise<Response | null> {
   let name = viewer ? viewer.name : providerNameFromHost(url.hostname, env);
   let path = url.pathname;
-  let prefix = "";
+  let prefix = viewer?.mountPrefix ?? "";
+  if (prefix) path = path.slice(prefix.length);
   if (!name) {
     const m = url.pathname.match(/^\/(?:p|_serve)\/([a-z0-9-]{1,40})(\/.*)?$/);
     if (!m) return null;
@@ -45,7 +46,7 @@ export async function handleHttpFront(req: Request, env: Env, url: URL, pick: (n
   headers.set("x-forwarded-host", url.host); headers.set("x-forwarded-proto", url.protocol.slice(0, -1));
   if (prefix) headers.set("x-forwarded-prefix", prefix);
   headers.set("x-r2pipe-path", path + url.search);
-  headers.set("x-r2pipe-base", url.origin);
+  headers.set("x-r2pipe-base", url.origin + (viewer?.mountPrefix ?? ""));
   const ns = await pick(name);
   headers.delete("x-bus-host-prefix"); if (viewer?.prefix) headers.set("x-bus-host-prefix", viewer.prefix);
   if (req.headers.get("upgrade")?.toLowerCase() === "websocket") return ns.get(ns.idFromName(name)).fetch(new Request("https://do/request", { method: req.method, headers }));
