@@ -55,8 +55,8 @@ public class PipeBusTests
             await ws.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"ws-open\",\"sid\":9,\"path\":\"/s\",\"headers\":[],\"protocols\":[]}"), WebSocketMessageType.Text, true, default);
             await Task.Delay(500);
             await ws.SendAsync(new byte[] { 4, 0, 0, 0, 9, 1, (byte)'x', (byte)'y' }, WebSocketMessageType.Binary, true, default);
-            var buf = new byte[4096]; int bodyOk = 0;
-            while (got.Count < 3 && ws.State == WebSocketState.Open)
+            var buf = new byte[4096];
+            while (ws.State == WebSocketState.Open) // the number of frames is not fixed (res, body, end, ws echo): stop on content, the 20 s timeout guards
             {
                 var r = await ws.ReceiveAsync(buf, default); if (r.MessageType == WebSocketMessageType.Close) break;
                 if (r.MessageType == WebSocketMessageType.Text && Encoding.UTF8.GetString(buf, 0, r.Count) == "ping")
@@ -64,9 +64,9 @@ public class PipeBusTests
                     await ws.SendAsync("pong"u8.ToArray(), WebSocketMessageType.Text, true, default);
                     continue;
                 }
-                if (r.MessageType == WebSocketMessageType.Text) got.Add
-(Encoding.UTF8.GetString(buf, 0, r.Count)); else got.Add("bin:" + buf[0] + ":" + Encoding.UTF8.GetString(buf, buf[0] == 5 ? 6 : 5, r.Count - (buf[0] == 5 ? 6 : 5)));
-                if (got.Any(g => g == "bin:5:xy") && got.Any(g => g.StartsWith("{\"t\":\"end\""))) { bodyOk = 1; break; }
+                if (r.MessageType == WebSocketMessageType.Text) got.Add(Encoding.UTF8.GetString(buf, 0, r.Count)); else got.Add("bin:" + buf[0] + ":" + Encoding.UTF8.GetString(buf, buf[0] == 5 ? 6 : 5, r.Count - (buf[0] == 5 ? 6 : 5)));
+                if (got.Any(g => g == "bin:5:xy") && got.Any(g => g.StartsWith("{\"t\":\"end\""))) break;
+
             }
             done.TrySetResult(); await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", default);
         });
@@ -87,7 +87,8 @@ public class PipeBusTests
     {
         using var l = new HttpListener(); var port = Free(); l.Prefixes.Add($"http://127.0.0.1:{port}/"); l.Start();
         using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var p = new PipeProvider($"ws://127.0.0.1:{port}/", "test", "127.0.0.1", 1, _ => {})
+        var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var p = new PipeProvider($"ws://127.0.0.1:{port}/", "test", "127.0.0.1", 1, logs.Enqueue)
         { PingInterval = TimeSpan.FromMilliseconds(30), PongTimeout = TimeSpan.FromMilliseconds(100) };
         var run = p.RunOnceAsync(() => {}, ct.Token);
         var c = await l.GetContextAsync().WaitAsync(ct.Token);
@@ -96,6 +97,9 @@ public class PipeBusTests
         Assert.Equal("ping", Encoding.UTF8.GetString(b, 0, msg.Count));
         // No pong: RunOnce returns promptly, allowing the existing outer loop to reconnect.
         await run.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Contains(logs, line => line.StartsWith("note: pipe heartbeat active:"));
+        Assert.Contains("pipe heartbeat lost; reconnecting", logs);
+
     }
 
     private static int Free()

@@ -9,7 +9,7 @@ namespace Tbus;
 /// connection because every registration has its own chisel user limited to its own port. The Access headers go straight onto the
 /// websocket handshake, so no secret leaves this process.
 /// </summary>
-internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds, Log log, BusClient bus, ShareMeta? meta = null, string lane = "", IReadOnlyDictionary<string, string>? accessOverride = null)
+internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds, Log log, BusClient? bus, ShareMeta? meta = null, string lane = "", IReadOnlyDictionary<string, string>? accessOverride = null, Registration? fixedReg = null)
 {
     private string Tag(string name) => lane == "" ? $"[{name}]" : $"[{lane}:{name}]";
     public static string StopMarker(Host host, string name) => Path.Combine(host.Home, "stop", name);
@@ -20,14 +20,14 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
         if (access.Count == 0) log.Info("note: no Cloudflare Access credentials (service token or login); the bus will refuse the calls if Access is on.");
         foreach (var s in specs) { try { File.Delete(StopMarker(host, s.Name)); } catch (IOException) { } }
 
-        log.Info($"{(lane==""?"":lane+" ")}bus {config.Bus}; {specs.Count} share(s); Ctrl+C to stop and unregister");
+        log.Info($"{(lane==""?"":lane+" ")}bus {config.Bus}; {specs.Count} share(s); {(fixedReg != null ? "per-name credentials, no registration; Ctrl+C to stop" : "Ctrl+C to stop and unregister")}");
         var tasks = specs.Select(s => Task.Run(() => RunShare(s, access, ct))).ToArray();
         try { await Task.WhenAll(tasks).ConfigureAwait(false); } catch (OperationCanceledException) { }
 
         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         foreach (var s in specs)
         {
-            if (File.Exists(StopMarker(host, s.Name))) continue; // tbus stop already unregistered it
+            if (bus == null || File.Exists(StopMarker(host, s.Name))) continue; // no registration, nothing to unregister; tbus stop already unregistered it
             try { await bus.UnregisterAsync(s.Name, cleanup.Token).ConfigureAwait(false); log.Info($"{Tag(s.Name)} unregistered"); }
             catch (Exception e) { log.Error($"{Tag(s.Name)} could not unregister: {e.Message}"); }
         }
@@ -45,10 +45,15 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
             var startedAt = DateTime.UtcNow;
             try
             {
-                log.Info($"{tag} registering");
-                var reg = await bus.RegisterAsync(s.Name, ct, meta).ConfigureAwait(false);
-                log.Info($"{tag} registered (bus port {reg.Port}); connecting");
-                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds)), ct).ConfigureAwait(false); // the server reloads its authfile
+                Registration reg;
+                if (fixedReg != null) { reg = fixedReg; log.Info($"{tag} connecting (per-name credentials; not registering)"); }
+                else
+                {
+                    log.Info($"{tag} registering");
+                    reg = await bus!.RegisterAsync(s.Name, ct, meta).ConfigureAwait(false);
+                    log.Info($"{tag} registered (bus port {reg.Port}); connecting");
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds)), ct).ConfigureAwait(false); // the server reloads its authfile
+                }
                 var stopped = await RunConnection(s, reg, access, ct).ConfigureAwait(false);
                 if (stopped) return;
             }
@@ -84,7 +89,6 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
         var stopped = false;
         try
         {
-            var lastCheck = DateTime.UtcNow;
             var tick = TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds));
             while (true)
             {
@@ -92,17 +96,9 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
                 if (ct.IsCancellationRequested) { stopped = true; return true; }
                 if (done == conn) { await conn.ConfigureAwait(false); log.Info($"{tag} connection closed"); return false; }
                 if (File.Exists(StopMarker(host, s.Name))) { log.Info($"{tag} stopped by 'tbus stop'"); stopped = true; return true; }
-                if (DateTime.UtcNow - lastCheck < host.PollInterval) continue;
-                lastCheck = DateTime.UtcNow;
-                try
-                {
-                    var rows = await bus.ListAsync(ct).ConfigureAwait(false);
-                    if (rows.All(r => r.Name != s.Name)) { log.Info($"{tag} the bus no longer knows this name (restart?); re-registering"); return false; }
-                }
-                catch (Exception e) when (e is BusException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
-                {
-                    log.Info($"{tag} bus not reachable ({e.Message}); the connection stays up");
-                }
+                // A live SSH session has bounded keepalive and owns its registration.
+                // Do not poll global registry/stats while healthy. On disconnect the
+                // outer loop re-registers this name only.
             }
         }
         finally
@@ -120,7 +116,6 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
         var conn = Task.Run(() => provider.RunOnceAsync(() => log.Info($"{tag} connected: {config.PublicUrl(s.Name)} -> {s.Target}"), run.Token), CancellationToken.None);
         try
         {
-            var lastCheck = DateTime.UtcNow;
             var tick = TimeSpan.FromMilliseconds(Math.Min(1000, host.PollInterval.TotalMilliseconds));
             while (true)
             {
@@ -133,14 +128,9 @@ internal sealed class ShareRunner(Host host, AppConfig config, Credentials creds
                     return false;
                 }
                 if (File.Exists(StopMarker(host, s.Name))) { log.Info($"{tag} stopped by 'tbus stop'"); return true; }
-                if (DateTime.UtcNow - lastCheck < host.PollInterval) continue;
-                lastCheck = DateTime.UtcNow;
-                try
-                {
-                    var rows = await bus.ListAsync(ct).ConfigureAwait(false);
-                    if (rows.All(r => r.Name != s.Name)) { log.Info($"{tag} the bus no longer knows this name; re-registering"); return false; }
-                }
-                catch (Exception e) when (e is BusException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested) { }
+                // A live pipe session has a bounded ping/pong deadline. Registry
+                // revocation closes it; reconnect re-registers this name only.
+                // No global registry fan-out or overlapping health polls.
             }
         }
         finally { run.Cancel(); try { await conn.ConfigureAwait(false); } catch (Exception) { } }

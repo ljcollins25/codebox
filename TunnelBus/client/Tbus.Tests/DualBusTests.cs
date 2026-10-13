@@ -102,6 +102,31 @@ public class DualBusTests
     }
 
     [SkippableFact]
+    public async Task Without_a_pipe_token_share_is_chisel_only_with_the_old_output()
+    {
+        using var t = new TestEnv(withChisel: true);
+        var port = t.StartEcho();
+        var (task, cts) = Start(t, "share", $"127.0.0.1:{port}", "--name", "web");
+        await TestEnv.WaitFor(() => t.AllOutput.Contains("[web] connected"), "chisel lane connected");
+        await t.AssertEchoes("web", "plain");
+        cts.Cancel(); Assert.Equal(0, await task.WaitAsync(TimeSpan.FromSeconds(15)));
+        Assert.DoesNotContain("[chisel", t.AllOutput); Assert.DoesNotContain("pipe", t.AllOutput); Assert.DoesNotContain("lanes:", t.AllOutput);
+        Assert.False(t.Bus.Has("web"));
+    }
+
+    [SkippableFact]
+    public async Task Stop_unregisters_both_lanes()
+    {
+        using var t = new TestEnv(withChisel: true); using var p = new FakePipeBus(); ConfigurePipe(t, p);
+        var port = t.StartEcho();
+        var (task, cts) = Start(t, "share", $"127.0.0.1:{port}", "--name", "web");
+        await TestEnv.WaitFor(() => t.AllOutput.Contains("[chisel:web] connected") && t.AllOutput.Contains("[pipe:web] connected"), "both lanes connected");
+        Assert.Equal(0, await t.Run(default, "stop", "web"));
+        Assert.False(t.Bus.Has("web")); Assert.False(p.Has("web"));
+        cts.Cancel(); await task.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    [SkippableFact]
     public async Task Both_buses_connect_with_one_command_and_the_same_name_and_metadata()
     {
         using var t = new TestEnv(withChisel: true); using var p = new FakePipeBus(); ConfigurePipe(t, p);
@@ -170,5 +195,34 @@ public class DualBusTests
         // secrets stay out of the output
         Assert.DoesNotContain(FakePipeBus.Admin, t.AllOutput);
         Assert.DoesNotContain(FakeBus.Admin, t.AllOutput);
+    }
+}
+
+[Collection("serial")]
+public class HealthyShareBudgetTests
+{
+    [Fact]
+    public async Task Healthy_pipe_share_never_lists_registry_and_unregisters_on_stop()
+    {
+        using var t = new TestEnv(); using var p = new FakePipeBus();
+        t.Env["TUNNEL_PIPE_URL"] = p.Url; t.Env["TUNNEL_PIPE_ADMIN_TOKEN"] = FakePipeBus.Admin;
+        using var cts = new CancellationTokenSource();
+        var run = t.Run(cts.Token, "share", "3000", "--name", "budget", "--bus", "pipe");
+        try {
+            await TestEnv.WaitFor(() => p.IsConnected("budget"), "pipe connected");
+            await Task.Delay(500); // many accelerated test poll intervals
+            Assert.DoesNotContain(p.SeenAuthHeaders, h => h.StartsWith("/_api/registry "));
+            Assert.Equal(1, p.SeenAuthHeaders.Count(h => h.StartsWith("/_api/register ")));
+        } finally { cts.Cancel(); await run.WaitAsync(TimeSpan.FromSeconds(15)); }
+        Assert.False(p.Has("budget"));
+    }
+
+    [Fact]
+    public void Keepalive_and_wire_defaults_are_cost_bounded()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(60), new Host().KeepAlive);
+        Assert.Equal(TimeSpan.FromSeconds(60), new ChiselOptions { Server = new Uri("ws://localhost/"), User = "test", Password = "test", Remotes = [] }.KeepAlive);
+        Assert.Equal("ping", PipeHeartbeat.Ping);
+        Assert.Equal("pong", PipeHeartbeat.Pong);
     }
 }

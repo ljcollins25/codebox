@@ -14,8 +14,8 @@ internal sealed class Host
     public Func<string, bool, string?> Prompt { get; init; } = ConsolePrompt;
     public string MachineName { get; init; } = Environment.MachineName;
     /// <summary>chisel --keepalive: how often the connection is pinged.</summary>
-    public TimeSpan KeepAlive { get; init; } = TimeSpan.FromSeconds(25);
-    public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan KeepAlive { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(60);
     public TimeSpan BackoffStart { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan BackoffMax { get; init; } = TimeSpan.FromSeconds(30);
     public Action<string> OpenUrl { get; init; } = Browser.Open;

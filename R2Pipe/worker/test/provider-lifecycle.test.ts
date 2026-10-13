@@ -327,3 +327,23 @@ describe("provider socket lifecycle", () => {
     expect((await f.p.fetch(request())).status).toBe(204);
   });
 });
+
+describe("fixed pipe heartbeat contract", () => {
+  it.each(["base", "bus"] as const)("installs runtime auto-response for %s and keeps legacy fallback", async (kind) => {
+    const f = fixture(kind), s = f.add(new Socket());
+    await f.ready();
+    expect(f.ctx.setWebSocketAutoResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ request: "ping", response: "pong" }));
+    await f.p.webSocketMessage(asWs(s), "ping");
+    expect(s.sent).toContain("pong");
+  });
+  it("uses runtime ping timestamp, not old connection time, for liveness", async () => {
+    const f = fixture(), s = f.add(new Socket());
+    s.attachment.connectedAt = Date.now() - 120_000;
+    f.ctx.getWebSocketAutoResponseTimestamp = () => new Date();
+    await f.ready();
+    expect((f.p as any).socket()).toBe(asWs(s));
+    f.ctx.getWebSocketAutoResponseTimestamp = () => new Date(Date.now() - 61_000);
+    expect((f.p as any).socket()).toBeNull();
+  });
+});

@@ -23,7 +23,7 @@ internal sealed class ChiselOptions
     public required string User { get; init; }
     public required string Password { get; init; }
     public required IReadOnlyList<ChiselRemote> Remotes { get; init; }
-    public TimeSpan KeepAlive { get; init; } = TimeSpan.FromSeconds(25);
+    public TimeSpan KeepAlive { get; init; } = TimeSpan.FromSeconds(60);
     /// <summary>chisel --fingerprint: base64 SHA-256 of the server host key (or the legacy MD5 hex form). Null = do not check.</summary>
     public string? Fingerprint { get; init; }
     public Action<string>? Log { get; init; }

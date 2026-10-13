@@ -1,3 +1,4 @@
+import { pipeAutoResponse, PIPE_PING, PIPE_PONG } from "./heartbeat";
 import { HttpError, TransferCore, Event, Meta, Part, Objects, MAX_TRANSFER_MS } from "./state";
 import { presign } from "./presign";
 import { Env, json, err, s3Config, kvOf, packInline, unpackInline } from "./common";
@@ -14,7 +15,7 @@ export class Transfer implements DurableObject {
   private core: TransferCore;
   private waiters: Array<() => void> = [];
   constructor(private ctx: DurableObjectState, private env: Env) {
-    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    pipeAutoResponse(ctx);
     const bucket = env.BUCKET;
     const objects: Objects = {
       delete: (keys) => bucket.delete(keys),
@@ -172,7 +173,7 @@ export class Transfer implements DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
-    if (typeof msg === "string") { if (msg === "ping") ws.send("pong"); return; }
+    if (typeof msg === "string") { if (msg === PIPE_PING) ws.send(PIPE_PONG); return; }
     if (!this.ctx.getTags(ws).includes("send")) return;
     // Validate lifetime and store before forwarding: an expired sender cannot
     // bypass the one-hour contract by keeping its WebSocket connected.

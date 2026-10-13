@@ -1,3 +1,4 @@
+import { pipeAutoResponse, PIPE_PING, PIPE_PONG } from "./heartbeat";
 // HTTP front: visitors' requests reach a provider (r2pipe serve) over the provider's Durable Object WebSocket.
 // Control and small data (the first MAX_INLINE bytes each way) travel in WebSocket frames; the bulk goes through R2 parts.
 import { Env, json, err, s3Config, versionResponse, diagnostic, DIAGNOSTIC_BUILD } from "./common";
@@ -80,7 +81,7 @@ export class Provider implements DurableObject {
   protected readonly boot = { id: crypto.randomUUID(), at: Date.now() };
   constructor(protected ctx: DurableObjectState, protected env: Env) {
     diagnostic(env, "do-constructor", this.boot.id, undefined, { class: this.constructor.name, startedAt: this.boot.at });
-    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    pipeAutoResponse(ctx);
     ctx.blockConcurrencyWhile(async () => {
       try {
       this.slot = (await ctx.storage.get<typeof this.slot>("providerSlot")) ?? null;
@@ -304,7 +305,7 @@ export class Provider implements DurableObject {
       p.chain = p.chain.then(async () => { if (!p.closed) { try { await p.writable.write(data.slice()); p.bytes += data.length; this.afterWrite(p, data.length); } catch { this.fail(p, 499, "visitor went away"); } } });
       return;
     }
-    if (msg === "ping") { this.sendProvider(ws, "pong"); return; }
+    if (msg === PIPE_PING) { this.sendProvider(ws, PIPE_PONG); return; }
     let m: any;
     try { m = JSON.parse(msg); } catch { return; }
     const p: Pending | undefined = this.pending.get(m.rid);

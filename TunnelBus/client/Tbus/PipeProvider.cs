@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json;
@@ -52,7 +53,9 @@ internal sealed class PipeProvider
         catch (WebSocketException e) when (e.Message.Contains("401") || e.Message.Contains("403")) { throw new PipeAuthException("the bus refused the provider token (revoked or name unregistered)"); }
         _sock = ws;
         onConnected();
+        _log($"note: pipe heartbeat active: interval={PingInterval.TotalSeconds:0.#}s, send/pong deadline={PongTimeout.TotalSeconds:0.#}s");
         using var ping = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
         var pinger = Task.Run(async () =>
         {
             try
@@ -61,7 +64,7 @@ internal sealed class PipeProvider
                 {
                     var pong = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     Volatile.Write(ref _pong, pong);
-                    await Send("ping"u8.ToArray(), WebSocketMessageType.Text, ping.Token).WaitAsync(PongTimeout, ping.Token).ConfigureAwait(false);
+                    await Send(Encoding.UTF8.GetBytes(PipeHeartbeat.Ping), WebSocketMessageType.Text, ping.Token).WaitAsync(PongTimeout, ping.Token).ConfigureAwait(false);
                     await pong.Task.WaitAsync(PongTimeout, ping.Token).ConfigureAwait(false);
                     await Task.Delay(PingInterval, ping.Token).ConfigureAwait(false);
                 }
@@ -92,7 +95,7 @@ internal sealed class PipeProvider
             do { r = await ws.ReceiveAsync(buf, ct).ConfigureAwait(false); if (r.MessageType == WebSocketMessageType.Close) { if (ws.CloseStatus == (WebSocketCloseStatus)4001) throw new PipeAuthException("the provider token was revoked"); return; } ms.Write(buf, 0, r.Count); } while (!r.EndOfMessage);
             var data = ms.GetBuffer().AsMemory(0, (int)ms.Length);
             if (r.MessageType == WebSocketMessageType.Binary) { OnBinary(data); continue; }
-            if (data.Length == 4 && data.Span.SequenceEqual("pong"u8)) { Volatile.Read(ref _pong)?.TrySetResult(); continue; }
+            if (data.Length == 4 && data.Span.SequenceEqual(Encoding.UTF8.GetBytes(PipeHeartbeat.Pong))) { Volatile.Read(ref _pong)?.TrySetResult(); continue; }
             using var doc = JsonDocument.Parse(data);
             OnJson(doc.RootElement, ct);
         }

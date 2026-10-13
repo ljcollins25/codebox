@@ -30,7 +30,16 @@ export async function providerSocket(req: Request, env: Env, url: URL): Promise<
 export async function adminApi(req: Request, env: Env, url: URL): Promise<Response | null> {
   if (!url.pathname.startsWith("/_api/") || !env.BUSREG) return null;
   const m = url.pathname.match(/^\/_api\/register(?:\/([^/]+))?$/);
+  // Own-name registration check: one registry invocation, no provider stats
+  // fan-out. Available for disconnected/uncertain clients; healthy tbus shares
+  // rely on bounded heartbeat and suspend all periodic registry lookups.
+  const own = url.pathname.match(/^\/_api\/exists\/([a-z0-9-]{1,40})$/);
+  if (own && req.method === "GET") {
+    if (!validName(own[1])) return err(400, "invalid name");
+    return call(env, "/exists", "POST", { name: own[1] });
+  }
   if (url.pathname === "/_api/registry" && req.method === "GET") {
+
     const rows = await (await call(env, "/list", "GET")).json() as Array<{ name: string; up: boolean }>;
     // Dashboard reads are demand-driven, not a heartbeat/alarm. Registry flags
     // alone cannot detect a half-open socket while its DO is hibernating.

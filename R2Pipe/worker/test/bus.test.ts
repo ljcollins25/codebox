@@ -90,3 +90,18 @@ describe("registry and tokens", () => {
   });
   it("mintToken is random", () => { expect(mintToken()).not.toBe(mintToken()); });
 });
+
+describe("own-name lookup budget", () => {
+ it("checks one registry record without listing or calling provider stats", async () => {
+  const {adminApi}=await import("../src/bus/route");
+  const calls:string[]=[];
+  const env={BUSREG:{idFromName:(n:string)=>n,get:()=>({fetch:async(u:string,init:any)=>{
+   calls.push(new URL(u).pathname);
+   expect(JSON.parse(init.body)).toEqual({name:"hexad-project"});
+   return new Response(JSON.stringify({ok:true}));
+  }})},BUSPROV:{get:()=>{throw Error("stats fanout forbidden");}}} as any;
+  const url=new URL("https://r2pipe.workers.dev/_api/exists/hexad-project");
+  const r=await adminApi(new Request(url),env,url);
+  expect(await r!.json()).toEqual({ok:true});expect(calls).toEqual(["/exists"]);
+ });
+});

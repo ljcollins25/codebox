@@ -73,3 +73,15 @@ describe("expired transport boundaries",()=>{
   expect(recv.send).not.toHaveBeenCalled();expect(sender.send).toHaveBeenCalledWith(expect.stringContaining("transfer expired"));
  });
 });
+
+describe("transfer heartbeat contract", () => {
+ it("auto-responds to the same fixed strings and retains old handler fallback", async () => {
+  vi.stubGlobal("WebSocketRequestResponsePair",class { constructor(public request:string,public response:string){} });
+  const auto=vi.fn(), ws={send:vi.fn()};
+  const transfer=new Transfer({setWebSocketAutoResponse:auto,storage:{},getTags:()=>[]} as any,{} as any);
+  expect(auto).toHaveBeenCalledWith(expect.objectContaining({request:"ping",response:"pong"}));
+  await transfer.webSocketMessage(ws as any,"ping");
+  expect(ws.send).toHaveBeenCalledWith("pong");
+  vi.unstubAllGlobals();
+ });
+});

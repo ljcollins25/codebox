@@ -181,13 +181,14 @@ internal sealed class TestEnv : IDisposable
     public Host Host() => new()
     {
         Out = Out, Err = Out, Home = Path.Combine(Dir, "home"), MachineName = "Dev-Box",
-        GetEnv = k => Env.GetValueOrDefault(k) ?? (k == "PATH" ? Path.Combine(Dir, "bin") : null),
+        GetEnv = k => { lock (EnvReads) EnvReads.Add(k); return Env.GetValueOrDefault(k) ?? (k == "PATH" ? Path.Combine(Dir, "bin") : null); },
         Prompt = Prompt, PollInterval = TimeSpan.FromMilliseconds(200),
         BackoffStart = TimeSpan.FromMilliseconds(100), BackoffMax = TimeSpan.FromMilliseconds(400),
         KeepAlive = TimeSpan.FromSeconds(1),
         OpenUrl = u => Opened.Add(u),
     };
     public List<string> Opened = new();
+    public List<string> EnvReads = new();
 
     public Task<int> Run(CancellationToken ct, params string[] args) => App.RunAsync(args, Host(), ct);
 
