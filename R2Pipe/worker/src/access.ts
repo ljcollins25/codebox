@@ -4,7 +4,7 @@
 export interface AccessConfig {
   /** "myteam.cloudflareaccess.com" (a bare "myteam" is accepted too). */
   teamDomain: string;
-  /** The Access application's AUD tag. */
+  /** Comma/whitespace-separated allowed Access application AUD tags. */
   aud: string;
 }
 
@@ -82,7 +82,8 @@ export async function verifyAccessJwt(
   const now = opts.nowSeconds ?? Math.floor(Date.now() / 1000);
   if (claims.iss !== `https://${team}`) return { ok: false, reason: "wrong issuer" };
   const aud: string[] = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (!aud.includes(cfg.aud)) return { ok: false, reason: "wrong audience" };
+  const allowed = cfg.aud.split(/[,\s]+/).filter(Boolean);
+  if (!aud.some((a) => allowed.includes(a))) return { ok: false, reason: "wrong audience" };
   if (typeof claims.exp !== "number" || claims.exp + LEEWAY_S < now) return { ok: false, reason: "expired" };
   if (typeof claims.nbf === "number" && claims.nbf - LEEWAY_S > now) return { ok: false, reason: "not yet valid" };
   return { ok: true, claims };

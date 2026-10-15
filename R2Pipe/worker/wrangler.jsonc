@@ -6,9 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "vars": {
-    // Access (same application as the tunnel bus: *.ref12.dev). Programs send the service token, browsers log in with GitHub.
+    // Accepted Access applications: wildcard tunnel bus and Medius. Comma/whitespace-separated AUD tags.
     "ACCESS_TEAM_DOMAIN": "laxid.cloudflareaccess.com",
-    "ACCESS_AUD": "430edc5c0631389af5d4b8af4f32c92386e189afdfd60d1247813a92bf0be553",
+    "ACCESS_AUD": "430edc5c0631389af5d4b8af4f32c92386e189afdfd60d1247813a92bf0be553,cae86123bbfc4387c8f2a4110d84ec90c7f779196624fe70fef839922c8bf156",
     "R2_BUCKET_NAME": "r2pipe",
     "TRANSFER_TTL_SECONDS": "86400",
     "HTTP_HOST_SUFFIX": "pipe.ref12.dev",
