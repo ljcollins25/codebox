@@ -15,6 +15,7 @@ Requirements: Node 18+ (Node 20+ only for `login --from-main`), Python 3, system
 |---|---|
 | `poe-bots login` | opens the tool's own profile visibly on poe.com/login; sign in once, it waits until signed in |
 | `poe-bots login --from-main [--via mcp\|cdp]` | copy poe.com cookies (HttpOnly included) + localStorage from your main Chrome instead (below) |
+| `poe-bots token set [--file]` / `clear` / `status` | store the Playwright Extension token (read from stdin, never echoed): Credential Manager by default, `.local/playwright-token` with `--file`; status shows only the source |
 | `poe-bots list [--json]` | your bots |
 | `poe-bots pull <handle>\|--all` | script + metadata into `bots/` (script bots only) |
 | `poe-bots diff <handle>` | local vs live (exit 2 if different) |
@@ -35,13 +36,13 @@ Only one command can use the profile at a time. No hexad, no extension.
 Copies poe.com's session from your signed-in main Chrome into the tool's profile, so you don't sign in again. Counts are printed, never values,
 and it prints which route was used. Routes, tried in this order (`--via mcp` or `--via cdp` forces one and disables the fallback):
 1. **mcp: Playwright Extension** (Chrome Web Store name "Playwright Extension", id `mmlmfjhmonkocbjadbfplnigmagldckm`). Install it in your main Chrome,
-   copy the token from its page, and set `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>`. Needs Node 20+ for `npx @playwright/mcp@latest --extension`
+   copy the token from its page and run `poe-bots token set`. Lookup order: env `PLAYWRIGHT_MCP_EXTENSION_TOKEN`, OS credential store (Windows Credential Manager target `poe-bots/playwright-token`; Linux `secret-tool`/libsecret if installed), then untracked `.local/playwright-token` (git-ignored; `--file`). If the credential store is unavailable, `token set` says so; use `--file`. Needs Node 20+ for `npx @playwright/mcp@latest --extension`
    (`POE_MCP_NODE_DIR` points at another Node). It reads `page.context().cookies()` for https://poe.com/ plus localStorage. Skipped when no token is set;
    if it does not connect within about 8 s the command falls back.
 2. **cdp: the main Chrome's remote debugging.** Turn it on at `chrome://inspect/#remote-debugging`; the tool finds Chrome's (or Edge's)
    `DevToolsActivePort` and Chrome shows its own consent prompt, which you allow. `--cdp <ws/http url>` targets any CDP endpoint instead.
 Status: the copy into the profile was verified end to end over CDP (10 cookies, 3 HttpOnly, 15 localStorage keys, then signed in). Reading HttpOnly cookies
-through Playwright Extension was verified in a throwaway profile; the real main-Chrome mcp route has not been run end to end yet. Route selection and the fallback are unit tested.
+through Playwright Extension was verified in a throwaway profile; the real main-Chrome mcp route was run end to end (10 cookies, 3 HttpOnly, 19 localStorage keys, poe.com signed in). Route selection and the fallback are unit tested.
 
 ## 3. Fallback: custom extension + native host
 If Playwright MCP can't be used: `poe-bots ext-install`, then in chrome://extensions turn on Developer mode, Load unpacked, choose `extension/`;

@@ -20,7 +20,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const k = a.slice(2);
-      if (['yes', 'all', 'json', 'allow-real', 'headless', 'from-main'].includes(k)) flags[k] = true;
+      if (['yes', 'all', 'json', 'allow-real', 'headless', 'from-main', 'file'].includes(k)) flags[k] = true;
       else if (k in multi) multi[k].push(argv[++i]);
       else flags[k] = argv[++i];
     } else pos.push(a);
@@ -36,6 +36,7 @@ const USAGE = `poe-bots <command>
   diff <handle>                       local vs live (script and metadata)
   push <handle> [--yes] [--allow-real] create or update; shows the diff first, applies only with --yes
   run <handle> --text "..." [--attach f] [--param k=v] [--out dir]   run locally (no browser needed)
+  token set [--file] | clear | status   Playwright Extension token for login --from-main (stdin, never echoed)
   check [handle]                      "# poe:" header vs bot.yml consistency
 Global flags: --user <poe handle>  --headless  --profile <dir>
 Env: POE_BOTS_PROFILE, POE_BROWSER (chrome/edge exe), POE_BOTS_ROOT, POE_API_KEY (real poe.call in run)
@@ -89,6 +90,23 @@ async function main() {
     return bad ? 1 : 0;
   }
 
+  if (cmd === 'token') {
+    const tk = await import('./lib/token.mjs');
+    const sub = pos[1];
+    if (sub === 'status') { console.log('Playwright Extension token: ' + tk.tokenStatus()); return 0; }
+    if (sub === 'clear') { const c = tk.clearToken(); console.log(c.length ? 'cleared: ' + c.join(', ') : 'nothing stored (an env var, if set, is not touched)'); return 0; }
+    if (sub === 'set') {
+      let v = '';
+      if (process.stdin.isTTY) {
+        process.stderr.write('Paste the token (input hidden), then Enter: ');
+        process.stdin.setRawMode(true); process.stdin.resume();
+        v = await new Promise((res) => { let b = ''; process.stdin.on('data', function f(d) { for (const ch of d.toString()) { if (ch === '\r' || ch === '\n') { process.stdin.setRawMode(false); process.stdin.pause(); process.stdin.off('data', f); process.stderr.write('\n'); return res(b); } if (ch === '\u0003') process.exit(1); if (ch === '\u007f') b = b.slice(0, -1); else b += ch; } }); });
+      } else { for await (const c of process.stdin) v += c; }
+      console.log('stored in ' + tk.setToken(v, { useFile: !!flags.file }));
+      return 0;
+    }
+    throw new Error('usage: token set [--file] | clear | status');
+  }
   if (cmd === 'login' && flags['from-main']) {
     const { loginFromMain } = await import('./lib/export.mjs');
     const origin = flags.site || 'https://poe.com/';

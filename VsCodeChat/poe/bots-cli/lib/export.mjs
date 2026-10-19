@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { launch, profileDir } from './page.mjs';
+import { findToken } from './token.mjs';
 
 const EXPORT_CODE = (origin) => `async (page) => {
   const cookies = await page.context().cookies([${JSON.stringify(origin)}]);
@@ -28,8 +29,8 @@ export function parseMcpResult(text) {
 
 const withTimeout = (p, ms, what) => new Promise((res, rej) => { const t = setTimeout(() => rej(Object.assign(new Error(what + ' did not respond within ' + ms / 1000 + ' s'), { code: 'TIMEOUT' })), ms); p.then((v) => { clearTimeout(t); res(v); }, (x) => { clearTimeout(t); rej(x); }); });
 
-export async function exportViaMcp(origin, { token = process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN, nodeDir = process.env.POE_MCP_NODE_DIR, extraArgs = (process.env.POE_MCP_ARGS || '').split(' ').filter(Boolean), connectMs = 8000 } = {}) {
-  if (!token) throw new Error('set PLAYWRIGHT_MCP_EXTENSION_TOKEN (shown on the Playwright MCP Bridge extension page); see README');
+export async function exportViaMcp(origin, { token = findToken()?.value, nodeDir = process.env.POE_MCP_NODE_DIR, extraArgs = (process.env.POE_MCP_ARGS || '').split(' ').filter(Boolean), connectMs = 8000 } = {}) {
+  if (!token) throw new Error("no Playwright Extension token: run 'poe-bots token set' (see README)");
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const sep = process.platform === 'win32' ? ';' : ':';
@@ -106,7 +107,7 @@ export async function importIntoProfile(data, origin, profile) {
   }
 }
 
-const MCP_HINT = 'Playwright Extension: set PLAYWRIGHT_MCP_EXTENSION_TOKEN and install it in your main Chrome';
+const MCP_HINT = 'Playwright Extension: install it in your main Chrome and run poe-bots token set';
 const CDP_HINT = 'remote debugging: in your main Chrome open chrome://inspect/#remote-debugging and turn it on (Chrome then asks you to allow the connection)';
 
 /**
@@ -115,7 +116,7 @@ const CDP_HINT = 'remote debugging: in your main Chrome open chrome://inspect/#r
  */
 export async function exportFromMain(origin, { via = 'auto', cdp, io = {}, log = (m) => console.error(m) } = {}) {
   const viaMcp = io.mcp || exportViaMcp, viaCdp = io.cdp || exportViaCdp, endpoint = io.endpoint || mainDevToolsEndpoint;
-  const hasToken = io.hasToken !== undefined ? io.hasToken : !!process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN;
+  const hasToken = io.hasToken !== undefined ? io.hasToken : !!findToken();
   const tryCdp = async () => {
     const url = cdp || endpoint();
     if (!url) throw new Error('no main-Chrome remote debugging endpoint found (' + CDP_HINT + ')');
@@ -124,7 +125,7 @@ export async function exportFromMain(origin, { via = 'auto', cdp, io = {}, log =
   };
   if (via === 'cdp' || (via === 'auto' && cdp)) return tryCdp();
   if (via === 'mcp') {
-    if (!hasToken) throw new Error('--via mcp needs PLAYWRIGHT_MCP_EXTENSION_TOKEN');
+    if (!hasToken) throw new Error('--via mcp needs the Playwright Extension token (poe-bots token set, or env PLAYWRIGHT_MCP_EXTENSION_TOKEN)');
     log('using route: mcp (Playwright Extension)');
     return { route: 'mcp', data: await viaMcp(origin) };
   }
