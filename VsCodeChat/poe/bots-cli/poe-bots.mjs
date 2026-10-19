@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { login, profileDir } from './lib/page.mjs';
+import { login, profileDir, isSignedIn, launch } from './lib/page.mjs';
 import { runHost, request } from './lib/channel.mjs';
 import { listBots, getBot, liveToFiles, pushBot } from './lib/api.mjs';
 import { botDir, listLocal, readLocal, writeLocal, headerProblems, applyHeader } from './lib/bots.mjs';
@@ -20,7 +20,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const k = a.slice(2);
-      if (['yes', 'all', 'json', 'allow-real', 'headless'].includes(k)) flags[k] = true;
+      if (['yes', 'all', 'json', 'allow-real', 'headless', 'from-main'].includes(k)) flags[k] = true;
       else if (k in multi) multi[k].push(argv[++i]);
       else flags[k] = argv[++i];
     } else pos.push(a);
@@ -30,6 +30,7 @@ function parseArgs(argv) {
 
 const USAGE = `poe-bots <command>
   login [--profile dir]               open the poe-bots browser profile on poe.com/login; sign in once, it waits
+  login --from-main                   copy poe.com cookies+localStorage from your main Chrome via Playwright MCP Bridge
   list [--json]                       your bots on poe.com
   pull <handle>|--all                 live script + metadata -> bots/<handle>/{bot.py,bot.yml}
   diff <handle>                       local vs live (script and metadata)
@@ -88,6 +89,17 @@ async function main() {
     return bad ? 1 : 0;
   }
 
+  if (cmd === 'login' && flags['from-main']) {
+    const { loginFromMain } = await import('./lib/export.mjs');
+    const origin = flags.site || 'https://poe.com/';
+    const c = await loginFromMain({ origin, profile: flags.profile, cdp: flags.cdp });
+    console.log('copied ' + c.cookies + ' cookies (' + c.httpOnly + ' HttpOnly), ' + c.localStorage + ' localStorage keys; profile now holds ' + c.storedCookies + ' cookies, ' + c.storedLocalStorage + ' keys');
+    if (origin.startsWith('https://poe.com')) {
+      const ctx = await launch(profileDir(flags.profile), { headless: flags.headless });
+      try { const ok = await isSignedIn(await ctx.newPage()); console.log(ok ? 'signed in to poe.com' : 'copied, but poe.com still shows signed out'); return ok ? 0 : 1; } finally { await ctx.close(); }
+    }
+    return 0;
+  }
   if (cmd === 'login') {
     const ok = await login({ profile: flags.profile });
     console.log(ok ? 'signed in; profile: ' + profileDir(flags.profile) : 'timed out waiting for sign-in');

@@ -11,6 +11,7 @@
     "test": "python -m unittest discover -s tests && node --test tests"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "js-yaml": "^4.1.0",
     "playwright-core": "^1.49.0"
   }
