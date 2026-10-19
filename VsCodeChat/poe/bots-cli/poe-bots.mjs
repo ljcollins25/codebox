@@ -30,7 +30,7 @@ function parseArgs(argv) {
 
 const USAGE = `poe-bots <command>
   login [--profile dir]               open the poe-bots browser profile on poe.com/login; sign in once, it waits
-  login --from-main                   copy poe.com cookies+localStorage from your main Chrome via Playwright MCP Bridge
+  login --from-main [--via mcp|cdp]   copy poe.com cookies+localStorage from your main Chrome: Playwright Extension (token) first, else Chrome remote debugging
   list [--json]                       your bots on poe.com
   pull <handle>|--all                 live script + metadata -> bots/<handle>/{bot.py,bot.yml}
   diff <handle>                       local vs live (script and metadata)
@@ -92,8 +92,8 @@ async function main() {
   if (cmd === 'login' && flags['from-main']) {
     const { loginFromMain } = await import('./lib/export.mjs');
     const origin = flags.site || 'https://poe.com/';
-    const c = await loginFromMain({ origin, profile: flags.profile, cdp: flags.cdp });
-    console.log('copied ' + c.cookies + ' cookies (' + c.httpOnly + ' HttpOnly), ' + c.localStorage + ' localStorage keys; profile now holds ' + c.storedCookies + ' cookies, ' + c.storedLocalStorage + ' keys');
+    const c = await loginFromMain({ origin, profile: flags.profile, cdp: flags.cdp, via: flags.via || 'auto' });
+    console.log('route: ' + c.route + '; copied ' + c.cookies + ' cookies (' + c.httpOnly + ' HttpOnly), ' + c.localStorage + ' localStorage keys; profile now holds ' + c.storedCookies + ' cookies, ' + c.storedLocalStorage + ' keys');
     if (origin.startsWith('https://poe.com')) {
       const ctx = await launch(profileDir(flags.profile), { headless: flags.headless });
       try { const ok = await isSignedIn(await ctx.newPage()); console.log(ok ? 'signed in to poe.com' : 'copied, but poe.com still shows signed out'); return ok ? 0 : 1; } finally { await ctx.close(); }

@@ -14,7 +14,7 @@ Requirements: Node 18+ (Node 20+ only for `login --from-main`), Python 3, system
 | command | what |
 |---|---|
 | `poe-bots login` | opens the tool's own profile visibly on poe.com/login; sign in once, it waits until signed in |
-| `poe-bots login --from-main` | copy poe.com cookies (HttpOnly included) + localStorage from your main Chrome instead (below) |
+| `poe-bots login --from-main [--via mcp\|cdp]` | copy poe.com cookies (HttpOnly included) + localStorage from your main Chrome instead (below) |
 | `poe-bots list [--json]` | your bots |
 | `poe-bots pull <handle>\|--all` | script + metadata into `bots/` (script bots only) |
 | `poe-bots diff <handle>` | local vs live (exit 2 if different) |
@@ -32,12 +32,16 @@ our test (list and pull). Poe's session cookie lasts about a year. If signed out
 Only one command can use the profile at a time. No hexad, no extension.
 
 ## 2. Optional: `login --from-main`
-Copies poe.com's session from your signed-in main Chrome into the tool's profile, so you don't sign in again.
-1. Install **Playwright MCP Bridge** from the Chrome Web Store in your main Chrome; copy the token it shows.
-2. `set PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>` (needs Node 20+ for `npx @playwright/mcp@latest --extension`; `POE_MCP_NODE_DIR` points at another Node).
-3. `poe-bots login --from-main`. It reads `page.context().cookies()` for https://poe.com/ and localStorage through the bridge, writes them into the profile, and prints counts only.
-Status: the reading side was verified with Playwright MCP against a throwaway profile (HttpOnly cookies are returned, which document.cookie does not show), and the copy
-side was verified end to end using a CDP source (`--cdp <url>`). The full MCP-source path of the command was not re-run end to end.
+Copies poe.com's session from your signed-in main Chrome into the tool's profile, so you don't sign in again. Counts are printed, never values,
+and it prints which route was used. Routes, tried in this order (`--via mcp` or `--via cdp` forces one and disables the fallback):
+1. **mcp: Playwright Extension** (Chrome Web Store name "Playwright Extension", id `mmlmfjhmonkocbjadbfplnigmagldckm`). Install it in your main Chrome,
+   copy the token from its page, and set `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>`. Needs Node 20+ for `npx @playwright/mcp@latest --extension`
+   (`POE_MCP_NODE_DIR` points at another Node). It reads `page.context().cookies()` for https://poe.com/ plus localStorage. Skipped when no token is set;
+   if it does not connect within about 8 s the command falls back.
+2. **cdp: the main Chrome's remote debugging.** Turn it on at `chrome://inspect/#remote-debugging`; the tool finds Chrome's (or Edge's)
+   `DevToolsActivePort` and Chrome shows its own consent prompt, which you allow. `--cdp <ws/http url>` targets any CDP endpoint instead.
+Status: the copy into the profile was verified end to end over CDP (10 cookies, 3 HttpOnly, 15 localStorage keys, then signed in). Reading HttpOnly cookies
+through Playwright Extension was verified in a throwaway profile; the real main-Chrome mcp route has not been run end to end yet. Route selection and the fallback are unit tested.
 
 ## 3. Fallback: custom extension + native host
 If Playwright MCP can't be used: `poe-bots ext-install`, then in chrome://extensions turn on Developer mode, Load unpacked, choose `extension/`;
