@@ -1,0 +1,21 @@
+# Poe script bot metadata. Keep "# poe:" header comments in bot.py consistent with this file.
+handle: VideoProbe
+description: >-
+  Analyze a video attachment or URL, and I'll analyze it with FFprobe to show you detailed media information (codec,
+  resolution, duration, bitrate, keyframe positions for safe split boundaries, and more).
+
+
+  You can switch between raw JSON and formatted output via the settings icon below the message input box (default is raw
+  json)
+access: everyone
+allow_remix: false
+privacy_shield: half
+daily_message_limit: 96
+message_price: 10
+introduction: >-
+  Hi! I'm Video Probe. Send me a video attachment or paste a video URL, and I'll analyze it with FFprobe to show you
+  detailed media information (codec, resolution, duration, bitrate, keyframe positions for safe split boundaries, and
+  more).
+
+
+  You can switch between raw JSON and formatted output via the settings icon below the message input box.

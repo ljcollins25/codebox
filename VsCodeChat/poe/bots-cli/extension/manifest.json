@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "poe-bots bridge",
+  "version": "0.1.0",
+  "description": "Lets the local poe-bots CLI run Poe's own GraphQL calls inside your signed-in poe.com session. Talks only to the native host com.ref12.poebots.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvvKfO1PWSkcoj33jS4UiAMC18RRFK0pc+awpKmcx2uwhv74VgnlNosbiuJoYphAoRF88ng0sw0tL4uJnkV2Zc2dcSP7EaNHvEsZmL+AE17D63D/yaUAAyuPtMHgmn1TbhFQco1knWO639xpkoK4bv1A/fL8Zt19OMlbTfuGmpexqszOfAS1dLZOVLKYZzs5Z1sSaIuwpxtRIjmZaKj4Oi2vQJ6Q9YQRIsj/xHsHbkQt7/VbhkvcevaJ3oxY/basMGfkQHRQJIZWsdQvMRSiWpIioydFx/zYaKrtq1xfZdixZfzWduXKY617aN3RECr9iIt5W8yaARx8/L6u8b8SgCwIDAQAB",
+  "minimum_chrome_version": "111",
+  "permissions": [
+    "nativeMessaging",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://poe.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://poe.com/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# Poe script bot metadata. Keep "# poe:" header comments in bot.py consistent with this file.
+handle: ref12-cli-test
+description: Test bot for the local poe-bots CLI (private).
+access: link
+allow_remix: false
+daily_message_limit: null
+message_price: 1.5

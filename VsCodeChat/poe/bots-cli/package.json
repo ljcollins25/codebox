@@ -1,0 +1,17 @@
+{
+  "name": "poe-bots-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local dev workflow for Poe script bots",
+  "bin": {
+    "poe-bots": "./poe-bots.mjs"
+  },
+  "scripts": {
+    "test": "python -m unittest discover -s tests && node --test tests"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "playwright-core": "^1.49.0"
+  }
+}

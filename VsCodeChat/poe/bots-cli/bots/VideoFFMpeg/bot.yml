@@ -1,0 +1,38 @@
+# Poe script bot metadata. Keep "# poe:" header comments in bot.py consistent with this file.
+handle: VideoFFMpeg
+description: >-
+  Send me a video attachment or paste a video URL, and I'll run FFmpeg on it with the arguments you specify.
+
+
+  **How to use:**
+
+  1. Set your FFmpeg arguments via the settings icon (gear) below the message input box. These are the arguments *after*
+  `-i <input>` (e.g. `-vframes 1 frame.png` or `-ss 5 -t 10 -c copy clip.mp4`).
+
+  2. Send a video attachment or paste a video URL.
+
+  3. All output files are returned as downloadable attachments with a file-to-URL mapping.
+
+
+  You can also switch between raw JSON and formatted table output in the settings.
+access: everyone
+allow_remix: false
+privacy_shield: half
+daily_message_limit: 2
+message_price: 50
+introduction: >-
+  Hi! I'm Video FFmpeg. Send me a video attachment or paste a video URL, and I'll run FFmpeg on it with the arguments
+  you specify.
+
+
+  **How to use:**
+
+  1. Set your FFmpeg arguments via the settings icon (gear) below the message input box. These are the arguments *after*
+  `-i <input>` (e.g. `-vframes 1 frame.png` or `-ss 5 -t 10 -c copy clip.mp4`).
+
+  2. Send a video attachment or paste a video URL.
+
+  3. All output files are returned as downloadable attachments with a file-to-URL mapping.
+
+
+  You can also switch between raw JSON and formatted table output in the settings.
