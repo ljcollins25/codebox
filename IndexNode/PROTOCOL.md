@@ -21,15 +21,16 @@ The owner wants that for the index videos. So:
 
 ## Jobs
 
-One blob per job: `index/jobs/<stage>/<jobId>.json`. The stages are `download` and `process`. The job's state is in its index tags:
+One blob per job: `index/jobs/<stage>/<jobId>.json`. The stages are `download`, `process` and `comments`. The job's state is in its index tags:
 
 - `idx_stage`: `download` or `process`
 - `idx_state`: `pending`, `done` or `failed`
 - `idx_added`: the time it was added, in sortable UTC
+- `idx_due`: the earliest time it may run, in sortable UTC; for most jobs, the same as `idx_added`
 
 `jobId` is the YouTube video id (11 characters), or a hash of the URL otherwise. `nodeId` is the node's name plus 6 random hex characters, fixed per install.
 
-**Find work:** Find Blobs by Tags on the container (`?restype=container&comp=blobs&where=`), with ``"idx_stage"='download' AND "idx_state"='pending'``. This needs the SAS permission `f`. If the SAS lacks it, fall back to listing `index/jobs/<stage>/` with `include=tags`. Take the oldest `idx_added` first.
+**Find work:** Find Blobs by Tags on the container (`?restype=container&comp=blobs&where=`), with ``"idx_stage"='download' AND "idx_state"='pending' AND "idx_due" <= '<now>'``. This needs the SAS permission `f`. If the SAS lacks it, fall back to listing `index/jobs/<stage>/` with `include=tags`. Take the oldest `idx_added` first.
 
 **Claim:**
 1. Acquire a **blob lease** of 60 s (`x-ms-lease-action: acquire`, `x-ms-lease-duration: 60`). A 409 means another node has the job; move on to the next.
@@ -58,33 +59,59 @@ Rewriting a blob (Put Blob) drops its tags unless they're sent again in `x-ms-ta
 
 `process`:
 ```json
-{ "v": 1, "stage": "process", "jobId": "dQw4w9WgXcQ", "steps": ["frames", "sscd", "compress"],
+{ "v": 1, "stage": "process", "jobId": "dQw4w9WgXcQ", "steps": ["frames", "sscd", "transcribe", "compress"],
   "compress": { "codec": "av1", "crf": 38, "preset": 8, "audioKbps": 48, "keepOriginal": false },
   "addedAt": "...", "attempts": 0 }
 ```
 - `steps` run in that order. A step is skipped when its output already exists.
-- `frames` and `sscd` work on `video.mp4`.
+- `frames`, `sscd` and `transcribe` work on `video.mp4`, before `compress`.
+- **`transcribe`:**
+  - Extract the audio: 16 kHz mono via ffmpeg, kept only as a local temp file.
+  - Run our own speech recognition, always, even when subtitles exist, because shipped subtitles are often wrong.
+  - Write `asr/<model>.zh.vtt` and `asr/<model>.zh.json`, the JSON holding segments with word or character timings and confidences.
+  - The model is chosen per job: `"transcribe": { "model": "<id>" }`, with the default set after an ASR comparison. A node without the model, or too slow for it (for example Medusa), never claims a job that needs it.
 - `compress` re-encodes to AV1 with SVT-AV1 (`libsvtav1`) at the given CRF and preset, plus Opus audio, into mp4.
+
+`comments`:
+```json
+{ "v": 1, "stage": "comments", "jobId": "dQw4w9WgXcQ", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "maxComments": 1000, "sort": "top", "round": 0, "addedAt": "...", "attempts": 0 }
+```
+- yt-dlp `--write-comments --skip-download`, with `--extractor-args "youtube:max_comments=<N>,all,all,all;comment_sort=<sort>"`, no cookies. Each round takes the top comments, then a second pass sorted by `new`.
+- Output: `index/videos/<jobId>/comments/<UTC yyyyMMddTHHmmssZ>.json`, a snapshot holding `{ "v": 1, "count", "commentCount" (YouTube's total), "comments": [{ "id", "parent", "author", "authorId", "text", "likes", "timestamp", "pinned", "byUploader" }] }`. Snapshots are never overwritten, so changes over time are kept.
+- Refresh: after a round finishes, the job is rewritten with `round + 1`, `idx_state=pending` and `idx_due` set to the next refresh. Refreshes fall at 1 day, 3 days, 7 days and 30 days after the download, then every 30 days while the video is under a year old. After that the job ends as `done`.
+- Comments mention cast names, other parts and sequels, and sentiment; later steps mine them for that.
 
 ## Outputs: `index/videos/<jobId>/`
 
 **Download stage:**
-- Files: `video.mp4` (a block blob, uploaded with Put Block and Put Block List in 8 MiB blocks), `info.json` (yt-dlp), `subs/<lang>.vtt` (Chinese first), and `thumb.jpg`.
-- Then, written last, `downloaded.json`: `{ "v": 1, "bytes", "height", "durationSeconds", "nodeId", "at" }`.
-- Then the node creates the `process` job for the same `jobId` with the default steps, if one doesn't exist yet.
+- Files:
+  - `video.mp4`: a block blob, uploaded with Put Block and Put Block List in 8 MiB blocks.
+  - `info.json`: yt-dlp's `--write-info-json`, without the comments.
+  - `description.txt`: the video description, in plain text.
+  - `thumb.jpg`.
+  - Subtitles:
+    - `subs/<lang>.vtt` for uploaded subtitles in English (`en*`) and Chinese (`zh`, `zh-Hans`, `zh-Hant`, `zh-CN`, `zh-TW`, `zh-HK`).
+    - `subs/<lang>.auto.vtt` for YouTube's automatic captions in the same languages, when present.
+    - Missing subtitles are not an error.
+- Then, written last, `downloaded.json`: `{ "v": 1, "bytes", "height", "durationSeconds", "subs": ["en", "zh-Hans.auto", ...], "nodeId", "at" }`.
+- Then the node creates, for the same `jobId` and only where they don't exist yet:
+  - the `process` job, with the default steps;
+  - the first `comments` job, due at once.
 
 **Process stage:**
 - `frames.json`: `[{ "t": seconds, "kind": "scene"|"tick" }]`, with scene changes at `scene>0.3` plus a tick every 1 s. Extract in parallel segments, one ffmpeg process per physical core. A single ffmpeg uses only about 4 cores; segmenting made it 12.5× faster on a 16-core machine.
 - `sscd.f16`: N×512 float16, L2-normalised SSCD (`sscd_disc_mixup`) descriptors, where row i matches frame i.
 - `compact.mp4` (from `compress`): its duration must be within 1 s of the original, and it must decode end to end. When `keepOriginal` is false, delete `video.mp4` after `processed.json` is written.
-- Then, written last, `processed.json`: `{ "v": 1, "steps", "frames", "model", "originalBytes", "compactBytes", "nodeId", "seconds", "at" }`.
+- `asr/<model>.zh.vtt` and `asr/<model>.zh.json`, from `transcribe`.
+- Then, written last, `processed.json`: `{ "v": 1, "steps", "frames", "model", "asrModel", "originalBytes", "compactBytes", "nodeId", "seconds", "at" }`.
 
 A stage's marker (`downloaded.json`, `processed.json`) is the only signal that its outputs are complete.
 
 ## Nodes
 
-- **Medusa (Android):** runs `download` only.
-- **Desktop node:** runs `download` and/or `process`, chosen per run. It also carries the tools: `enqueue` (URLs or a playlist, with `--max-height` and `--format`), `status` (counts per stage and state), and `requeue` (failed back to pending).
+- **Medusa (Android):** runs `download` and `comments`.
+- **Desktop node:** runs any of `download`, `process` and `comments`, chosen per run. It also carries the tools: `enqueue` (URLs or a playlist, with `--max-height` and `--format`), `status` (counts per stage and state), and `requeue` (failed back to pending).
 - **Rate limits:** wait 20–40 s, random, between YouTube downloads. After a bot block or a 429, back off for an hour.
 - **The SAS URL is a secret.** Store it in the app's private storage, Android Keystore-backed on the phone, or a user-only config file or environment variable on the desktop. Never log it; redact `sig=` in all output.
 
