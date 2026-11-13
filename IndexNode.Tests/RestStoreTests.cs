@@ -98,7 +98,7 @@ public class RestStoreTests
         await Store(h).PutAsync("index/jobs/download/a.json", [1, 2], tags, "LEASE", false, default);
         var r = h.Seen.Single().Req;
         Assert.Equal("BlockBlob", Header(r, "x-ms-blob-type"));
-        Assert.Equal("idx_stage=download&idx_state=pending&idx_added=2026-11-13T19%3A00%3A00Z", Header(r, "x-ms-tags"));
+        Assert.Equal("idx_stage=download&idx_state=pending&idx_added=2026-11-13T19%3A00%3A00Z&idx_due=2026-11-13T19%3A00%3A00Z", Header(r, "x-ms-tags"));
         Assert.Equal("LEASE", Header(r, "x-ms-lease-id"));
 
         var h2 = new Handler((_, _) => new HttpResponseMessage(HttpStatusCode.Conflict));

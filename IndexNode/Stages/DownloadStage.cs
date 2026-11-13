@@ -26,9 +26,34 @@ public sealed class DownloadGate(Func<TimeSpan, CancellationToken, Task>? delay 
     }
 }
 
-public sealed class DownloadStage(Tools tools, RestStore store, DownloadGate gate) : IStageHandler
+public sealed class DownloadStage(Tools tools, IStore store, DownloadGate gate) : IStageHandler
 {
-    private static readonly string[] LangOrder = ["zh-Hans", "zh-Hant", "zh-CN", "zh-TW", "zh", "en"];
+    /// <summary>English (en, en-US, ...) and Chinese uploaded subtitles; zh-orig is the original-language automatic track.</summary>
+    public const string SubLangs = "en.*,zh,zh-Hans,zh-Hant,zh-CN,zh-TW,zh-HK,zh-orig";
+    private static readonly string[] LangOrder = ["zh-Hans", "zh-Hant", "zh-CN", "zh-TW", "zh-HK", "zh", "zh-orig", "en"];
+
+    /// <summary>
+    /// Maps yt-dlp's subtitle files to blob names: uploaded ones in manualDir become "lang", automatic captions in autoDir
+    /// become "lang.auto"; the blob is subs/NAME.vtt.
+    /// </summary>
+    public static List<(string Local, string Name)> CollectSubs(string? manualDir, string? autoDir)
+    {
+        var list = new List<(string Local, string Name)>();
+        void Add(string? dir, string suffix)
+        {
+            if (dir == null || !Directory.Exists(dir)) return;
+            foreach (var f in Directory.GetFiles(dir, "video.*.vtt"))
+                list.Add((f, Path.GetFileNameWithoutExtension(f)["video.".Length..] + suffix));
+        }
+        Add(manualDir, ""); Add(autoDir, ".auto");
+        static int Rank(string name)
+        {
+            var b = name.Replace(".auto", "");
+            var i = Array.FindIndex(LangOrder, l => b == l);
+            return i >= 0 ? i : b.StartsWith("en") ? LangOrder.Length - 1 : 99;
+        }
+        return list.OrderBy(x => Rank(x.Name)).ThenBy(x => x.Name, StringComparer.Ordinal).ToList();
+    }
 
     public async Task RunAsync(JobContext ctx)
     {
@@ -37,7 +62,7 @@ public sealed class DownloadStage(Tools tools, RestStore store, DownloadGate gat
         var paths = ctx.Paths;
         if (await ctx.Store.GetAsync(paths.Video(id, "downloaded.json"), ct) != null)
         {
-            await EnsureProcessJob(ctx);
+            await EnsureFollowUpJobs(ctx);
             return;
         }
         if (string.IsNullOrEmpty(job.Url)) throw new PermanentFailure("job has no url");
@@ -48,7 +73,6 @@ public sealed class DownloadStage(Tools tools, RestStore store, DownloadGate gat
         Directory.CreateDirectory(work);
         try
         {
-            var ytdlp = await tools.YtDlpAsync(ct);
             var ffmpeg = await tools.FfmpegAsync(ct);
             var ffdir = Path.GetDirectoryName(ffmpeg)!;
             var common = new List<string> { "--no-playlist", "--ffmpeg-location", ffdir, "--retries", "3", "--no-warnings", "--newline" };
@@ -62,26 +86,35 @@ public sealed class DownloadStage(Tools tools, RestStore store, DownloadGate gat
                 "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
                 "-o", Path.Combine(work, "video.%(ext)s"), job.Url,
             };
-            var r = await Proc.RunAsync(ytdlp, main, ct, onStdout: line =>
+            var r = await tools.RunYtDlpAsync(main, ct, onStdout: line =>
             {
                 var m = Regex.Match(line, @"\[download\]\s+(\d+(\.\d+)?)%");
                 if (m.Success) ctx.Report("download", m.Groups[1].Value + "%");
             });
             if (r.ExitCode != 0) YtDlp.Throw(r.Stderr);
 
+            string? manualDir = null, autoDir = null;
             if (job.Subs != false)
             {
-                ctx.Report("subs", null);
-                var subs = new List<string>(common)
+                // two passes, because yt-dlp names uploaded and automatic subtitles alike (video.<lang>.vtt)
+                foreach (var auto in new[] { false, true })
                 {
-                    "--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", string.Join(',', LangOrder), "--sub-format", "vtt", "--convert-subs", "vtt",
-                    "-o", Path.Combine(work, "video.%(ext)s"), job.Url,
-                };
-                var sr = await Proc.RunAsync(ytdlp, subs, ct);
-                if (sr.ExitCode != 0)
-                {
-                    if (YtDlp.Classify(sr.Stderr) == FailureKind.BotBlock) YtDlp.Throw(sr.Stderr);
-                    Log.Info($"download {id}: subtitles unavailable ({YtDlp.LastErrorLine(sr.Stderr)})");
+                    ctx.Report(auto ? "auto-subs" : "subs", null);
+                    var dir = Path.Combine(work, auto ? "auto" : "manual");
+                    Directory.CreateDirectory(dir);
+                    var subs = new List<string>(common)
+                    {
+                        "--skip-download", auto ? "--write-auto-subs" : "--write-subs", "--sub-langs", SubLangs, "--sub-format", "vtt", "--convert-subs", "vtt",
+                        "-o", Path.Combine(dir, "video.%(ext)s"), job.Url,
+                    };
+                    var sr = await tools.RunYtDlpAsync(subs, ct);
+                    if (sr.ExitCode != 0)
+                    {
+                        // a missing or rate-limited subtitle track must not lose a downloaded video
+                        if (!auto && YtDlp.Classify(sr.Stderr) == FailureKind.BotBlock) YtDlp.Throw(sr.Stderr);
+                        Log.Info($"download {id}: {(auto ? "automatic captions" : "subtitles")} unavailable ({YtDlp.LastErrorLine(sr.Stderr)})");
+                    }
+                    if (auto) autoDir = dir; else manualDir = dir;
                 }
             }
 
@@ -89,9 +122,13 @@ public sealed class DownloadStage(Tools tools, RestStore store, DownloadGate gat
             if (!File.Exists(videoFile)) throw new InvalidOperationException("yt-dlp finished but video.mp4 was not produced");
             var infoFile = Path.Combine(work, "video.info.json");
             int height = 0; double duration = 0;
+            var descriptionFile = Path.Combine(work, "description.txt");
             if (File.Exists(infoFile))
             {
                 var node = JsonNode.Parse(File.ReadAllText(infoFile))!.AsObject();
+                File.WriteAllText(descriptionFile, (string?)node["description"] ?? "");
+                node.Remove("comments");
+                File.WriteAllText(infoFile, node.ToJsonString());
                 height = (int?)node["height"] ?? 0; duration = (double?)node["duration"] ?? 0;
                 if (new FileInfo(infoFile).Length > 1_500_000)
                 {
@@ -109,13 +146,14 @@ public sealed class DownloadStage(Tools tools, RestStore store, DownloadGate gat
             if (File.Exists(infoFile)) await store.PutFileAsync(paths.Video(id, "info.json"), infoFile, "application/json", null, ct);
             var thumb = Path.Combine(work, "video.jpg");
             if (File.Exists(thumb)) await store.PutFileAsync(paths.Video(id, "thumb.jpg"), thumb, "image/jpeg", null, ct);
-            foreach (var vtt in Directory.GetFiles(work, "video.*.vtt")
-                .OrderBy(f => { var i = Array.IndexOf(LangOrder, SubLang(f)); return i < 0 ? 99 : i; }))
-                await store.PutFileAsync(paths.Video(id, $"subs/{SubLang(vtt)}.vtt"), vtt, "text/vtt", null, ct);
+            if (File.Exists(descriptionFile)) await store.PutFileAsync(paths.Video(id, "description.txt"), descriptionFile, "text/plain; charset=utf-8", null, ct);
+            var subFiles = CollectSubs(manualDir, autoDir);
+            foreach (var (local, name) in subFiles)
+                await store.PutFileAsync(paths.Video(id, $"subs/{name}.vtt"), local, "text/vtt", null, ct);
 
-            var marker = JsonSerializer.SerializeToUtf8Bytes(new { v = 1, bytes, height, durationSeconds = Math.Round(duration, 2), nodeId = ctx.NodeId, at = Protocol.NowUtc() });
+            var marker = JsonSerializer.SerializeToUtf8Bytes(new { v = 1, bytes, height, durationSeconds = Math.Round(duration, 2), subs = subFiles.Select(s => s.Name).ToArray(), nodeId = ctx.NodeId, at = Protocol.NowUtc() });
             await ctx.Store.PutAsync(paths.Video(id, "downloaded.json"), marker, null, null, false, ct);
-            await EnsureProcessJob(ctx);
+            await EnsureFollowUpJobs(ctx);
         }
         finally
         {
@@ -123,7 +161,14 @@ public sealed class DownloadStage(Tools tools, RestStore store, DownloadGate gat
         }
     }
 
-    private static string SubLang(string file) => Path.GetFileNameWithoutExtension(file)["video.".Length..];
+    /// <summary>The process job and the first comments job (due at once), each only where it does not exist yet.</summary>
+    private static async Task EnsureFollowUpJobs(JobContext ctx)
+    {
+        var c = JobDescriptor.NewComments(ctx.Job.JobId, ctx.Job.Url ?? "https://www.youtube.com/watch?v=" + ctx.Job.JobId);
+        var made = await ctx.Store.PutAsync(ctx.Paths.Job("comments", ctx.Job.JobId), c.ToBytes(), Tags.Job("comments", "pending", c.AddedAt), null, true, ctx.Token);
+        Log.Info($"download {ctx.Job.JobId}: comments job {(made ? "created" : "already exists")}");
+        await EnsureProcessJob(ctx);
+    }
 
     private static async Task EnsureProcessJob(JobContext ctx)
     {

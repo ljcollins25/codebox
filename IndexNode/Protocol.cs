@@ -9,7 +9,7 @@ namespace IndexNode;
 public static partial class Protocol
 {
     public const string ApiVersion = "2021-12-02";
-    public static readonly string[] Stages = ["download", "process"];
+    public static readonly string[] Stages = ["download", "process", "comments"];
     public static readonly string[] DefaultSteps = ["frames", "sscd", "compress"];
     public const int LeaseSeconds = 60;
     public const int MaxAttempts = 3;
@@ -52,12 +52,19 @@ public sealed class Paths(string prefix)
 
 public static class Tags
 {
-    public const string Stage = "idx_stage", State = "idx_state", Added = "idx_added", Kind = "idx_kind";
+    public const string Stage = "idx_stage", State = "idx_state", Added = "idx_added", Due = "idx_due", Kind = "idx_kind";
 
-    public static Dictionary<string, string> Job(string stage, string state, string added) =>
-        new() { [Stage] = stage, [State] = state, [Added] = added };
+    /// <summary>The full idx_* set of a job blob; idx_due defaults to idx_added.</summary>
+    public static Dictionary<string, string> Job(string stage, string state, string added, string? due = null) =>
+        new() { [Stage] = stage, [State] = state, [Added] = added, [Due] = due ?? added };
 
-    public static string PendingWhere(string stage) => $"\"{Stage}\"='{stage}' AND \"{State}\"='pending'";
+    /// <summary>Pending jobs of a stage; with <paramref name="nowUtc"/> only those whose idx_due has arrived.</summary>
+    public static string PendingWhere(string stage, string? nowUtc = null) =>
+        $"\"{Stage}\"='{stage}' AND \"{State}\"='pending'" + (nowUtc == null ? "" : $" AND \"{Due}\" <= '{nowUtc}'");
+
+    /// <summary>idx_due of a listed blob (idx_added when a legacy blob has none).</summary>
+    public static string DueOf(IReadOnlyDictionary<string, string> tags) =>
+        tags.GetValueOrDefault(Due) ?? tags.GetValueOrDefault(Added) ?? "";
     public static string StateWhere(string stage, string state) => $"\"{Stage}\"='{stage}' AND \"{State}\"='{state}'";
 }
 
@@ -76,6 +83,9 @@ public sealed class JobDescriptor
     public int Attempts { get; set; }
     public string? LastError { get; set; }
     public bool? Permanent { get; set; }
+    public int? MaxComments { get; set; }
+    public string? Sort { get; set; }
+    public int? Round { get; set; }
     public string? FinishedAt { get; set; }
     public string? NodeId { get; set; }
     public double? ElapsedSeconds { get; set; }
@@ -86,6 +96,11 @@ public sealed class JobDescriptor
     public static JobDescriptor NewDownload(string url, int maxHeight, string? format) => new()
     {
         Stage = "download", JobId = Protocol.JobIdFor(url), Url = url, MaxHeight = maxHeight, Format = format, Subs = true, AddedAt = Protocol.NowUtc(),
+    };
+
+    public static JobDescriptor NewComments(string jobId, string url) => new()
+    {
+        Stage = "comments", JobId = jobId, Url = url, MaxComments = 1000, Sort = "top", Round = 0, AddedAt = Protocol.NowUtc(),
     };
 
     public static JobDescriptor NewProcess(string jobId) => new()
@@ -155,6 +170,8 @@ public sealed class NodeInfo
     public string State { get; set; } = "idle";
     public string Control { get; set; } = "run";
     public List<RunningJob> Running { get; set; } = new();
+    /// <summary>State of the sources this node polls, e.g. { "watch-later": "ok" | "signed-out" }.</summary>
+    public Dictionary<string, string>? Sources { get; set; }
     public string LastSeen { get; set; } = "";
     public string StartedAt { get; set; } = "";
 

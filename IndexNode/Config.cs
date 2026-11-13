@@ -12,6 +12,8 @@ public sealed class NodeConfig
     public int? Threads { get; set; }
     public string? ModelUrl { get; set; }
     public string? ModelPath { get; set; }
+    public BrowserConfig? Browser { get; set; }
+    public YtDlpConfig? Ytdlp { get; set; }
 
     [JsonIgnore] public static JsonSerializerOptions Json { get; } = new() { WriteIndented = true, PropertyNameCaseInsensitive = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
@@ -115,4 +117,43 @@ public sealed class NodeConfig
 
     public int JobsFor(string stage) => Jobs != null && Jobs.TryGetValue(stage, out var n) ? n : 1;
     public int EffectiveThreads => Threads is > 0 ? Threads.Value : PhysicalCores();
+}
+
+public sealed class YtDlpConfig
+{
+    /// <summary>A full command prefix, e.g. ["python", ".../yt-dlp.pyz"]. Null: the downloaded yt-dlp executable.</summary>
+    public string[]? Command { get; set; }
+}
+
+public sealed class BrowserConfig
+{
+    public string? Exe { get; set; }
+    public string? ProfileDir { get; set; }
+    public int? Port { get; set; }
+
+    public const int DefaultPort = 9333;
+
+    public static string DefaultProfileDir() => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "indexnode", "brave-profile")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share", "indexnode", "brave-profile");
+
+    public static string[] DefaultExeCandidates() => OperatingSystem.IsWindows()
+        ?
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+        ]
+        : ["brave-browser"];
+
+    public string ResolveExe()
+    {
+        if (!string.IsNullOrWhiteSpace(Exe)) return Exe;
+        foreach (var c in DefaultExeCandidates())
+            if (!Path.IsPathRooted(c) || File.Exists(c)) return c;
+        return DefaultExeCandidates()[0];
+    }
+
+    public string ResolveProfileDir() => string.IsNullOrWhiteSpace(ProfileDir) ? DefaultProfileDir() : ProfileDir;
+    public int ResolvePort() => Port ?? DefaultPort;
 }

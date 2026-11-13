@@ -19,7 +19,12 @@ public sealed class JobContext
     public required CancellationToken Token { get; init; }
     public required Func<int> ThreadShare { get; init; }
     public required Action<string?, string?> Report { get; init; }
+    /// <summary>Set by a handler that wants the job back as pending, due at this time (comments refresh); null: the job is done.</summary>
+    public string? NextDue { get; set; }
 }
+
+/// <summary>The node cannot do this job (e.g. a step it does not know): it is released without counting an attempt.</summary>
+public sealed class JobSkipped(string message) : Exception(message);
 
 public interface IStageHandler
 {
@@ -32,8 +37,8 @@ public sealed class EngineOptions
     public string Name { get; init; } = "node";
     public string Kind { get; init; } = "desktop";
     public string Version { get; init; } = "0.1.0";
-    public string[] Stages { get; init; } = ["download", "process"];
-    public Dictionary<string, int> Jobs { get; init; } = new() { ["download"] = 1, ["process"] = 1 };
+    public string[] Stages { get; init; } = ["download", "process", "comments"];
+    public Dictionary<string, int> Jobs { get; init; } = new() { ["download"] = 1, ["process"] = 1, ["comments"] = 1 };
     public int Threads { get; init; } = 1;
     public bool Once { get; init; }
     public int? MaxJobs { get; init; }
@@ -56,6 +61,7 @@ public sealed class NodeEngine
         public required CancellationTokenSource Cts;
         public bool StopRequested;
         public bool LeaseLost;
+        public JobContext? Ctx;
     }
 
     private readonly IStore store;
@@ -103,6 +109,7 @@ public sealed class NodeEngine
         State = state ?? NodeState(),
         Control = Control.Current.Mode,
         Running = running.Keys.Select(r => new RunningJob { JobId = r.Info.JobId, Stage = r.Info.Stage, Step = r.Info.Step, Progress = r.Info.Progress, Worker = r.Info.Worker }).ToList(),
+        Sources = sources.IsEmpty ? null : new Dictionary<string, string>(sources),
         LastSeen = Protocol.NowUtc(), StartedAt = Protocol.Utc(startedAt),
     };
 
@@ -120,7 +127,17 @@ public sealed class NodeEngine
         finally { registryGate.Release(); }
     }
 
-    private static string RegistryKey(NodeInfo i) => i.State + "|" + i.Control + "|" + string.Join(';', i.Running.Select(r => $"{r.JobId}/{r.Stage}/{r.Step}"));
+    private readonly ConcurrentDictionary<string, string> sources = new();
+
+    /// <summary>Records the state of a source this node polls (e.g. watch-later = ok | signed-out) in the node registry.</summary>
+    public void SetSource(string name, string state)
+    {
+        if (sources.TryGetValue(name, out var old) && old == state) return;
+        sources[name] = state;
+        _ = WriteRegistryAsync();
+    }
+
+    private static string RegistryKey(NodeInfo i) => i.State + "|" + i.Control + "|" + string.Join(',', (i.Sources ?? new()).Select(s => s.Key + "=" + s.Value)) + "|" + string.Join(';', i.Running.Select(r => $"{r.JobId}/{r.Stage}/{r.Step}"));
 
     private void RegistryChanged()
     {
@@ -259,14 +276,16 @@ public sealed class NodeEngine
             {
                 // Find Blobs by Tags searches the whole container: keep only this prefix's jobs
                 var dir = paths.JobsDir(stage);
-                var found = (await store.FindByTagsAsync(Tags.PendingWhere(stage), ct)).Where(b => b.Name.StartsWith(dir, StringComparison.Ordinal)).ToList();
+                var found = (await store.FindByTagsAsync(Tags.PendingWhere(stage, Protocol.NowUtc()), ct)).Where(b => b.Name.StartsWith(dir, StringComparison.Ordinal)).ToList();
                 if (found.Count > 0) return found;
                 // the tag index lags behind writes by a few seconds, so an empty answer is double-checked with a (consistent) listing
             }
             catch (ForbiddenException) { Log.Info("storage: the SAS cannot Find Blobs by Tags (needs permission f); listing jobs with tags instead"); fallbackListing[0] = true; }
         }
         var all = await store.ListAsync(paths.JobsDir(stage), true, false, ct);
-        return all.Where(b => b.Tags.GetValueOrDefault(Tags.Stage) == stage && b.Tags.GetValueOrDefault(Tags.State) == "pending").ToList();
+        var now = Protocol.NowUtc();
+        return all.Where(b => b.Tags.GetValueOrDefault(Tags.Stage) == stage && b.Tags.GetValueOrDefault(Tags.State) == "pending"
+            && string.CompareOrdinal(Tags.DueOf(b.Tags), now) <= 0).ToList();
     }
 
     private async Task<Claim?> TryClaimAsync(string stage, CancellationToken ct)
@@ -282,7 +301,7 @@ public sealed class NodeEngine
             {
                 // the tag index is eventually consistent: confirm under the lease
                 var tags = await store.GetTagsAsync(b.Name, ct);
-                if (tags == null || tags.GetValueOrDefault(Tags.State) != "pending") { await store.ReleaseLeaseAsync(b.Name, lease, CancellationToken.None); continue; }
+                if (tags == null || tags.GetValueOrDefault(Tags.State) != "pending" || string.CompareOrdinal(Tags.DueOf(tags), Protocol.NowUtc()) > 0) { await store.ReleaseLeaseAsync(b.Name, lease, CancellationToken.None); continue; }
                 var body = await store.GetAsync(b.Name, ct);
                 if (body == null) { await store.ReleaseLeaseAsync(b.Name, lease, CancellationToken.None); continue; }
                 var job = JobDescriptor.Parse(body.Data);
@@ -299,7 +318,7 @@ public sealed class NodeEngine
 
     // ---------------------------------------------------------------- run one job
 
-    private enum Outcome { Done, Permanent, Bot, Transient, Released, LeaseLost }
+    private enum Outcome { Done, Permanent, Bot, Transient, Released, LeaseLost, Skipped }
 
     private async Task RunJobAsync(string stage, int worker, Claim claim, CancellationToken ct)
     {
@@ -321,10 +340,12 @@ public sealed class NodeEngine
                 Store = store, Paths = paths, NodeId = o.NodeId, Token = cts.Token, ThreadShare = () => Budget.Share,
                 Report = (step, progress) => { if (step != null) run.Info.Step = step; run.Info.Progress = progress; },
             };
+            run.Ctx = ctx;
             await handlers[stage].RunAsync(ctx);
             outcome = Outcome.Done;
         }
         catch (PermanentFailure e) { outcome = Outcome.Permanent; error = e.Message; }
+        catch (JobSkipped e) { outcome = Outcome.Skipped; error = e.Message; }
         catch (BotBlocked e) { outcome = Outcome.Bot; error = e.Message; }
         catch (LeaseLostException e) { outcome = Outcome.LeaseLost; error = e.Message; }
         catch (OperationCanceledException) { outcome = run.LeaseLost ? Outcome.LeaseLost : Outcome.Released; }
@@ -377,9 +398,11 @@ public sealed class NodeEngine
         var none = CancellationToken.None;
         var job = claim.Job;
         string added = claim.Tags.GetValueOrDefault(Tags.Added) ?? job.AddedAt;
-        async Task Rewrite(string state)
+        string due = Tags.DueOf(claim.Tags);
+        if (due.Length == 0) due = added;
+        async Task Rewrite(string state, string? newDue = null)
         {
-            await store.PutAsync(claim.BlobName, job.ToBytes(), Tags.Job(stage, state, added), claim.LeaseId, false, none);
+            await store.PutAsync(claim.BlobName, job.ToBytes(), Tags.Job(stage, state, added, newDue ?? due), claim.LeaseId, false, none);
         }
         switch (outcome)
         {
@@ -387,7 +410,12 @@ public sealed class NodeEngine
                 return;
             case Outcome.Done:
                 job.FinishedAt = Protocol.NowUtc(); job.NodeId = o.NodeId; job.ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1);
-                await Rewrite("done");
+                if (run.Ctx?.NextDue is { } nextDue) await Rewrite("pending", nextDue); // a comments refresh: back to pending, due later
+                else await Rewrite("done");
+                break;
+            case Outcome.Skipped:
+                ignoreUntil[claim.BlobName] = DateTimeOffset.UtcNow + TimeSpan.FromHours(1);
+                try { await store.SetMetadataAsync(claim.BlobName, new Dictionary<string, string>(), claim.LeaseId, none); } catch { }
                 break;
             case Outcome.Permanent:
                 job.LastError = Redact.Sas(error); job.Permanent = true; job.NodeId = o.NodeId;

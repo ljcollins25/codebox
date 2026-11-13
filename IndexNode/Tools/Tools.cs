@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 namespace IndexNode;
 
 /// <summary>Finds yt-dlp, ffmpeg and ffprobe on PATH, or downloads pinned releases into the tools folder beside the config.</summary>
-public sealed class Tools(HttpClient http)
+public sealed class Tools(HttpClient http, NodeConfig? config = null)
 {
     public const string YtDlpVersion = "2026.10.26";
     private string? ytdlp, ffmpeg, ffprobe;
@@ -23,6 +23,33 @@ public sealed class Tools(HttpClient http)
     }
 
     private static string? InTools(string name) { var f = Path.Combine(NodeConfig.ToolsDir(), Exe(name)); return File.Exists(f) ? f : null; }
+
+    public const string BlockedHint = "yt-dlp could not start (blocked by Windows App Control / policy?). Run: indexnode tools install --ytdlp-zipapp  (uses the yt-dlp zipapp through your Python)";
+
+    /// <summary>The configured command prefix (ytdlp.command), or the yt-dlp executable.</summary>
+    public async Task<string[]> YtDlpCommandAsync(CancellationToken ct) =>
+        config?.Ytdlp?.Command is { Length: > 0 } c ? c : [await YtDlpAsync(ct)];
+
+    /// <summary>Runs yt-dlp through the launcher; a start failure that looks like a policy block says so and names the fix.</summary>
+    public async Task<ProcResult> RunYtDlpAsync(IEnumerable<string> args, CancellationToken ct, Action<string>? onStdout = null)
+    {
+        var (file, full) = YtDlpLauncher.Compose(await YtDlpCommandAsync(ct), args);
+        ProcResult r;
+        try { r = await Proc.RunAsync(file, full, ct, onStdout); }
+        catch (System.ComponentModel.Win32Exception e) when (YtDlpLauncher.LooksBlocked(e.Message, e.NativeErrorCode)) { throw new InvalidOperationException(BlockedHint + " [" + e.Message + "]"); }
+        catch (System.ComponentModel.Win32Exception e) when (config?.Ytdlp?.Command is null) { throw new InvalidOperationException($"yt-dlp could not start ({e.Message}). If App Control blocks it, run: indexnode tools install --ytdlp-zipapp"); }
+        catch (System.ComponentModel.Win32Exception e) { throw new InvalidOperationException($"the configured ytdlp.command could not start ({e.Message}); check it, or run: indexnode tools install --ytdlp-zipapp"); }
+        if (r.ExitCode != 0 && YtDlpLauncher.LooksBlocked(r.Stderr, r.ExitCode)) throw new InvalidOperationException(BlockedHint);
+        return r;
+    }
+
+    /// <summary>Downloads the official yt-dlp zipapp (release asset "yt-dlp", no extension) and returns the command to store.</summary>
+    public async Task<string[]> InstallYtDlpZipappAsync(CancellationToken ct)
+    {
+        var dest = Path.Combine(NodeConfig.ToolsDir(), "yt-dlp.pyz");
+        await Download($"https://github.com/yt-dlp/yt-dlp/releases/download/{YtDlpVersion}/yt-dlp", dest, ct);
+        return [OnPath("python") ?? OnPath("python3") ?? (OperatingSystem.IsWindows() ? "python" : "python3"), dest];
+    }
 
     public async Task<string> YtDlpAsync(CancellationToken ct)
     {
@@ -104,4 +131,19 @@ public sealed class Tools(HttpClient http)
         }
         try { Directory.Delete(tmp, true); } catch { }
     }
+}
+
+public static class YtDlpLauncher
+{
+    /// <summary>The first element of the prefix is the program; the rest of the prefix goes before the yt-dlp arguments.</summary>
+    public static (string File, string[] Args) Compose(string[] prefix, IEnumerable<string> args)
+    {
+        if (prefix.Length == 0) throw new ArgumentException("empty yt-dlp command");
+        return (prefix[0], prefix.Skip(1).Concat(args).ToArray());
+    }
+
+    /// <summary>Windows 4551 (policy block), STATUS_DLL_NOT_FOUND-style exits, or text naming the block.</summary>
+    public static bool LooksBlocked(string text, int code) =>
+        code is 4551 or -1073741515 or -1073740791 or unchecked((int)0xC0000022)
+        || System.Text.RegularExpressions.Regex.IsMatch(text ?? "", @"(?i)blocked by (policy|your organization)|application control|App Control|Failed to load Python DLL|python3\d+\.dll");
 }

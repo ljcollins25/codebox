@@ -30,11 +30,12 @@ public sealed class FakeStore : IStore
     public JobDescriptor Job(string name) { lock (gate) return JobDescriptor.Parse(Blobs[name].Data); }
     public string State(string name) { lock (gate) return Blobs[name].Tags[Tags.State]; }
 
-    public async Task AddJob(Paths p, string stage, string id, string added)
+    public async Task AddJob(Paths p, string stage, string id, string added, string? due = null)
     {
-        var job = stage == "download" ? JobDescriptor.NewDownload("https://www.youtube.com/watch?v=" + id.PadRight(11, 'x'), 480, null) : JobDescriptor.NewProcess(id);
+        var url = "https://www.youtube.com/watch?v=" + id.PadRight(11, 'x');
+        var job = stage == "download" ? JobDescriptor.NewDownload(url, 480, null) : stage == "comments" ? JobDescriptor.NewComments(id, url) : JobDescriptor.NewProcess(id);
         job.JobId = id; job.AddedAt = added;
-        await PutAsync(p.Job(stage, id), job.ToBytes(), Tags.Job(stage, "pending", added), null, true, default);
+        await PutAsync(p.Job(stage, id), job.ToBytes(), Tags.Job(stage, "pending", added, due), null, true, default);
     }
 
     private static BlobEntry Entry(string name, Blob b) =>
@@ -48,7 +49,9 @@ public sealed class FakeStore : IStore
             if (ForbidFind) throw new ForbiddenException("no f permission");
             if (StaleFind) return Task.FromResult<IReadOnlyList<BlobEntry>>([]);
             var conds = Regex.Matches(where, "\"(?<k>[^\"]+)\"='(?<v>[^']*)'").Select(m => (m.Groups["k"].Value, m.Groups["v"].Value)).ToList();
-            IReadOnlyList<BlobEntry> r = Blobs.Where(b => conds.All(c => b.Value.Tags.GetValueOrDefault(c.Item1) == c.Item2)).Select(b => Entry(b.Key, b.Value)).ToList();
+            var le = Regex.Matches(where, "\"(?<k>[^\"]+)\" <= '(?<v>[^']*)'").Select(m => (m.Groups["k"].Value, m.Groups["v"].Value)).ToList();
+            IReadOnlyList<BlobEntry> r = Blobs.Where(b => conds.All(c => b.Value.Tags.GetValueOrDefault(c.Item1) == c.Item2)
+                && le.All(c => b.Value.Tags.TryGetValue(c.Item1, out var tv) && string.CompareOrdinal(tv, c.Item2) <= 0)).Select(b => Entry(b.Key, b.Value)).ToList();
             return Task.FromResult(r);
         }
     }

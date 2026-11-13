@@ -9,6 +9,13 @@ public sealed class ProcessStage(Tools tools, RestStore store, NodeConfig config
         var ct = ctx.Token;
         var job = ctx.Job; var id = job.JobId; var paths = ctx.Paths;
         var steps = job.Steps is { Length: > 0 } ? job.Steps : Protocol.DefaultSteps;
+        // steps this node cannot run (transcribe: no speech model chosen yet) leave the job to a node that can
+        var unknown = steps.Where(s => s is not ("frames" or "sscd" or "compress")).ToArray();
+        if (unknown.Length > 0)
+        {
+            Log.Info($"process {id}: unknown step(s) {string.Join(',', unknown)}: skipping the job, released without an attempt");
+            throw new JobSkipped("unknown step: " + string.Join(',', unknown));
+        }
         var compress = job.Compress ?? new CompressSettings();
         var watch = System.Diagnostics.Stopwatch.StartNew();
 
