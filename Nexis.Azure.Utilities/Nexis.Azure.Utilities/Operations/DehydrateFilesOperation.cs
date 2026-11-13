@@ -245,30 +245,8 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
                 if (state == BlobState.ghost)
                 {
                     // Needs precommit
-                    var blockPrefix = readTags[Strings.block_prefix];
-                    var currentBlockList = await blobClient.GetBlockListAsync();
-                    var blocksToCommit = currentBlockList.Value.UncommittedBlocks
-                        .Where(b => b.Name.StartsWith(blockPrefix))
-                        .OrderBy(b => b.Name)
-                        .ToList();
-
-                    var totalSize = blocksToCommit.Sum(b => (long?)b.SizeLong) ?? 0;
-                    var expectedSize = readTags.GetValueOrDefault(Strings.size, "0");
-                    Contract.Assert(totalSize.ToString() == readTags[Strings.size], $"actual size ({totalSize.ToString()}) != expected size ({expectedSize})");
-
-                    // Change to active state
-                    var crsp = await blobClient.CommitBlockListAsync(
-                        base64BlockIds: blocksToCommit.Select(b => b.Name),
-                        options: new CommitBlockListOptions()
-                        {
-                            Tags = RemoveCustomKeys(readTags, BlobState.active),
-                            Conditions = conditions,
-                            Metadata = blob.Metadata,
-                            //HttpHeaders = headers
-                        },
-                        cancellationToken: token);
-
-                    conditions.IfMatch = crsp.Value.ETag;
+                    var hydratedEtag = await HydrateBlobAsync(blobClient, readTags, blob.Metadata, conditions, token);
+                    conditions.IfMatch = hydratedEtag;
 
                     if (requireHydrated)
                     {
@@ -377,6 +355,70 @@ public class DehydrateOperation(IConsole Console, CancellationToken token) : Dri
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Commits the uncommitted blocks of a ghosted blob (state=ghost) back into a committed, active blob.
+    /// This is the single-blob hydrate step used by the dehydrate timer and by callers that need one blob.
+    /// </summary>
+    /// <returns>The ETag of the hydrated blob.</returns>
+    public static async Task<ETag?> HydrateBlobAsync(
+        BlockBlobClient blobClient,
+        IReadOnlyDictionary<string, string> readTags,
+        IDictionary<string, string>? metadata,
+        BlobRequestConditions? conditions,
+        CancellationToken token)
+    {
+        var blockPrefix = readTags[Strings.block_prefix];
+        var currentBlockList = await blobClient.GetBlockListAsync(cancellationToken: token);
+        var blocksToCommit = currentBlockList.Value.UncommittedBlocks
+            .Where(b => b.Name.StartsWith(blockPrefix))
+            .OrderBy(b => b.Name)
+            .ToList();
+
+        var totalSize = blocksToCommit.Sum(b => (long?)b.SizeLong) ?? 0;
+        var expectedSize = readTags.GetValueOrDefault(Strings.size, "0");
+        if (totalSize.ToString() != expectedSize)
+        {
+            throw new InvalidOperationException($"actual size ({totalSize}) != expected size ({expectedSize})");
+        }
+
+        var crsp = await blobClient.CommitBlockListAsync(
+            base64BlockIds: blocksToCommit.Select(b => b.Name),
+            options: new CommitBlockListOptions()
+            {
+                Tags = RemoveCustomKeys(readTags, BlobState.active),
+                Conditions = conditions,
+                Metadata = metadata,
+            },
+            cancellationToken: token);
+
+        return crsp.Value.ETag;
+    }
+
+    /// <summary>
+    /// Hydrates one blob if (and only if) it is currently a Nexis ghost. Returns true when it hydrated.
+    /// </summary>
+    public static async Task<bool> HydrateIfGhostAsync(BlockBlobClient blobClient, CancellationToken token)
+    {
+        var props = (await blobClient.GetPropertiesAsync(cancellationToken: token)).Value;
+        var tags = (await blobClient.GetTagsAsync(cancellationToken: token)).Value.Tags;
+        if (props.ContentLength != 0
+            || !tags.TryGetValue(Strings.state, out var state)
+            || state != nameof(BlobState.ghost))
+        {
+            return false;
+        }
+
+        var conditions = new BlobRequestConditions() { IfMatch = props.ETag };
+        await HydrateBlobAsync(blobClient, tags.ToImmutableDictionary(), props.Metadata, conditions, token);
+        return true;
+    }
+
+    public static class TagNames
+    {
+        public const string LastAccess = Strings.last_access;
+        public const string State = Strings.state;
     }
 
     private BlobState GetBlobState(BlobItem blob)
