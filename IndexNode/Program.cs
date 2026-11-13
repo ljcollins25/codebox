@@ -38,13 +38,17 @@ public sealed class Args
 public static class Program
 {
     public const string Usage = """
-        indexnode run --stages download,process [--once] [--max-jobs N] [--jobs process=2,download=1] [--threads N]
+        indexnode run --stages download,process,comments [--once] [--max-jobs N] [--jobs process=2,download=1] [--threads N]
+                      [--sources watch-later --source-every 6h] [--max-height 480]
         indexnode enqueue <url|playlist-url>... [--max-height 480] [--format F]
+        indexnode enqueue --from watch-later [--max-height 480]
+        indexnode browser login | status
+        indexnode tools install --ytdlp-zipapp
         indexnode status
         indexnode requeue [--stage S]
-        indexnode control run|drain|stop [--stage download|process] [--message M]
+        indexnode control run|drain|stop [--stage download|process|comments] [--message M]
         indexnode config set-sas <url>
-        indexnode config set <jobs|threads|model-url|model-path|node-name> <value>
+        indexnode config set <jobs|threads|model-url|model-path|node-name|ytdlp.command|browser.exe|browser.profile-dir|browser.port> <value>
         All commands take --prefix (default index/). INDEXNODE_SAS_URL overrides the stored SAS.
         """;
 
@@ -64,6 +68,8 @@ public static class Program
                 "requeue" => await Commands.RequeueAsync(a),
                 "control" => await Commands.ControlAsync(a),
                 "config" => Commands.Config(a),
+                "browser" => await Commands.BrowserAsync(a),
+                "tools" => await Commands.ToolsAsync(a),
                 _ => Fail($"unknown command '{cmd}'"),
             };
         }
@@ -97,19 +103,20 @@ public static class Commands
     public static async Task<int> RunAsync(Args a)
     {
         var (cfg, store, paths, http) = Open(a);
-        var stages = (a.Get("stages") ?? "download,process").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToArray();
+        var stages = (a.Get("stages") ?? "download,process,comments").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToArray();
         foreach (var s in stages) if (!Protocol.Stages.Contains(s)) throw new ArgumentException($"unknown stage '{s}'");
-        var jobs = new Dictionary<string, int> { ["download"] = cfg.JobsFor("download"), ["process"] = cfg.JobsFor("process") };
+        var jobs = new Dictionary<string, int> { ["download"] = cfg.JobsFor("download"), ["process"] = cfg.JobsFor("process"), ["comments"] = cfg.JobsFor("comments") };
         foreach (var kv in NodeConfig.ParseJobs(a.Get("jobs"))) jobs[kv.Key] = kv.Value;
         int threads = a.Get("threads") is { } t ? int.Parse(t) : cfg.EffectiveThreads;
         var nodeId = cfg.EnsureNodeId();
 
-        var tools = new Tools(http);
+        var tools = new Tools(http, cfg);
         var gate = new DownloadGate();
         var handlers = new Dictionary<string, IStageHandler>
         {
             ["download"] = new DownloadStage(tools, store, gate),
             ["process"] = new ProcessStage(tools, store, cfg, http),
+            ["comments"] = new CommentsStage(tools, store, gate),
         };
         var opts = new EngineOptions
         {
@@ -124,19 +131,56 @@ public static class Commands
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; Log.Info("Ctrl+C: releasing current jobs"); cts.Cancel(); };
         using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, c => { c.Cancel = true; cts.Cancel(); });
 
+        var sourceNames = (a.Get("sources") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var sn in sourceNames) if (sn != "watch-later") throw new ArgumentException($"unknown source '{sn}' (watch-later)");
+        var every = WatchLater.ParseInterval(a.Get("source-every") ?? "6h");
+        int sourceHeight = a.Get("max-height") is { } sh ? int.Parse(sh) : 480;
+        Task sourceTask = Task.CompletedTask;
+        async Task PollWatchLater()
+        {
+            if (engine.Control.Effective("download") == Level.Stop) return;
+            try
+            {
+                var (state, counts) = await WatchLater.PollAsync(cfg.Browser ?? new BrowserConfig(), http, store, paths, sourceHeight, cts.Token);
+                if (state == SourceState.SignedOut) { Log.Info(WatchLater.SignedOutMessage); engine.SetSource("watch-later", "signed-out"); }
+                else { Log.Info($"Watch Later: found {counts!.Found}, new {counts.New}, existing {counts.Existing}"); engine.SetSource("watch-later", "ok"); }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception e) { Log.Info("Watch Later: poll failed (" + Redact.Sas(e.Message) + ")"); engine.SetSource("watch-later", "error"); }
+        }
+        if (sourceNames.Contains("watch-later"))
+        {
+            if (a.Has("once")) await PollWatchLater();
+            else sourceTask = Task.Run(async () =>
+            {
+                try { while (!cts.IsCancellationRequested) { await PollWatchLater(); await Task.Delay(every, cts.Token); } }
+                catch (OperationCanceledException) { }
+            });
+        }
+
         Log.Info($"node {nodeId}: stages={string.Join(',', stages)} jobs={string.Join(',', jobs.Where(j => stages.Contains(j.Key)).Select(j => j.Key + "=" + j.Value))} threads={threads} prefix={paths.Prefix}");
         await engine.RunAsync(cts.Token);
+        cts.Cancel();
+        await sourceTask;
         Log.Info("node stopped");
         return 0;
     }
 
     public static async Task<int> EnqueueAsync(Args a)
     {
-        var (_, store, paths, http) = Open(a);
-        if (a.Positional.Count == 0) throw new ArgumentException("enqueue needs at least one url");
+        var (cfg, store, paths, http) = Open(a);
         int maxHeight = a.Get("max-height") is { } h ? int.Parse(h) : 480;
+        if (a.Get("from") is { } from)
+        {
+            if (from != "watch-later") throw new ArgumentException($"unknown source '{from}' (watch-later)");
+            var (state, counts) = await WatchLater.PollAsync(cfg.Browser ?? new BrowserConfig(), http, store, paths, maxHeight, default);
+            if (state == SourceState.SignedOut) { Console.Error.WriteLine(WatchLater.SignedOutMessage); return 3; }
+            Console.WriteLine($"Watch Later: found {counts!.Found}, new {counts.New}, existing {counts.Existing}");
+            return 0;
+        }
+        if (a.Positional.Count == 0) throw new ArgumentException("enqueue needs at least one url (or --from watch-later)");
         var format = a.Get("format");
-        var tools = new Tools(http);
+        var tools = new Tools(http, cfg);
         int added = 0, existed = 0;
         foreach (var input in a.Positional)
         {
@@ -145,7 +189,7 @@ public static class Commands
             else
             {
                 Log.Info($"expanding {Redact.Sas(input)}");
-                var r = await Proc.RunAsync(await tools.YtDlpAsync(default), ["--flat-playlist", "--no-warnings", "--print", "%(webpage_url,url)s", input], default);
+                var r = await tools.RunYtDlpAsync(["--flat-playlist", "--no-warnings", "--print", "%(webpage_url,url)s", input], default);
                 if (r.ExitCode != 0) throw new InvalidOperationException(YtDlp.LastErrorLine(r.Stderr));
                 urls.AddRange(r.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(u => u.StartsWith("http")));
             }
@@ -180,7 +224,7 @@ public static class Commands
                 if (body == null) continue;
                 var job = JobDescriptor.Parse(body.Data);
                 job.Attempts = 0; job.LastError = null; job.Permanent = null;
-                await store.PutAsync(b.Name, job.ToBytes(), Tags.Job(stage, "pending", b.Tags.GetValueOrDefault(Tags.Added) ?? job.AddedAt), null, false, default);
+                await store.PutAsync(b.Name, job.ToBytes(), Tags.Job(stage, "pending", b.Tags.GetValueOrDefault(Tags.Added) ?? job.AddedAt, b.Tags.GetValueOrDefault(Tags.Due)), null, false, default);
                 Console.WriteLine($"requeued {stage}/{job.JobId}");
                 n++;
             }
@@ -195,7 +239,7 @@ public static class Commands
         var level = a.Positional.FirstOrDefault()?.ToLowerInvariant();
         if (level is not ("run" or "drain" or "stop")) throw new ArgumentException("control needs run, drain or stop");
         var stage = a.Get("stage");
-        if (stage != null && !Protocol.Stages.Contains(stage)) throw new ArgumentException("--stage must be download or process");
+        if (stage != null && !Protocol.Stages.Contains(stage)) throw new ArgumentException("--stage must be download, process or comments");
         var c = await ControlWatcher.WriteAsync(store, paths, level, stage, a.Get("message"), cfg.NodeName ?? Environment.UserName, default);
         Console.WriteLine($"control: mode={c.Mode} download={c.Effective("download")} process={c.Effective("process")}{(c.Message != null ? " message=" + c.Message : "")}");
         return 0;
@@ -215,7 +259,7 @@ public static class Commands
         if (nodes.Count == 0) Console.WriteLine("  (none)");
         foreach (var n in nodes.OrderBy(n => n.NodeId))
         {
-            Console.WriteLine($"  {n.NodeId,-24} {n.Kind,-8} stages={string.Join('+', n.Stages)} jobs={string.Join(',', n.Jobs.Select(j => j.Key + "=" + j.Value))} threads={n.Threads} state={n.EffectiveState(now)} control={n.Control} lastSeen={n.LastSeen}");
+            Console.WriteLine($"  {n.NodeId,-24} {n.Kind,-8} stages={string.Join('+', n.Stages)} jobs={string.Join(',', n.Jobs.Select(j => j.Key + "=" + j.Value))} threads={n.Threads} state={n.EffectiveState(now)} control={n.Control}{(n.Sources is { Count: > 0 } src ? " sources=" + string.Join(',', src.Select(s => s.Key + ":" + s.Value)) : "")} lastSeen={n.LastSeen}");
             foreach (var r in n.Running)
                 Console.WriteLine($"      worker {r.Worker}: {r.Stage}/{r.JobId} {r.Step} {r.Progress}");
         }
@@ -239,6 +283,54 @@ public static class Commands
         var ctl = ControlFile.Parse((await store.GetAsync(paths.Control, default))?.Data);
         Console.WriteLine($"\nControl: mode={ctl.Mode} download={ctl.Effective("download")} process={ctl.Effective("process")}  changed {ctl.ChangedAt} by {ctl.ChangedBy}{(ctl.Message != null ? "  \"" + ctl.Message + "\"" : "")}");
         return 0;
+    }
+
+    /// <summary>The user-only config file as stored (without the SAS that an environment variable may supply).</summary>
+    private static NodeConfig LoadFileConfig() =>
+        File.Exists(NodeConfig.ConfigPath()) ? JsonSerializer.Deserialize<NodeConfig>(File.ReadAllText(NodeConfig.ConfigPath()), NodeConfig.Json) ?? new() : new();
+
+    /// <summary>A JSON array, or a single program path.</summary>
+    public static string[] ParseCommand(string val) =>
+        val.TrimStart().StartsWith('[') ? JsonSerializer.Deserialize<string[]>(val) ?? throw new ArgumentException("bad command") : [val];
+
+    public static async Task<int> ToolsAsync(Args a)
+    {
+        if (a.Positional.FirstOrDefault() != "install" || !a.Has("ytdlp-zipapp")) throw new ArgumentException("tools install --ytdlp-zipapp");
+        var file = LoadFileConfig();
+        var cmd = await new Tools(NewHttp()).InstallYtDlpZipappAsync(default);
+        file.Ytdlp = new YtDlpConfig { Command = cmd };
+        file.Save();
+        Console.WriteLine("yt-dlp zipapp installed; ytdlp.command = " + JsonSerializer.Serialize(cmd));
+        return 0;
+    }
+
+    public static async Task<int> BrowserAsync(Args a)
+    {
+        var cfg = (LoadFileConfig().Browser ?? new BrowserConfig());
+        var sub = a.Positional.FirstOrDefault();
+        if (sub == "login")
+        {
+            BrowserLauncher.Start(cfg, false, "https://accounts.google.com", "https://www.youtube.com");
+            Console.WriteLine("Sign in to Google/YouTube in the Brave window that opened (or turn on Brave Sync), then close it or leave it open.");
+            return 0;
+        }
+        if (sub == "status")
+        {
+            var http = NewHttp();
+            bool running = await CdpBrowser.TryGetEndpointAsync(http, cfg.ResolvePort(), default) != null;
+            Console.WriteLine($"browser running with port {cfg.ResolvePort()}: {(running ? "yes" : "no")}");
+            bool signedIn;
+            try
+            {
+                await using var b = await CdpBrowser.OpenAsync(cfg, http, default);
+                var page = await b.NewPageAsync(default);
+                try { signedIn = await WatchLater.IsSignedInAsync(page, default); } finally { await page.CloseAsync(); }
+            }
+            catch (Exception e) { Console.Error.WriteLine("could not check YouTube: " + e.Message); signedIn = false; }
+            Console.WriteLine($"YouTube signed in: {(signedIn ? "yes" : "no")}");
+            return 0;
+        }
+        throw new ArgumentException("browser login | browser status");
     }
 
     public static int Config(Args a)
@@ -265,7 +357,11 @@ public static class Commands
                 case "model-url": file.ModelUrl = val; break;
                 case "model-path": file.ModelPath = val; break;
                 case "node-name": file.NodeName = NodeConfig.SanitizeName(val); break;
-                default: throw new ArgumentException("unknown config key (jobs, threads, model-url, model-path, node-name)");
+                case "ytdlp.command": file.Ytdlp = new YtDlpConfig { Command = ParseCommand(val) }; break;
+                case "browser.exe": (file.Browser ??= new()).Exe = val; break;
+                case "browser.profile-dir": (file.Browser ??= new()).ProfileDir = val; break;
+                case "browser.port": (file.Browser ??= new()).Port = int.Parse(val); break;
+                default: throw new ArgumentException("unknown config key (jobs, threads, model-url, model-path, node-name, ytdlp.command, browser.exe, browser.profile-dir, browser.port)");
             }
             file.Save();
             Console.WriteLine($"{key} saved");
